@@ -1,0 +1,14 @@
+{
+  "application": "Demo document",
+  "base_url": "http://127.0.0.1:1234/v1",
+  "model": "local-model",
+  "context_tokens": 16384,
+  "output_tokens": 4096,
+  "thinking_backend": "unsupported",
+  "mcpServers": {
+    "demo": {
+      "command": "python",
+      "args": ["examples/demo_mcp.py"]
+    }
+  }
+}
