@@ -299,8 +299,11 @@ class AssistantDock(QDockWidget):
             try:
                 asyncio.run(job())
             except BaseException as exc:
-                self.engine.journal.record('error', str(exc))
-                self.emit('error', str(exc))
+                import traceback
+                from .errors import error_details
+                self.engine.journal.record('error_traceback', ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+                self.engine.journal.record('error', error_details(exc))
+                self.emit('error', error_details(exc))
             finally:
                 if not self.closed:
                     self.completed.emit()

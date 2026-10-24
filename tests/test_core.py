@@ -92,3 +92,34 @@ def test_context_limit_prevents_submission(tmp_path):
     import pytest
     with pytest.raises(ValueError, match='context is full'):
         asyncio.run(engine.turn('edit', lambda *args: None))
+
+
+def test_empty_reply_recovers_without_replaying_edit(tmp_path):
+    from qtpy_ai_sidecar.backend import EmptyModelReply
+    class Model(ScriptedModel):
+        async def complete(self, messages, tools, cancel, emit, max_tokens=None, final_only=False):
+            if final_only:
+                assert tools == []
+                return {'role': 'assistant', 'content': 'Verified labels are white.'}, {}
+            if self.step == 1:
+                self.step += 1
+                raise EmptyModelReply('No final reply')
+            return await super().complete(messages, tools, cancel, emit)
+    config = Config(state_dir=str(tmp_path/'state'), servers=servers(tmp_path/'doc.json'))
+    model = Model()
+    engine = Engine(config, backend=model)
+    events = []
+    asyncio.run(engine.turn('Make all labels white', lambda *args: events.append(args)))
+    records = [json.loads(line) for line in engine.journal.path.read_text().splitlines()]
+    assert sum(e['kind'] == 'operation_intent' for e in records) == 1
+    assert sum(e['kind'] == 'reply_recovery' for e in records) == 1
+    assert any(kind == 'assistant' and 'white' in value for kind,value in events)
+
+
+def test_taskgroup_error_exposes_leaf():
+    import sys
+    if sys.version_info < (3,11):
+        return
+    from qtpy_ai_sidecar.errors import error_details
+    error = ExceptionGroup('outer', [ExceptionGroup('inner', [RuntimeError('Actual model error')])])
+    assert error_details(error) == 'Actual model error'

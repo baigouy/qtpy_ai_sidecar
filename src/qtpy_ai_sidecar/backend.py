@@ -5,6 +5,10 @@ import os
 import httpx
 
 
+class EmptyModelReply(RuntimeError):
+    pass
+
+
 class ModelClient:
     def __init__(self, config, secret_sink=lambda value: None):
         self.config = config
@@ -12,7 +16,7 @@ class ModelClient:
         from .runtime import OwnedLlama
         self.runtime = OwnedLlama(config) if config.runtime else None
 
-    async def complete(self, messages, tools, cancel, emit, max_tokens=None):
+    async def complete(self, messages, tools, cancel, emit, max_tokens=None, final_only=False):
         headers = {}
         base_url = self.config.base_url
         if self.config.provider == 'local' and not self.runtime:
@@ -60,6 +64,9 @@ class ModelClient:
                 payload['reasoning_effort'] = 'none'
             elif self.config.thinking_strength != 'default':
                 payload['reasoning_effort'] = self.config.thinking_strength
+        if final_only and self.config.thinking_backend == 'llama_cpp':
+            payload['chat_template_kwargs'] = {'enable_thinking': False}
+            payload['reasoning_effort'] = 'none'
         async def generate():
             text, reasoning, calls, finish, usage = '', '', {}, None, {}
             timeout = httpx.Timeout(connect=15, read=180, write=30, pool=15)
@@ -97,9 +104,11 @@ class ModelClient:
             if finish == 'length':
                 raise RuntimeError(f'Model reached its {max_tokens or self.config.output_tokens}-token output limit. No partial tool call executed. Earlier edits may remain.')
             if not text and not calls:
-                raise RuntimeError('Model returned no final reply or tool calls; earlier edits may remain')
+                raise EmptyModelReply('Model returned no final reply or tool calls; earlier edits may remain')
             if '<tool_call>' in text and not calls:
                 raise RuntimeError('Model emitted raw tool markup instead of structured tool calls. Check the server chat template; no markup executed.')
+            if final_only and calls:
+                raise RuntimeError('Text-only recovery returned a tool call; nothing executed')
             message = {'role': 'assistant', 'content': text}
             if calls:
                 message['tool_calls'] = [calls[i] for i in sorted(calls)]

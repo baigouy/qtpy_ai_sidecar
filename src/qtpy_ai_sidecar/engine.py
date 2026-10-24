@@ -2,7 +2,7 @@ import asyncio
 import json
 import threading
 from .adapters import NullAdapter
-from .backend import ModelClient
+from .backend import ModelClient, EmptyModelReply
 from .journal import Journal
 from .mcp_client import MCPHub, DISCOVERY
 
@@ -66,7 +66,15 @@ class Engine:
                     messages = self.messages + [{'role': 'system', 'content': 'Connected application MCP guidance:\n' + json.dumps(hub.instructions)}]
                     if size_estimate(messages) + self.config.output_tokens > self.config.context_tokens:
                         raise ValueError('Estimated context budget reached; no further tool submitted. Use Compress.')
-                    answer, usage = await self.backend.complete(messages, model_tools, self.cancel, emit)
+                    try:
+                        answer, usage = await self.backend.complete(messages, model_tools, self.cancel, emit)
+                    except EmptyModelReply:
+                        emit('status', 'Empty model reply; recovering a text-only summary. No tools or edits will be replayed.')
+                        self.journal.record('reply_recovery', {'method': 'one text-only generation', 'tools_enabled': False})
+                        summary_messages = messages + [{'role': 'system', 'content': 'The previous generation returned no visible final reply. Summarize ONLY verified results already in this conversation. Tools are disabled. Do not claim changes unless a verified result proves them. If inspection shows the requested state already existed, say so clearly. If work remains, explain that honestly; no edits have been replayed.'}]
+                        answer, usage = await self.backend.complete(summary_messages, [], self.cancel, emit, final_only=True)
+                        if answer.get('tool_calls') or not answer.get('content'):
+                            raise RuntimeError('Text-only recovery failed; no tool call executed')
                     self.messages.append(answer)
                     if usage:
                         emit('usage', usage)
