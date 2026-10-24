@@ -35,11 +35,21 @@ class Engine:
         emit('context', {'estimated_tokens': size_estimate(self.messages), 'context_tokens': self.config.context_tokens,
                          'output_tokens': self.config.output_tokens})
 
+    async def _finalize_reply(self,text,answer,state,preview,emit):
+        finalizer=getattr(self.adapter,'finalize_response',None)
+        if finalizer:
+            verified=await asyncio.to_thread(finalizer,text,answer.get('content') or '',state,preview)
+            if verified:
+                self.journal.record('model_reply_before_verification',answer.get('content') or '')
+                self.record('final_response_verification',verified['evidence'],emit)
+                return {**answer,'content':verified['content']}
+        return answer
+
     async def turn(self, text, emit, preview=False):
         self.record('user', text, emit)
         self.record('request_settings', {key: getattr(self.config, key) for key in (
             'provider', 'model', 'thinking_backend', 'thinking', 'thinking_strength',
-            'thinking_budget', 'context_tokens', 'output_tokens')}, emit)
+            'thinking_budget', 'context_tokens', 'output_tokens', 'max_steps')}, emit)
         if self.uncertain:
             raise RuntimeError('An earlier tool outcome is uncertain. Check the application, then use Acknowledge inspection before another request. No action replayed.')
         if size_estimate(self.messages) + self.config.output_tokens > self.config.context_tokens:
@@ -63,6 +73,7 @@ class Engine:
                 # Stable tool IDs preserve schemas and verified outcomes across turns.
                 # Explicit Compress retires older traces when the user chooses.
                 discovered = set()
+                discovery_results={}
                 model_tools = hub.model_tools()
                 direct_ids = hub.direct_ids()
                 for step in range(self.config.max_steps):
@@ -87,6 +98,8 @@ class Engine:
                         answer, usage = await self.backend.complete(summary_messages, [], self.cancel, emit, final_only=True)
                         if answer.get('tool_calls') or not answer.get('content'):
                             raise RuntimeError('Text-only recovery failed; no tool call executed')
+                    if not answer.get('tool_calls'):
+                        answer=await self._finalize_reply(text,answer,state,preview,emit)
                     self.messages.append(answer)
                     if usage:
                         self.journal.record('model_usage', usage)
@@ -97,9 +110,11 @@ class Engine:
                     if not calls:
                         interrupted = False
                         return
+                    discovery_stalled=False
                     # Preserve protocol pairing even if stopped/error mid-call list.
                     for index, call in enumerate(calls):
                         completion_tool, completion_arguments = None, None
+                        discovery_call=False
                         try:
                             if self.cancel.is_set():
                                 raise InterruptedError('Stopped; this tool was not submitted')
@@ -107,6 +122,7 @@ class Engine:
                             name = call['function']['name']
                             self.record('tool_call', {'name': name, 'arguments': args}, emit)
                             if name == 'find_application_tools':
+                                discovery_call=True
                                 result = hub.find(**args)
                                 discovered.update(t['tool_id'] for t in result['tools'])
                             elif name == 'execute_application_tool' or name in direct_ids:
@@ -120,6 +136,9 @@ class Engine:
                                     validator(hub.tools[args['tool_id']][2].name, args['arguments'], state, text)
                                 completion_tool = hub.tools[args['tool_id']][2].name
                                 completion_arguments = args['arguments']
+                                discovery_call=hub.is_discovery(args['tool_id']) if hasattr(hub,'is_discovery') else False
+                                if not discovery_call:
+                                    discovery_results.clear();discovery_stalled=False
                                 self.journal.record('operation_intent', args)
                                 try:
                                     result = await hub.execute(args['tool_id'], args['arguments'], emit)
@@ -146,6 +165,10 @@ class Engine:
                             for skipped in calls[index + 1:]:
                                 self.messages.append({'role': 'tool', 'tool_call_id': skipped['id'], 'content': 'Not submitted after interruption.'})
                             raise
+                        if discovery_call and not result.get('is_error'):
+                            signature=json.dumps([name,args,result],sort_keys=True,default=str)
+                            discovery_results[signature]=discovery_results.get(signature,0)+1
+                            discovery_stalled=discovery_results[signature]>=3
                         serialized = json.dumps(result, ensure_ascii=False)
                         self.journal.record('tool_result', result)
                         if len(serialized) > 24000:
@@ -161,6 +184,15 @@ class Engine:
                                 self.record('assistant', summary, emit)
                                 interrupted = False
                                 return
+                    if discovery_stalled:
+                        emit('status','Discovery repeated unchanged; summarizing without further tool calls')
+                        self.journal.record('discovery_loop_stopped',{'identical_results':3,'tools_enabled':False})
+                        prompt=self.messages+[{'role':'system','content':'Tool discovery repeated the same unchanged result three times. Tools are now disabled. Give a concise answer from verified facts already available, or explain what remains unresolved. Do not claim an edit was done without verified evidence. No completed operation is being replayed.'}]
+                        summary,_=await self.backend.complete(prompt,[],self.cancel,emit,final_only=True)
+                        if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Discovery loop stopped; no valid text summary returned')
+                        summary=await self._finalize_reply(text,summary,state,preview,emit)
+                        self.messages.append(summary);self.record('assistant',summary['content'],emit)
+                        return
                 raise RuntimeError('Tool-step limit reached. Earlier edits may remain; no automatic continuation or replay.')
         finally:
             if begun:

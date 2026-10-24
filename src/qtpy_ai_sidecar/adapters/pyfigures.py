@@ -56,6 +56,7 @@ class PyFiguresAdapter:
                 'Use find_pyfigures_tools for the exact schema before a first use; state field names are not function argument names. remove_annotation uses group_path/image_index/annotation_index, not panel_id. open_annotation_editor uses panel_ref, not panel_id. edit_panel_letters has no letters or style object arguments: pass its flat schema fields. A mixed colour summary is not a valid colour; omit styling to preserve actual styles. '
                 'Convert an existing ROI into an inset with roi_to_inset: this magnifies the same source, no external filename required. If multiple ROIs exist ask which; do not redefine the already clear request. '
                 'If a user reports an invisible letter, inspect its appearance and location; existence in state does not prove visibility. Avoid categorical denials based on letter counts alone. '
+                'For lettering a newly constructed figure, use one renumber/all operation for a complete unique sequence. Partial restore preserves earlier IDs. verified_letter_specification.duplicate_letter_references reports ambiguities; a correct count alone does not prove usable panel references. Never silently rename accepted manual labels. '
                 'PANEL LETTERS and TEXT ANNOTATIONS are different objects. panel_references.letters are automatic panel IDs; text_annotations lists ordinary text with actual annotation_index and is_letter=false. '
                 'A quoted string or the word text/caption means an ordinary annotation: match its actual text, then use get_annotations/remove_annotation at that index. Example: remove the Panel o text from panel o removes text=Panel o and PRESERVES letter=o. Do not search remove letter or call edit_panel_letters for that request. '
                 'Only explicit letter requests use edit_panel_letters. To restore a missing letter on one panel use action=restore, scope=panels, panel_ids=[its ID], start_letter=the desired letter; style does not restore a hidden letter. '
@@ -81,6 +82,7 @@ class PyFiguresAdapter:
         explicit_target = re.search(r'\b(?:all|every|whole|entire)\b|\b(?:panel|letter)\s+(?:[a-z]|[0-9]+(?:/[0-9]+)?)\b', text, re.I)
         singular = re.search(r'\b(?:one|a|single|this|that|the)\s+(?:panel\s+)?(?:letter|label)\b', text, re.I)
         operation = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
+        if operation=='review_submission_readiness':self._quality_review_requested=True
         vague_annotation = re.search(r'\bannot\w*\b', text, re.I) and not re.search(
             r'\b(?:arrow\w*|roi\w*|rectangle|ellipse|circle|polygon|line|text|label|scale|remove|delete|clear)\b|["]', text, re.I)
         if vague_annotation and operation in ('add_annotation', 'add_roi_rect', 'add_roi_ellipse', 'add_roi_line', 'add_roi_polygon', 'add_arrow'):
@@ -169,7 +171,32 @@ class PyFiguresAdapter:
         verb = ' is' if len(ids) == 1 else ' are'
         return target + verb + (' already ' if not operation.get('changed') else ' now ') + request[0] + '. Verified in the open figure.'
 
+    def finalize_response(self,request,reply,state,preview=False):
+        import re
+        if re.search(r'\b(?:how|tutorial|instructions|shortcut)\b',request,re.I):return None
+        asks_ready=bool(re.search(r'\b(?:ready|readiness)\b',request,re.I) and
+                        re.search(r'\b(?:is|are|whether|tell|check|review|submission|publication|submit)\b',request,re.I))
+        asks_compliance=bool(re.search(r'\b(?:check|review|assess|audit)\b.*\b(?:compliance|print resolution|submission)\b',request,re.I))
+        asks_publication=bool(re.search(r'\b(?:can|could|would|should)\b.*\b(?:submit|publish)\b',request,re.I))
+        if not (asks_ready or asks_compliance or asks_publication or getattr(self,'_quality_review_requested',False)):return None
+        try:
+            evidence=self.request('submission_review',{})
+        except Exception as exc:
+            return {'content':'Technical readiness could not be verified: '+str(exc),
+                    'evidence':{'status':'incomplete','error':str(exc)}}
+        title='Draft' if preview else 'Current figure'
+        if evidence['status']=='blocked':
+            lines=[re.sub(r'^\[FAIL\]\s*','',b) for b in evidence.get('blockers',[])]
+            content=title+' is not ready under the technical checks:\n'+''.join('\n- '+line for line in lines)
+        elif evidence['status']=='technical_checks_passed':
+            target_line=evidence.get('checks',{}).get('check_resolution',{}).get('report','').splitlines()
+            content=title+' passes the measured technical checks for this target. '+(target_line[0] if target_line else '')+' Scientific content and statistical assumptions still require review.'
+        else:
+            content='Technical readiness is incomplete; no ready verdict can be given. Specify a valid journal/physical target and resolve unavailable checks.'
+        return {'content':content,'evidence':evidence}
+
     def begin(self, text, preview=False):
+        self._quality_review_requested=False
         return self.request('action_begin', {'text': text, 'preview': preview})
 
     def finish(self, interrupted=False):

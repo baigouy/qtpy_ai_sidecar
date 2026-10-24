@@ -535,6 +535,11 @@ class AssistantDock(QDockWidget):
         response_time.setValue(config.generation_timeout_seconds)
         response_time.setSuffix(' s')
         form.addRow('Maximum time per model response', response_time)
+        steps = QSpinBox()
+        steps.setRange(1,50)
+        steps.setValue(config.max_steps)
+        steps.setToolTip('Bounded tool/reasoning steps per message; discovery and verification count too.')
+        form.addRow('Maximum tool steps per message',steps)
         supported = config.thinking_backend != 'unsupported'
         note = QLabel('Thinking controls are unavailable for this backend.' if not supported else
             'Thinking strength is a template hint; some models ignore it. A token budget gives a firmer limit on compatible owned llama.cpp runtimes.')
@@ -583,6 +588,7 @@ class AssistantDock(QDockWidget):
             config.context_tokens, config.output_tokens = context.value(), output.value()
             config.thinking_budget = budget.value()
             config.generation_timeout_seconds = response_time.value()
+            config.max_steps=steps.value()
             if config.runtime:
                 config.runtime.update(gpu_layers=gpu.value(), threads=threads.value(), force_cpu=force_cpu.isChecked())
                 close = getattr(self.engine.backend, 'close', None)

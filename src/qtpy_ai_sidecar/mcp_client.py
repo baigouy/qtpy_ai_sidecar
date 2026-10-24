@@ -94,6 +94,12 @@ class MCPHub:
             names[public]=ident
         return names
 
+    def is_discovery(self,ident):
+        tool=self.tools[ident][2]
+        annotations=getattr(tool,'annotations',None)
+        return bool(annotations and annotations.readOnlyHint is True and
+            re.fullmatch(r'(?:find_.*tools|list_.*categories)',tool.name))
+
     def model_tools(self):
         # Stable opaque IDs remain internal. Small surfaces expose readable
         # callable names so local models need not reproduce random hashes.

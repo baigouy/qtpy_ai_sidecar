@@ -11,7 +11,7 @@ class Config:
     api_key_env: str = ''
     context_tokens: int = 32768
     output_tokens: int = 8192
-    max_steps: int = 12
+    max_steps: int = 32
     servers: dict = field(default_factory=dict)
     instructions: str = ''
     state_dir: str = ''
@@ -59,7 +59,7 @@ class Config:
         preferences = config.storage() / 'performance.json'
         if preferences.exists():
             saved = json.loads(preferences.read_text(encoding='utf-8'))
-            for key in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds'):
+            for key in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps'):
                 if key in saved:
                     setattr(config, key, saved[key])
             if config.runtime:
@@ -99,7 +99,7 @@ class Config:
         (self.storage() / 'connection.json').write_text(json.dumps(value, indent=2), encoding='utf-8')
 
     def save_performance(self):
-        value = {k: getattr(self, k) for k in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds')}
+        value = {k: getattr(self, k) for k in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps')}
         value.update({k: self.runtime[k] for k in ('gpu_layers', 'threads', 'force_cpu') if k in self.runtime})
         self.storage().mkdir(parents=True, exist_ok=True)
         (self.storage() / 'performance.json').write_text(json.dumps(value, indent=2), encoding='utf-8')
