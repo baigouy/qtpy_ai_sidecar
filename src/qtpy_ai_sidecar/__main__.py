@@ -25,10 +25,16 @@ def main():
     from qtpy.QtWidgets import QApplication, QMainWindow
     from qtpy.QtCore import Qt
     from .widgets import AssistantDock
+    from .branding import initialize_standalone, application_icon
+    initialize_standalone()
     app = QApplication(sys.argv[:1])
+    app.setApplicationName('QtPy AI Sidecar')
+    app.setWindowIcon(application_icon())
     window = QMainWindow()
+    window.setWindowIcon(application_icon())
     window.setWindowTitle(config.application + ' · AI Sidecar')
     dock = AssistantDock(config, adapter, window)
+    dock.setWindowIcon(application_icon())
     window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
     dock.setFeatures(dock.DockWidgetFeature.NoDockWidgetFeatures)
     window.resize(630, 860)
