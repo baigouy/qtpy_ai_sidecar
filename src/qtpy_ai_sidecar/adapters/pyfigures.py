@@ -58,3 +58,20 @@ class PyFiguresAdapter:
         if action not in ('undo', 'redo', 'apply', 'discard', 'recover'):
             raise ValueError('Unsupported host control')
         return self.decorate(self.request('action_' + action, {'ident': ident} if ident else {}))
+
+
+def attach_to_window(window, config, descriptor):
+    """Embed this package in a running PyFigures prototype main window."""
+    from qtpy.QtCore import Qt
+    from qtpy_ai_sidecar import create_dock
+    from qtpy_ai_sidecar.branding import application_icon
+    dock = create_dock(window, config, PyFiguresAdapter(descriptor))
+    dock.setWindowIcon(application_icon())
+    dock.setMinimumWidth(420)
+    dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+    window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+    dock.setFloating(False)
+    window.local_chat_dock = dock
+    window.resize(max(window.width(), 1400), max(window.height(), 850))
+    window.resizeDocks([dock], [480], Qt.Orientation.Horizontal)
+    return dock
