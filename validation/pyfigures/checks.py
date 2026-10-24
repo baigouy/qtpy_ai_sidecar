@@ -30,12 +30,19 @@ def verify(expect, before, after, events, allowed):
     if expect.get('annotation_handoff'):
         replies=' '.join(str(v) for k,v in events if k=='assistant').lower()
         check('editor' in replies or '?' in replies,'No clarification or editor handoff')
+    replies=' '.join(str(v) for k,v in events if k=='assistant').lower()
+    for alternatives in expect.get('reply_terms_any',[]):
+        check(any(term.lower() in replies for term in alternatives),'Missing manual explanation: '+str(alternatives))
+    if expect.get('reply_terms_any'):
+        check(chr(96)*3 not in replies,'Unrequested code in manual help')
+    for phrase in expect.get('reply_forbidden',[]):
+        check(phrase.lower() not in replies,'Unsupported manual claim: '+phrase)
     edits=[]
     for kind,value in events:
         if kind=='tool_call':
             args=value.get('arguments',{})
             name=args.get('tool_name','') if 'use_pyfigures_tool' in value.get('name','') else value.get('name','')
-            if name and not any(word in name for word in ('inspect','find_','get_','list_','preview','select_live','open_annotation')):
+            if name and not any(word in name for word in ('inspect','find_','get_','list_','preview','select_live','open_annotation','explain_','show_me_how','guidance')):
                 edits.append(name)
     check(all(name in allowed for name in edits),'Unexpected mutation operation: '+str(edits))
     check(len(edits)<=1,'Too many mutation calls: '+str(edits))
