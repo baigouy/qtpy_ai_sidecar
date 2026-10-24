@@ -103,6 +103,17 @@ class ModelClient:
                 raise RuntimeError('Incomplete model stream; no partial tool call executed')
             if finish == 'length':
                 raise RuntimeError(f'Model reached its {max_tokens or self.config.output_tokens}-token output limit. No partial tool call executed. Earlier edits may remain.')
+            raw_qwen = self.runtime is not None and self.runtime.raw_qwen
+            if raw_qwen:
+                if calls:
+                    raise RuntimeError('Mixed raw/native Qwen calls; nothing executed')
+                from .qwen_protocol import parse_reply
+                schemas = {t['function']['name']: t['function']['parameters'] for t in tools}
+                thinking = payload.get('chat_template_kwargs', {}).get('enable_thinking') is not False
+                parsed = parse_reply(text, schemas, require_think_end=thinking)
+                text = parsed['content']
+                reasoning = parsed['reasoning_content']
+                calls = {i: call for i, call in enumerate(parsed['tool_calls'])}
             if not text and not calls:
                 raise EmptyModelReply('Model returned no final reply or tool calls; earlier edits may remain')
             if '<tool_call>' in text and not calls:
@@ -110,6 +121,8 @@ class ModelClient:
             if final_only and calls:
                 raise RuntimeError('Text-only recovery returned a tool call; nothing executed')
             message = {'role': 'assistant', 'content': text}
+            if raw_qwen and reasoning:
+                message['reasoning_content'] = reasoning
             if calls:
                 message['tool_calls'] = [calls[i] for i in sorted(calls)]
             return message, usage

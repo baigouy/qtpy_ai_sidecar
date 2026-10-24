@@ -62,3 +62,20 @@ def test_raw_markup_not_executed(endpoint):
     chunks.append({'choices': [{'delta': {'content': '<tool_call>edit'}, 'finish_reason': 'stop'}]})
     with pytest.raises(RuntimeError, match='raw tool markup'):
         asyncio.run(ModelClient(Config(base_url=url, provider='compatible')).complete([], [], threading.Event(), lambda *args: None))
+
+
+def test_owned_qwen_raw_tool_protocol(endpoint):
+    from types import SimpleNamespace
+    url, received, chunks = endpoint
+    raw = 'Plan</think><tool_call><function=edit><parameter=color>white</parameter></function></tool_call>'
+    chunks.append({'choices':[{'delta':{'content':raw},'finish_reason':'stop'}]})
+    config = Config(provider='compatible', base_url=url, thinking_backend='llama_cpp', thinking='enabled')
+    client = ModelClient(config)
+    async def ensure(cancel,emit):
+        return url.removesuffix('/v1'), 'local-test-key'
+    client.runtime = SimpleNamespace(raw_qwen=True, ensure=ensure)
+    tools = [{'type':'function','function':{'name':'edit','parameters':{'type':'object','properties':{'color':{'type':'string'}},'required':['color']}}}]
+    answer,_=asyncio.run(client.complete([{'role':'user','content':'Edit'}],tools,threading.Event(),lambda *args:None))
+    assert answer['reasoning_content']=='Plan'
+    assert answer['tool_calls'][0]['function']['name']=='edit'
+    assert json.loads(answer['tool_calls'][0]['function']['arguments'])=={'color':'white'}

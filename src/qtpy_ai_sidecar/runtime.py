@@ -15,6 +15,11 @@ class OwnedLlama:
         self.url = None
         self.key = secrets.token_urlsafe(32)
 
+    @property
+    def raw_qwen(self):
+        protocol = self.config.runtime.get('protocol', 'auto')
+        return protocol == 'qwen_xml' or (protocol == 'auto' and 'qwen3.5' in str(self.config.runtime.get('model', '')).lower())
+
     async def ensure(self, cancel, emit):
         if self.process and self.process.poll() is None:
             return self.url, self.key
@@ -36,8 +41,12 @@ class OwnedLlama:
                    '-np', '1', '-ngl', str(0 if settings.get('force_cpu') else settings.get('gpu_layers', 99))]
         if settings.get('force_cpu'):
             command += ['--device', 'none', '--no-op-offload', '--no-kv-offload']
-        if settings.get('chat_template'):
-            command += ['--chat-template-file', str(settings['chat_template'])]
+        template = settings.get('chat_template')
+        if self.raw_qwen:
+            command += ['--skip-chat-parsing', '--reasoning-format', 'none']
+            template = template or Path(__file__).parent / 'resources' / 'qwen_tools.jinja'
+        if template:
+            command += ['--chat-template-file', str(template)]
         if settings.get('threads', 0) > 0:
             command += ['--threads', str(settings['threads'])]
         if self.config.thinking_budget >= 0:
