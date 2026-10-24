@@ -46,11 +46,13 @@ class PyFiguresAdapter:
 
     def context(self):
         result = self.request('inspect')
-        return {key: result.get(key) for key in ('selection', 'verified_letter_specification', 'panel_references', 'last_canvas_click', 'revision', 'dirty')}
+        return {key: result.get(key) for key in ('selection', 'verified_letter_specification', 'panel_references', 'last_canvas_click', 'annotation_editor_status', 'revision', 'dirty')}
 
     def context_instructions(self, state):
         selection = state.get('selection') or {}
-        return ('Swap named panels/images by default: swap b and c means exchange image panels, including obvious connector typos. Use swap_live_panels target=images. Only exchange letter TEXT when explicitly requested. Ask only if target references do not uniquely resolve. '
+        return ('Select actual GUI targets with select_live_objects (panel_refs for letters/IDs, row_numbers starting at 1, or group_paths for rows/columns). For a named row reversal select that row then reverse_selected_row. '
+                'A general request to annotate/add annotations to a panel specifies no annotation content. Select the panel, then ask what to add or offer to open_annotation_editor. Never invent a placeholder annotation. Explicit open-editor requests use open_annotation_editor, which selects its panel and schedules the native dialog; do not claim annotations were added. '
+                'Swap named panels/images by default: swap b and c means exchange image panels, including obvious connector typos. Use swap_live_panels target=images. Only exchange letter TEXT when explicitly requested. Ask only if target references do not uniquely resolve. '
                 'For whole-row swaps discover swap_rows; use visible row numbers starting at 1. Never simulate row swaps using move_image. With automatic lettering enabled, row swaps regenerate letters in positional order, like native keyboard rearrangement; retain styles, not old letter text. '
                 'last_canvas_click contains the last actual canvas press. For clicked/here ROI or arrow requests use its image_position only when valid=true and panel_id matches the intended panel; otherwise ask for a fresh click. Never treat scene/widget coordinates as image pixels. A click gives a point, not ROI width/height; clarify missing dimensions. '
                 'Fresh PyFigures selection supersedes earlier focus. This/selected/current letter means the letter on the selected panel. '
@@ -69,6 +71,13 @@ class PyFiguresAdapter:
         explicit_target = re.search(r'\b(?:all|every|whole|entire)\b|\b(?:panel|letter)\s+(?:[a-z]|[0-9]+(?:/[0-9]+)?)\b', text, re.I)
         singular = re.search(r'\b(?:one|a|single|this|that|the)\s+(?:panel\s+)?(?:letter|label)\b', text, re.I)
         operation = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
+        vague_annotation = re.search(r'\bannot\w*\b', text, re.I) and not re.search(
+            r'\b(?:arrow\w*|roi\w*|rectangle|ellipse|circle|polygon|line|text|label|scale|remove|delete|clear)\b|["]', text, re.I)
+        if vague_annotation and operation in ('add_annotation', 'add_roi_rect', 'add_roi_ellipse', 'add_roi_line', 'add_roi_polygon', 'add_arrow'):
+            from ..errors import NeedsClarification
+            named = re.search(r'\bpanel\s+([a-z]|[0-9]+(?:/[0-9]+)*)(?!\w)', text, re.I)
+            target = 'panel ' + named[1] if named else 'this panel'
+            raise NeedsClarification(f'What would you like to add to {target}?\n- Tell me the annotation you want for {target}\n- Open the annotation editor for {target}\nNo annotation was added.')
         read_only = operation and (operation.startswith(('inspect_', 'get_', 'list_', 'check_', 'describe_', 'audit_', 'explain_')) or operation in ('preview_figure', 'find_pyfigures_tools', 'readability'))
         if singular and not explicit_target and (len(panels) != 1 or selection.get('stale_selection')) and not read_only:
             from ..errors import NeedsClarification
