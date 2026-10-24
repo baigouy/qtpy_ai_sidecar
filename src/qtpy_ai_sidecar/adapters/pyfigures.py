@@ -50,7 +50,7 @@ class PyFiguresAdapter:
 
     def context_instructions(self, state):
         selection = state.get('selection') or {}
-        return ('For whole-row swaps discover swap_rows; use visible row numbers starting at 1. Never simulate row swaps using move_image. '
+        return ('For whole-row swaps discover swap_rows; use visible row numbers starting at 1. Never simulate row swaps using move_image. With automatic lettering enabled, row swaps regenerate letters in positional order, like native keyboard rearrangement; retain styles, not old letter text. '
                 'last_canvas_click contains the last actual canvas press. For clicked/here ROI or arrow requests use its image_position only when valid=true and panel_id matches the intended panel; otherwise ask for a fresh click. Never treat scene/widget coordinates as image pixels. A click gives a point, not ROI width/height; clarify missing dimensions. '
                 'Fresh PyFigures selection supersedes earlier focus. This/selected/current letter means the letter on the selected panel. '
                 'If selected_panels contains exactly one entry, use that panel_id immediately; do not ask which letter. '
@@ -115,7 +115,8 @@ class PyFiguresAdapter:
                     op = body.get('operation_result') or {}
                     pair = {int(match[1]), int(match[2])}
                     if op.get('completion_verified') and op.get('action') == 'swap_rows' and {op.get('first_row'),op.get('second_row')} == pair:
-                        return f"Rows {int(match[1])} and {int(match[2])} swapped. Image order within each row and lettering preserved; verified in the open figure."
+                        mode = 'Automatic letters updated to their new positions.' if op.get('lettering_mode') == 'automatic_position' else 'Existing letter text preserved (automatic lettering off).'
+                        return f"Rows {int(match[1])} and {int(match[2])} swapped. {mode} Image order within each row and letter styling preserved; verified in the open figure." 
                 except (ValueError, TypeError):
                     pass
         request = self._color_request(text)
