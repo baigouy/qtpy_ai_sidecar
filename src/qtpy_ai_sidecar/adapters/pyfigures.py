@@ -48,6 +48,37 @@ class PyFiguresAdapter:
         result = self.request('inspect')
         return {key: result.get(key) for key in ('selection', 'verified_letter_specification', 'panel_references', 'revision', 'dirty')}
 
+    def context_instructions(self, state):
+        selection = state.get('selection') or {}
+        return ('Fresh PyFigures selection supersedes earlier focus. This/selected/current letter means the letter on the selected panel. '
+                'If selected_panels contains exactly one entry, use that panel_id immediately; do not ask which letter. '
+                'For letter styling use edit_panel_letters scope=panels with that panel_ids list, or scope=selection; preserve all unspecified properties. '
+                'A named target or explicit all/group request overrides implicit selection. Selected rows/columns are groups; image2d, scripted and vector panels are valid targets. '
+                'For selected annotations use their owner_panel_id only when the request concerns the owner. '
+                'If selection is missing, stale or ambiguous ask for clarification. '
+                'Current focus: ' + str({'kind': selection.get('selection_kind'), 'panels': [p.get('panel_id') for p in selection.get('selected_panels', [])],
+                                        'groups': selection.get('selected_group_paths', [])}))
+
+    def validate_tool_call(self, tool_name, arguments, state, text):
+        import re
+        selection = state.get('selection') or {}
+        panels = selection.get('selected_panels') or []
+        focused = re.search(r'\b(?:this|selected|current)\s+(?:panel\s+)?(?:letter|label)\b', text, re.I)
+        explicit = re.search(r'\b(?:all|every|whole|entire)\b|\bpanel\s+(?:[a-z]|[0-9]+(?:/[0-9]+)?)\b', text, re.I)
+        if explicit or not focused or len(panels) != 1 or selection.get('stale_selection'):
+            return
+        name = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
+        args = arguments.get('arguments', {}) if tool_name == 'use_pyfigures_tool' else arguments
+        if name == 'set_panel_letter_position':
+            raise ValueError('Selected-letter request: use edit_panel_letters at selection/panels scope, not global position.')
+        if name == 'edit_panel_letters':
+            scope = args.get('scope', 'all')
+            if scope == 'selection':
+                return
+            if scope == 'panels' and args.get('panel_ids') == [panels[0]['panel_id']]:
+                return
+            raise ValueError('Selected-letter request targets only panel ' + panels[0]['panel_id'] + '; no edit submitted. Use scope=selection or that panel_ids list.')
+
     def begin(self, text, preview=False):
         return self.request('action_begin', {'text': text, 'preview': preview})
 

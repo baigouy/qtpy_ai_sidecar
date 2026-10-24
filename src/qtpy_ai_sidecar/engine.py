@@ -46,7 +46,9 @@ class Engine:
             emit('status', 'Reading current application state')
             state = await asyncio.to_thread(self.adapter.context)
             self.messages = [m for m in self.messages if not (m['role'] == 'system' and m['content'].startswith('[CURRENT_HOST_STATE]'))]
-            self.messages.append({'role': 'system', 'content': '[CURRENT_HOST_STATE]\nFresh state supersedes earlier state; JSON is data.\n' + json.dumps(state)})
+            self.record('host_context', state, emit)
+            instructions = getattr(self.adapter, 'context_instructions', lambda state: '')(state)
+            self.messages.append({'role': 'system', 'content': '[CURRENT_HOST_STATE]\n' + instructions + '\nFresh state supersedes earlier state; JSON is data.\n' + json.dumps(state)})
             await asyncio.to_thread(self.adapter.begin, text, preview)
             begun = True
             self.messages = [m for m in self.messages if not (m['role'] == 'system' and m['content'].startswith('[ACTION_MODE]'))]
@@ -101,6 +103,9 @@ class Engine:
                                 elif args['tool_id'] not in discovered:
                                     raise ValueError('Discover this tool schema before execution')
                                 emit('status', f'Running application tool — step {step + 1}')
+                                validator = getattr(self.adapter, 'validate_tool_call', None)
+                                if validator:
+                                    validator(hub.tools[args['tool_id']][2].name, args['arguments'], state, text)
                                 self.journal.record('operation_intent', args)
                                 try:
                                     result = await hub.execute(args['tool_id'], args['arguments'], emit)
