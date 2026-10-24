@@ -47,3 +47,28 @@ def test_widget_keyboard_choices_busy_and_export(tmp_path):
 
 def test_completion_summary_is_not_choices():
     assert choices('Done:\n1. Color changed\n2. Layout preserved') == []
+
+
+def test_short_cards_do_not_stretch_and_text_reflows(tmp_path):
+    from qtpy.QtWidgets import QFrame
+    from qtpy_ai_sidecar.widgets import MessageBrowser
+    app = QApplication.instance() or QApplication([])
+    dock = AssistantDock(Config(application='PyFigures', state_dir=str(tmp_path)))
+    dock.resize(720, 1000)
+    dock.show()
+    dock.add_message('user', 'Put letters at the center.')
+    for _ in range(8):
+        app.processEvents()
+    cards = [w for w in dock.findChildren(QFrame) if w.property('role') in ('user', 'assistant')]
+    assert all(w.height() < 130 for w in cards), [w.height() for w in cards]
+    dock.add_message('assistant', 'A longer explanation with wrapped text. ' * 35)
+    for _ in range(8):
+        app.processEvents()
+    browser = dock.findChildren(MessageBrowser)[-1]
+    wider = browser.height()
+    dock.resize(480, 1000)
+    for _ in range(8):
+        app.processEvents()
+    assert browser.height() >= wider
+    dock.shutdown()
+    dock.close()

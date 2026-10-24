@@ -41,6 +41,33 @@ def choices(text):
     return result if 2 <= len(result) <= 8 else []
 
 
+class MessageBrowser(QTextBrowser):
+    """Fit to actual wrapped text; the outer conversation owns scrolling."""
+    def __init__(self):
+        super().__init__()
+        self._fitting = False
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.document().documentLayout().documentSizeChanged.connect(self.fit_text)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.fit_text()
+
+    def fit_text(self, *args):
+        if self._fitting:
+            return
+        self._fitting = True
+        try:
+            self.document().setTextWidth(max(60, self.viewport().width()))
+            height = max(26, int(self.document().size().height() + 2 * self.frameWidth() + 2))
+            if self.height() != height:
+                self.setFixedHeight(height)
+        finally:
+            self._fitting = False
+
+
 class AssistantDock(QDockWidget):
     message_event = Signal(str, object)
     completed = Signal()
@@ -96,6 +123,7 @@ class AssistantDock(QDockWidget):
         content = QWidget()
         self.messages = QVBoxLayout(content)
         self.messages.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.messages.addStretch(1)
         self.scroll.setWidget(content)
         root.addWidget(self.scroll, 1)
         self.choice_row = QVBoxLayout()
@@ -105,7 +133,7 @@ class AssistantDock(QDockWidget):
         root.addWidget(self.preview)
         self.input = Composer()
         self.input.setPlaceholderText('Ask about your application…  Enter sends · Shift+Enter adds a line')
-        self.input.setMaximumHeight(100)
+        self.input.setFixedHeight(76)
         self.input.submitted.connect(self.send)
         root.addWidget(self.input)
         controls = QHBoxLayout()
@@ -159,26 +187,24 @@ class AssistantDock(QDockWidget):
     def add_message(self, role, text):
         frame = QFrame()
         frame.setProperty('role', role)
+        frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(5)
         label = QLabel(('You' if role == 'user' else self.engine.config.application + ' Assistant') + ' · ' + time.strftime('%H:%M'))
         label.setStyleSheet('color:#a17351;font-weight:600')
+        label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         layout.addWidget(label)
-        browser = QTextBrowser()
+        browser = MessageBrowser()
         browser.document().setDefaultFont(self.widget().font())
         browser.setOpenExternalLinks(False)
         browser.setMarkdown(text)
-        browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        browser.document().setTextWidth(max(240, self.width() - 130))
-        browser.setMinimumHeight(50)
-        browser.setMaximumHeight(350)
-        browser.setFixedHeight(min(350, max(50, int(browser.document().size().height()) + 14)))
-        # Long messages remain scrollable, rather than being silently clipped.
-        browser.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        QTimer.singleShot(0, browser.fit_text)
         layout.addWidget(browser)
         row = QHBoxLayout()
         row.setContentsMargins(65 if role == 'user' else 0, 3, 0 if role == 'user' else 45, 3)
-        row.addWidget(frame)
-        self.messages.addLayout(row)
+        row.addWidget(frame, 0, Qt.AlignmentFlag.AlignTop)
+        self.messages.insertLayout(self.messages.count() - 1, row)
         QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum()))
         return layout
 
