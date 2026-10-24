@@ -159,3 +159,20 @@ def test_verified_host_completion_avoids_extra_generation(tmp_path):
     asyncio.run(engine.turn('Make all labels white',lambda *args:events.append(args)))
     assert model.step==1
     assert any(k=='verified_completion' for k,v in events)
+
+
+def test_missing_target_asks_without_executing_tool(tmp_path):
+    from qtpy_ai_sidecar.adapters import NullAdapter
+    from qtpy_ai_sidecar.errors import NeedsClarification
+    class Adapter(NullAdapter):
+        def validate_tool_call(self,*args):
+            raise NeedsClarification('Please select the panel.')
+    model=ScriptedModel()
+    engine=Engine(Config(state_dir=str(tmp_path/'state'),servers=servers(tmp_path/'doc.json')),Adapter(),backend=model)
+    events=[]
+    asyncio.run(engine.turn('one letter is not visible',lambda *args:events.append(args)))
+    assert model.step==1
+    assert not (tmp_path/'doc.json').exists()
+    records=[json.loads(l) for l in engine.journal.path.read_text().splitlines()]
+    assert not any(e['kind']=='operation_intent' for e in records)
+    assert any(k=='assistant' and 'select the panel' in v for k,v in events)

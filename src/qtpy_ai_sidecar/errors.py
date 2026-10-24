@@ -12,3 +12,7 @@ def error_details(error):
     if cause is not None:
         return str(error) + ': ' + error_details(cause)
     return str(error) or type(error).__name__
+
+
+class NeedsClarification(ValueError):
+    pass

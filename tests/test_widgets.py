@@ -72,3 +72,44 @@ def test_short_cards_do_not_stretch_and_text_reflows(tmp_path):
     assert browser.height() >= wider
     dock.shutdown()
     dock.close()
+
+
+def test_new_messages_follow_delayed_layout_growth(tmp_path):
+    from qtpy.QtCore import QTimer
+    from qtpy.QtWidgets import QLabel
+    app=QApplication.instance() or QApplication([])
+    dock=AssistantDock(Config(state_dir=str(tmp_path)))
+    dock.resize(620,520)
+    dock.show()
+    for i in range(20):
+        dock.add_message('assistant','Message '+str(i))
+    QTest.qWait(50)
+    bar=dock.scroll.verticalScrollBar()
+    assert bar.maximum()>0 and bar.value()==bar.maximum()
+    bar.sliderPressed.emit()
+    bar.setValue(0)
+    layout=dock.add_message('assistant','New result')
+    def expand():
+        extra=QLabel('Late preview/control content')
+        extra.setFixedHeight(260)
+        layout.addWidget(extra)
+    QTimer.singleShot(10,expand)
+    QTest.qWait(100)
+    assert bar.value()==bar.maximum()
+    dock.shutdown()
+    dock.close()
+
+def test_preview_image_fits_available_width():
+    from qtpy.QtGui import QImage
+    from qtpy_ai_sidecar.widgets import PreviewImage
+    app=QApplication.instance() or QApplication([])
+    image=QImage(1200,600,QImage.Format.Format_RGB32)
+    image.fill(Qt.GlobalColor.white)
+    preview=PreviewImage(image)
+    preview.resize(180,100)
+    preview.show()
+    app.processEvents()
+    preview.fit_image()
+    assert preview.pixmap().width()<=preview.width()
+    assert abs(preview.pixmap().width()/preview.pixmap().height()-2)<.05
+    preview.close()

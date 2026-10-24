@@ -56,13 +56,20 @@ class PyFiguresAdapter:
                 'A named target or explicit all/group request overrides implicit selection. Selected rows/columns are groups; image2d, scripted and vector panels are valid targets. '
                 'For selected annotations use their owner_panel_id only when the request concerns the owner. '
                 'If selection is missing, stale or ambiguous ask for clarification. '
-                'Follow-up it/them keeps this focus; color-only corrections must not change font, placement, background or numbering. Current focus: ' + str({'kind': selection.get('selection_kind'), 'panels': [p.get('panel_id') for p in selection.get('selected_panels', [])],
+                'Follow-up it/them keeps this focus; color-only corrections must not change font, placement, background or numbering. A preview is displayed only to the human: this model cannot inspect image pixels. Property readback does not prove contrast/readability; never claim a color ensures visibility without a real check. Current focus: ' + str({'kind': selection.get('selection_kind'), 'panels': [p.get('panel_id') for p in selection.get('selected_panels', [])],
                                         'groups': selection.get('selected_group_paths', [])}))
 
     def validate_tool_call(self, tool_name, arguments, state, text):
         import re
         selection = state.get('selection') or {}
         panels = selection.get('selected_panels') or []
+        explicit_target = re.search(r'\b(?:all|every|whole|entire)\b|\b(?:panel|letter)\s+(?:[a-z]|[0-9]+(?:/[0-9]+)?)\b', text, re.I)
+        singular = re.search(r'\b(?:one|a|single|this|that|the)\s+(?:panel\s+)?(?:letter|label)\b', text, re.I)
+        operation = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
+        read_only = operation and (operation.startswith(('inspect_', 'get_', 'list_', 'check_', 'describe_', 'audit_', 'explain_')) or operation in ('preview_figure', 'find_pyfigures_tools', 'readability'))
+        if singular and not explicit_target and (len(panels) != 1 or selection.get('stale_selection')) and not read_only:
+            from ..errors import NeedsClarification
+            raise NeedsClarification('Please select the panel with the hard-to-see letter, or tell me its panel label. I cannot identify which one from the current selection. No lettering edit was submitted.')
         focused = re.search(r'\b(?:this|selected|current)\s+(?:panel\s+)?(?:letter|label)\b', text, re.I)
         explicit = re.search(r'\b(?:all|every|whole|entire)\b|\bpanel\s+(?:[a-z]|[0-9]+(?:/[0-9]+)?)\b', text, re.I)
         focused = focused or re.search(r'\b(?:it|that|them)\b', text, re.I)

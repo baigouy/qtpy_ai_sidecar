@@ -68,6 +68,34 @@ class MessageBrowser(QTextBrowser):
             self._fitting = False
 
 
+class PreviewImage(QLabel):
+    def __init__(self, image):
+        super().__init__()
+        self._source = QPixmap.fromImage(image)
+        self._fitting = False
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(1)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.fit_image()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.fit_image()
+
+    def fit_image(self):
+        if self._fitting or self._source.isNull():
+            return
+        self._fitting = True
+        try:
+            pixmap = self._source.scaled(max(1, self.contentsRect().width()), 420,
+                Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            self.setPixmap(pixmap)
+            if self.height() != pixmap.height():
+                self.setFixedHeight(pixmap.height())
+        finally:
+            self._fitting = False
+
+
 class AssistantDock(QDockWidget):
     message_event = Signal(str, object)
     completed = Signal()
@@ -125,6 +153,15 @@ class AssistantDock(QDockWidget):
         self.messages.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.messages.addStretch(1)
         self.scroll.setWidget(content)
+        self._follow_tail = True
+        self._tail_timer = QTimer(self)
+        self._tail_timer.setSingleShot(True)
+        self._tail_timer.timeout.connect(self._scroll_to_tail)
+        bar = self.scroll.verticalScrollBar()
+        bar.rangeChanged.connect(self._schedule_tail)
+        bar.sliderPressed.connect(lambda: setattr(self, '_follow_tail', False))
+        bar.sliderReleased.connect(self._scroll_action)
+        bar.actionTriggered.connect(self._scroll_action)
         root.addWidget(self.scroll, 1)
         self.choice_row = QVBoxLayout()
         root.addLayout(self.choice_row)
@@ -205,8 +242,23 @@ class AssistantDock(QDockWidget):
         row.setContentsMargins(65 if role == 'user' else 0, 3, 0 if role == 'user' else 45, 3)
         row.addWidget(frame, 0, Qt.AlignmentFlag.AlignTop)
         self.messages.insertLayout(self.messages.count() - 1, row)
-        QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum()))
+        self._follow_tail = True
+        self._schedule_tail()
         return layout
+
+    def _schedule_tail(self, *args):
+        if self._follow_tail and not self._tail_timer.isActive():
+            self._tail_timer.start(0)
+
+    def _scroll_to_tail(self):
+        if self._follow_tail:
+            bar = self.scroll.verticalScrollBar()
+            bar.setValue(bar.maximum())
+
+    def _scroll_action(self, *args):
+        bar = self.scroll.verticalScrollBar()
+        self._follow_tail = bar.maximum() - bar.sliderPosition() <= 12
+        self._schedule_tail()
 
     def clear_choices(self):
         for button in self.choice_buttons:
@@ -238,9 +290,8 @@ class AssistantDock(QDockWidget):
             raw = base64.b64decode(value['data'])
             image = QImage.fromData(raw)
             if not image.isNull():
-                layout = self.add_message('assistant', 'Application preview')
-                label = QLabel()
-                label.setPixmap(QPixmap.fromImage(image).scaledToWidth(420, Qt.TransformationMode.SmoothTransformation))
+                layout = self.add_message('assistant', 'Canvas snapshot, not a live view (the model cannot inspect these pixels)')
+                label = PreviewImage(image)
                 layout.addWidget(label)
         elif kind == 'status':
             self.activity_text = str(value)

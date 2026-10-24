@@ -34,3 +34,12 @@ def test_verified_color_finishes_only_for_exact_target(tmp_path):
     assert '2/0' in summary and 'blue' in summary
     state['selection']['selected_panels']=[{'panel_id':'0/0'}]
     assert adapter.verified_completion('use_pyfigures_tool',{'tool_name':'edit_panel_letters'},result,state,'make it blue') is None
+
+
+def test_unidentified_one_letter_cannot_restyle_all(tmp_path):
+    from qtpy_ai_sidecar.errors import NeedsClarification
+    adapter=PyFiguresAdapter(tmp_path/'bridge.json')
+    state={'selection':{'selected_panels':[]}}
+    with pytest.raises(NeedsClarification,match='select the panel'):
+        adapter.validate_tool_call('use_pyfigures_tool',{'tool_name':'edit_panel_letters','arguments':{'scope':'auto','color':'black','replace_overrides':True}},state,'one letter is not visible can you fix it')
+    adapter.validate_tool_call('preview_figure',{},state,'one letter is not visible can you fix it')
