@@ -35,7 +35,7 @@ def test_widget_keyboard_choices_busy_and_export(tmp_path):
         time.sleep(.01)
     assert called == ['Line one\nLine two']
     assert dock.input.isEnabled() and not dock.progress.isVisible()
-    assert dock.compress.text() == 'Compress'
+    assert dock.compress.accessibleName() == 'Compress'
     assert not dock.choice_buttons
     dock.engine.journal.record('user', 'Test')
     dock.engine.journal.export(tmp_path / 'debug.zip')
@@ -134,7 +134,7 @@ def test_inline_thinking_and_single_send_stop(tmp_path):
     dock.engine.turn = wait_for_stop
     dock.input.setPlainText('Test')
     dock.send_button.click()
-    assert dock.busy and dock.send_button.text() == 'Stop'
+    assert dock.busy and dock.send_button.accessibleName() == 'Stop'
     assert dock.send_button.isEnabled() and not dock.thinking_mode.isEnabled()
     dock.send_button.click()
     assert dock.engine.cancel.is_set()
@@ -143,7 +143,22 @@ def test_inline_thinking_and_single_send_stop(tmp_path):
         if not dock.busy:
             break
         time.sleep(.01)
-    assert not dock.busy and dock.send_button.text() == 'Send'
+    assert not dock.busy and dock.send_button.accessibleName() == 'Send'
     assert dock.send_button.isEnabled() and dock.thinking_mode.isEnabled()
+    dock.shutdown()
+    dock.close()
+
+    
+def test_composer_integrates_editor_thinking_and_send(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    dock = AssistantDock(Config(state_dir=str(tmp_path), thinking_backend='llama_cpp'))
+    dock.resize(480, 850)
+    dock.show()
+    app.processEvents()
+    for widget in (dock.input,dock.thinking_mode,dock.thinking_slider,dock.send_button,dock.compress):
+        assert dock.composer_frame.isAncestorOf(widget)
+    assert dock.send_button.text() == ''
+    assert dock.send_button.accessibleName() == 'Send'
+    assert dock.thinking_slider.mapTo(dock.composer_frame, dock.thinking_slider.rect().topLeft()).y() > dock.thinking_mode.mapTo(dock.composer_frame, dock.thinking_mode.rect().topLeft()).y()
     dock.shutdown()
     dock.close()
