@@ -2,7 +2,12 @@
 import asyncio
 import json
 import os
+import time
 import httpx
+
+
+class GenerationTimeout(RuntimeError):
+    pass
 
 
 class EmptyModelReply(RuntimeError):
@@ -126,9 +131,14 @@ class ModelClient:
             if calls:
                 message['tool_calls'] = [calls[i] for i in sorted(calls)]
             return message, usage
+        started = time.monotonic()
+        timeout = min(self.config.generation_timeout_seconds, 30) if final_only else self.config.generation_timeout_seconds
         task = asyncio.create_task(generate())
         try:
             while not task.done():
+                if time.monotonic() - started > timeout:
+                    task.cancel()
+                    raise GenerationTimeout(f'Model response exceeded {timeout}s. No partial tool call executed; completed edits remain.')
                 if cancel.is_set():
                     task.cancel()
                     raise InterruptedError('Generation stopped; inspect completed edits before continuing')

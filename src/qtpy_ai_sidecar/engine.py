@@ -2,7 +2,7 @@ import asyncio
 import json
 import threading
 from .adapters import NullAdapter
-from .backend import ModelClient, EmptyModelReply
+from .backend import ModelClient, EmptyModelReply, GenerationTimeout
 from .journal import Journal
 from .mcp_client import MCPHub, DISCOVERY
 
@@ -55,8 +55,8 @@ class Engine:
             self.messages.append({'role': 'system', 'content': '[ACTION_MODE] ' + ('Edits affect an uncommitted draft. Report draft changes only; main document changes only after human Apply.' if preview else 'Edits affect the live application document.')})
             emit('status', 'Connecting application tools')
             async with self.hub_factory(self.config.servers) as hub:
-                # Opaque IDs are per-connection; retire old traces, preserve dialogue.
-                self.messages = [m for m in self.messages if m['role'] != 'tool' and not m.get('tool_calls')]
+                # Stable tool IDs preserve schemas and verified outcomes across turns.
+                # Explicit Compress retires older traces when the user chooses.
                 discovered = set()
                 model_tools = hub.model_tools()
                 direct_ids = hub.direct_ids()
@@ -70,8 +70,8 @@ class Engine:
                         raise ValueError('Estimated context budget reached; no further tool submitted. Use Compress.')
                     try:
                         answer, usage = await self.backend.complete(messages, model_tools, self.cancel, emit)
-                    except EmptyModelReply:
-                        emit('status', 'Empty model reply; recovering a text-only summary. No tools or edits will be replayed.')
+                    except (EmptyModelReply, GenerationTimeout):
+                        emit('status', 'Model reply missing or timed out; recovering a text-only summary. No tools or edits will be replayed.')
                         self.journal.record('reply_recovery', {'method': 'one text-only generation', 'tools_enabled': False})
                         summary_messages = messages + [{'role': 'system', 'content': 'The previous generation returned no visible final reply. Summarize ONLY verified results already in this conversation. Tools are disabled. Do not claim changes unless a verified result proves them. If inspection shows the requested state already existed, say so clearly. If work remains, explain that honestly; no edits have been replayed.'}]
                         answer, usage = await self.backend.complete(summary_messages, [], self.cancel, emit, final_only=True)
@@ -79,6 +79,7 @@ class Engine:
                             raise RuntimeError('Text-only recovery failed; no tool call executed')
                     self.messages.append(answer)
                     if usage:
+                        self.journal.record('model_usage', usage)
                         emit('usage', usage)
                     if answer.get('content'):
                         self.record('assistant', answer['content'], emit)
@@ -88,6 +89,7 @@ class Engine:
                         return
                     # Preserve protocol pairing even if stopped/error mid-call list.
                     for index, call in enumerate(calls):
+                        completion_tool, completion_arguments = None, None
                         try:
                             if self.cancel.is_set():
                                 raise InterruptedError('Stopped; this tool was not submitted')
@@ -106,6 +108,8 @@ class Engine:
                                 validator = getattr(self.adapter, 'validate_tool_call', None)
                                 if validator:
                                     validator(hub.tools[args['tool_id']][2].name, args['arguments'], state, text)
+                                completion_tool = hub.tools[args['tool_id']][2].name
+                                completion_arguments = args['arguments']
                                 self.journal.record('operation_intent', args)
                                 try:
                                     result = await hub.execute(args['tool_id'], args['arguments'], emit)
@@ -128,6 +132,15 @@ class Engine:
                             serialized = serialized[:24000] + '\n[Result truncated for model context; full result retained in local log. Inspect smaller scope; never infer omitted success.]'
                         self.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': serialized})
                         emit('tool_result', {'is_error': result.get('is_error', False)})
+                        completion = getattr(self.adapter, 'verified_completion', None)
+                        if completion and completion_tool and len(calls) == 1 and not result.get('is_error'):
+                            summary = completion(completion_tool, completion_arguments, result, state, text)
+                            if summary:
+                                self.messages.append({'role':'assistant', 'content':summary})
+                                self.record('verified_completion', {'source':'host readback', 'text':summary}, emit)
+                                self.record('assistant', summary, emit)
+                                interrupted = False
+                                return
                 raise RuntimeError('Tool-step limit reached. Earlier edits may remain; no automatic continuation or replay.')
         finally:
             if begun:

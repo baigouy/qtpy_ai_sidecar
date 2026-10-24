@@ -1,6 +1,7 @@
 """Claude Messages streaming with native tool-use and signed thinking preservation."""
 import asyncio
 import json
+import time
 import httpx
 from .credentials import get_key
 
@@ -106,9 +107,14 @@ async def complete(config, messages, tools, cancel, emit, max_tokens, secret_sin
         if not answer['content'] and not calls:
             raise RuntimeError('Claude returned no text or tool call')
         return answer, usage
+    from .backend import GenerationTimeout
+    started = time.monotonic()
     task = asyncio.create_task(generate())
     try:
         while not task.done():
+            if time.monotonic() - started > config.generation_timeout_seconds:
+                task.cancel()
+                raise GenerationTimeout('Claude response time limit reached; no partial tool call executed.')
             if cancel.is_set():
                 task.cancel()
                 raise InterruptedError('Claude generation stopped; completed edits may remain')

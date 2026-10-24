@@ -107,3 +107,9 @@ Run `python -m pytest` with the test extra installed. On headless systems set `Q
 Tests use actual local MCP subprocesses and controlled streaming HTTP servers. Paid providers are tested for request/stream/tool formats without spending credits. No real cloud credential or large model download is required. This first package is a reusable foundation, not a claim that all prototype integrations or every provider/model combination have production validation. Packaging into native installers and publishing to PyPI/GitHub are outside this initial local commit.
 
 Implementation references: [llama.cpp server](https://github.com/ggml-org/llama.cpp/tree/master/tools/server), [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [Claude streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), [OpenRouter](https://openrouter.ai/docs/quickstart).
+
+
+### Follow-up editing safeguards
+Tool IDs are stable across reconnects. Completed tool calls/results and discovered schemas remain in working context until explicit compression or the context budget is reached; a new message no longer discards them.
+For simple PyFigures letter-color edits, the host can finish immediately from exact verified target/color readback, without another model generation. Compound requests remain with the model.
+Model responses have an adjustable time cap (120 seconds by default, under Performance settings). This is separate from context and output-token limits; no context reduction is implied. An incomplete response is never executed as a tool call. A text-only recovery, when needed, has no tools and does not replay edits.

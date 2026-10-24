@@ -123,3 +123,39 @@ def test_taskgroup_error_exposes_leaf():
     from qtpy_ai_sidecar.errors import error_details
     error = ExceptionGroup('outer', [ExceptionGroup('inner', [RuntimeError('Actual model error')])])
     assert error_details(error) == 'Actual model error'
+
+
+def test_tool_history_and_ids_survive_followup(tmp_path):
+    class Followup:
+        names=[]
+        async def complete(self,messages,tools,cancel,emit,**kwargs):
+            latest=max(i for i,m in enumerate(messages) if m['role']=='user')
+            if any(m['role']=='tool' for m in messages[latest:]):
+                return {'role':'assistant','content':'Verified.'},{}
+            if 'blue' in messages[latest]['content']:
+                assert any(m['role']=='tool' for m in messages[:latest])
+            name=next(t['function']['name'] for t in tools if 'set_all_labels' in t['function']['name'])
+            self.names.append(name)
+            color='blue' if 'blue' in messages[latest]['content'] else 'white'
+            return {'role':'assistant','content':'','tool_calls':[{'id':'call'+str(len(self.names)),'type':'function','function':{'name':name,'arguments':json.dumps({'color':color})}}]},{}
+    model=Followup()
+    engine=Engine(Config(state_dir=str(tmp_path/'state'),servers=servers(tmp_path/'doc.json')),backend=model)
+    asyncio.run(engine.turn('make labels white',lambda *args:None))
+    asyncio.run(engine.turn('make them blue',lambda *args:None))
+    assert len(model.names)==2 and model.names[0]==model.names[1]
+    assert json.loads((tmp_path/'doc.json').read_text())['color']=='blue'
+
+
+def test_verified_host_completion_avoids_extra_generation(tmp_path):
+    from qtpy_ai_sidecar.adapters import NullAdapter
+    class Adapter(NullAdapter):
+        def verified_completion(self,name,args,result,state,text):
+            value=json.loads(result['content'])
+            assert value['verified_after']['color']=='white'
+            return 'Verified white labels.'
+    model=ScriptedModel()
+    engine=Engine(Config(state_dir=str(tmp_path/'state'),servers=servers(tmp_path/'doc.json')),Adapter(),backend=model)
+    events=[]
+    asyncio.run(engine.turn('Make all labels white',lambda *args:events.append(args)))
+    assert model.step==1
+    assert any(k=='verified_completion' for k,v in events)

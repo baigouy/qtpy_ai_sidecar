@@ -79,3 +79,24 @@ def test_owned_qwen_raw_tool_protocol(endpoint):
     assert answer['reasoning_content']=='Plan'
     assert answer['tool_calls'][0]['function']['name']=='edit'
     assert json.loads(answer['tool_calls'][0]['function']['arguments'])=={'color':'white'}
+
+
+def test_generation_watchdog_cancels_partial_reply(monkeypatch):
+    import qtpy_ai_sidecar.backend as module
+    class Stream:
+        status_code=200
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+        async def aiter_lines(self):
+            yield 'data: '+json.dumps({'choices':[{'delta':{'content':'unfinished'}}]})
+            await asyncio.sleep(10)
+    class Client:
+        def __init__(self,**kwargs):pass
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+        def stream(self,*args,**kwargs):return Stream()
+    monkeypatch.setattr(module.httpx,'AsyncClient',Client)
+    config=Config(provider='compatible')
+    config.generation_timeout_seconds=.01
+    with pytest.raises(module.GenerationTimeout,match='No partial tool call'):
+        asyncio.run(ModelClient(config).complete([],[],threading.Event(),lambda *args:None))

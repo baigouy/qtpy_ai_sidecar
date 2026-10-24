@@ -22,10 +22,13 @@ class Config:
     thinking_strength: str = 'default'
     thinking_budget: int = -1
     provider: str = 'local'
+    generation_timeout_seconds: int = 120
 
     def __post_init__(self):
         if not 512 <= self.output_tokens < self.context_tokens:
             raise ValueError('output_tokens must be >=512 and smaller than context_tokens')
+        if not 10 <= self.generation_timeout_seconds <= 3600:
+            raise ValueError('generation_timeout_seconds must be 10-3600')
         if not 1 <= self.max_steps <= 50:
             raise ValueError('max_steps must be between 1 and 50')
         if not self.base_url.startswith(('http://', 'https://')):
@@ -56,7 +59,7 @@ class Config:
         preferences = config.storage() / 'performance.json'
         if preferences.exists():
             saved = json.loads(preferences.read_text(encoding='utf-8'))
-            for key in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget'):
+            for key in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds'):
                 if key in saved:
                     setattr(config, key, saved[key])
             if config.runtime:
@@ -96,7 +99,7 @@ class Config:
         (self.storage() / 'connection.json').write_text(json.dumps(value, indent=2), encoding='utf-8')
 
     def save_performance(self):
-        value = {k: getattr(self, k) for k in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget')}
+        value = {k: getattr(self, k) for k in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds')}
         value.update({k: self.runtime[k] for k in ('gpu_layers', 'threads', 'force_cpu') if k in self.runtime})
         self.storage().mkdir(parents=True, exist_ok=True)
         (self.storage() / 'performance.json').write_text(json.dumps(value, indent=2), encoding='utf-8')

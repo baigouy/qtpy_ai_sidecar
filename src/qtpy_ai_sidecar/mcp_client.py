@@ -2,6 +2,7 @@
 from contextlib import AsyncExitStack
 from datetime import timedelta
 import json
+import hashlib
 import os
 import re
 from mcp import ClientSession, StdioServerParameters
@@ -47,7 +48,7 @@ class MCPHub:
                 while True:
                     result = await session.list_tools(cursor=cursor)
                     for tool in result.tools:
-                        ident = f't{len(self.tools)}'
+                        ident = 't' + hashlib.sha256((name + '\n' + tool.name).encode()).hexdigest()[:10]
                         self.tools[ident] = (name, session, tool)
                     cursor = result.nextCursor
                     if not cursor:

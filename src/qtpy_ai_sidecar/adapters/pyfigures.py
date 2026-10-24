@@ -56,7 +56,7 @@ class PyFiguresAdapter:
                 'A named target or explicit all/group request overrides implicit selection. Selected rows/columns are groups; image2d, scripted and vector panels are valid targets. '
                 'For selected annotations use their owner_panel_id only when the request concerns the owner. '
                 'If selection is missing, stale or ambiguous ask for clarification. '
-                'Current focus: ' + str({'kind': selection.get('selection_kind'), 'panels': [p.get('panel_id') for p in selection.get('selected_panels', [])],
+                'Follow-up it/them keeps this focus; color-only corrections must not change font, placement, background or numbering. Current focus: ' + str({'kind': selection.get('selection_kind'), 'panels': [p.get('panel_id') for p in selection.get('selected_panels', [])],
                                         'groups': selection.get('selected_group_paths', [])}))
 
     def validate_tool_call(self, tool_name, arguments, state, text):
@@ -65,10 +65,13 @@ class PyFiguresAdapter:
         panels = selection.get('selected_panels') or []
         focused = re.search(r'\b(?:this|selected|current)\s+(?:panel\s+)?(?:letter|label)\b', text, re.I)
         explicit = re.search(r'\b(?:all|every|whole|entire)\b|\bpanel\s+(?:[a-z]|[0-9]+(?:/[0-9]+)?)\b', text, re.I)
+        focused = focused or re.search(r'\b(?:it|that|them)\b', text, re.I)
         if explicit or not focused or len(panels) != 1 or selection.get('stale_selection'):
             return
         name = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
         args = arguments.get('arguments', {}) if tool_name == 'use_pyfigures_tool' else arguments
+        if name == 'edit_panel_letters' and args.get('panel_ids') and 'scope' not in args:
+            args['scope'] = 'panels'
         if name == 'set_panel_letter_position':
             raise ValueError('Selected-letter request: use edit_panel_letters at selection/panels scope, not global position.')
         if name == 'edit_panel_letters':
@@ -78,6 +81,51 @@ class PyFiguresAdapter:
             if scope == 'panels' and args.get('panel_ids') == [panels[0]['panel_id']]:
                 return
             raise ValueError('Selected-letter request targets only panel ' + panels[0]['panel_id'] + '; no edit submitted. Use scope=selection or that panel_ids list.')
+
+    @staticmethod
+    def _color_request(text):
+        import re
+        if re.search(r'\b(background|fill|opacity|move|position|size|font|bold|italic|underline|rename|renumber|remove|restore|swap|and|then)\b', text, re.I):
+            return None
+        colors = {'white':'#ffffff', 'black':'#000000', 'blue':'#0000ff', 'red':'#ff0000', 'green':'#008000', 'yellow':'#ffff00'}
+        found = re.findall(r'\b(?:white|black|blue|red|green|yellow)\b|#[0-9a-f]{6}\b', text.lower())
+        unique = set(found)
+        if len(unique) != 1:
+            return None
+        name = found[0]
+        return name, colors.get(name, name)
+
+    def verified_completion(self, tool_name, arguments, result, state, text):
+        request = self._color_request(text)
+        if not request or result.get('is_error'):
+            return None
+        name = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
+        if name != 'edit_panel_letters':
+            return None
+        import json
+        try:
+            body = json.loads(result.get('content', ''))
+        except (ValueError, TypeError):
+            return None
+        operation = body.get('operation_result') or {}
+        ids = operation.get('matched_panel_ids') or []
+        expected = [p['panel_id'] for p in (state.get('selection') or {}).get('selected_panels', [])]
+        import re
+        all_requested = bool(re.search(r'\b(?:all|every)\b', text, re.I))
+        if all_requested and len(ids) != (state.get('verified_letter_specification') or {}).get('image_panels'):
+            return None
+        if not ids or (not all_requested and (not expected or set(ids) != set(expected))):
+            return None
+        if any(c.get('property') != 'color' for c in operation.get('verified_changes', [])):
+            return None
+        panels = {p['panel_id']: p for p in operation.get('verified_panels', [])}
+        for p in (body.get('selection') or {}).get('selected_panels', []):
+            panels.setdefault(p['panel_id'], {'letters':p.get('letter_styles', [])})
+        if any(i not in panels or not panels[i].get('letters') or any(str(a.get('color')).lower() != request[1] for a in panels[i]['letters']) for i in ids):
+            return None
+        target = 'The letter on panel ' + ids[0] if len(ids) == 1 else str(len(ids)) + ' panel letters'
+        verb = ' is' if len(ids) == 1 else ' are'
+        return target + verb + (' already ' if not operation.get('changed') else ' now ') + request[0] + '. Verified in the open figure.'
 
     def begin(self, text, preview=False):
         return self.request('action_begin', {'text': text, 'preview': preview})
