@@ -157,6 +157,8 @@ def test_composer_integrates_editor_thinking_and_send(tmp_path):
     app.processEvents()
     for widget in (dock.input,dock.thinking_mode,dock.thinking_slider,dock.send_button,dock.compress):
         assert dock.composer_frame.isAncestorOf(widget)
+    assert dock.thinking_slider.geometry().right() < dock.thinking_value.geometry().left()
+    assert dock.thinking_value.width() >= dock.thinking_value.fontMetrics().horizontalAdvance('Default')
     assert dock.send_button.text() == ''
     assert dock.send_button.accessibleName() == 'Send'
     assert dock.thinking_slider.mapTo(dock.composer_frame, dock.thinking_slider.rect().topLeft()).y() > dock.thinking_mode.mapTo(dock.composer_frame, dock.thinking_mode.rect().topLeft()).y()

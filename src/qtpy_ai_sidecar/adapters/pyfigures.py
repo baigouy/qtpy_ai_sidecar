@@ -46,11 +46,15 @@ class PyFiguresAdapter:
 
     def context(self):
         result = self.request('inspect')
-        return {key: result.get(key) for key in ('selection', 'verified_letter_specification', 'panel_references', 'last_canvas_click', 'annotation_editor_status', 'revision', 'dirty')}
+        return {key: result.get(key) for key in ('selection', 'verified_letter_specification', 'panel_references', 'text_annotations', 'last_canvas_click', 'annotation_editor_status', 'revision', 'dirty')}
 
     def context_instructions(self, state):
         selection = state.get('selection') or {}
-        return ('Select actual GUI targets with select_live_objects (panel_refs for letters/IDs, row_numbers starting at 1, or group_paths for rows/columns). For a named row reversal select that row then reverse_selected_row. '
+        return ('PANEL LETTERS and TEXT ANNOTATIONS are different objects. panel_references.letters are automatic panel IDs; text_annotations lists ordinary text with actual annotation_index and is_letter=false. '
+                'A quoted string or the word text/caption means an ordinary annotation: match its actual text, then use get_annotations/remove_annotation at that index. Example: remove the Panel o text from panel o removes text=Panel o and PRESERVES letter=o. Do not search remove letter or call edit_panel_letters for that request. '
+                'Only explicit letter requests use edit_panel_letters. To restore a missing letter on one panel use action=restore, scope=panels, panel_ids=[its ID], start_letter=the desired letter; style does not restore a hidden letter. '
+                'removal_request is a literal quote of the human request, never a rewritten instruction invented to pass validation. On a tool exception inspect and explain the failure; changing file paths cannot fix an internal exception. '
+                'Select actual GUI targets with select_live_objects (panel_refs for letters/IDs, row_numbers starting at 1, or group_paths for rows/columns). For a named row reversal select that row then reverse_selected_row. '
                 'A general request to annotate/add annotations to a panel specifies no annotation content. Select the panel, then ask what to add or offer to open_annotation_editor. Never invent a placeholder annotation. Explicit open-editor requests use open_annotation_editor, which selects its panel and schedules the native dialog; do not claim annotations were added. '
                 'Swap named panels/images by default: swap b and c means exchange image panels, including obvious connector typos. Use swap_live_panels target=images. Only exchange letter TEXT when explicitly requested. Ask only if target references do not uniquely resolve. '
                 'For whole-row swaps discover swap_rows; use visible row numbers starting at 1. Never simulate row swaps using move_image. With automatic lettering enabled, row swaps regenerate letters in positional order, like native keyboard rearrangement; retain styles, not old letter text. '

@@ -36,6 +36,9 @@ class Engine:
 
     async def turn(self, text, emit, preview=False):
         self.record('user', text, emit)
+        self.record('request_settings', {key: getattr(self.config, key) for key in (
+            'provider', 'model', 'thinking_backend', 'thinking', 'thinking_strength',
+            'thinking_budget', 'context_tokens', 'output_tokens')}, emit)
         if self.uncertain:
             raise RuntimeError('An earlier tool outcome is uncertain. Check the application, then use Acknowledge inspection before another request. No action replayed.')
         if size_estimate(self.messages) + self.config.output_tokens > self.config.context_tokens:
