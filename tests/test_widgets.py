@@ -113,3 +113,37 @@ def test_preview_image_fits_available_width():
     assert preview.pixmap().width()<=preview.width()
     assert abs(preview.pixmap().width()/preview.pixmap().height()-2)<.05
     preview.close()
+
+    
+def test_inline_thinking_and_single_send_stop(tmp_path):
+    import asyncio
+    app = QApplication.instance() or QApplication([])
+    config = Config(state_dir=str(tmp_path), thinking_backend='llama_cpp')
+    dock = AssistantDock(config)
+    dock.show()
+    dock.thinking_mode.setCurrentIndex(dock.thinking_mode.findData('enabled'))
+    dock.thinking_slider.setValue(3)
+    assert config.thinking == 'enabled' and config.thinking_strength == 'high'
+    assert dock.thinking_value.text() == 'High'
+    dock.thinking_mode.setCurrentIndex(dock.thinking_mode.findData('disabled'))
+    assert not dock.thinking_slider.isEnabled()
+    dock.thinking_mode.setCurrentIndex(dock.thinking_mode.findData('enabled'))
+    async def wait_for_stop(text, emit, preview=False):
+        while not dock.engine.cancel.is_set():
+            await asyncio.sleep(.01)
+    dock.engine.turn = wait_for_stop
+    dock.input.setPlainText('Test')
+    dock.send_button.click()
+    assert dock.busy and dock.send_button.text() == 'Stop'
+    assert dock.send_button.isEnabled() and not dock.thinking_mode.isEnabled()
+    dock.send_button.click()
+    assert dock.engine.cancel.is_set()
+    for _ in range(100):
+        app.processEvents()
+        if not dock.busy:
+            break
+        time.sleep(.01)
+    assert not dock.busy and dock.send_button.text() == 'Send'
+    assert dock.send_button.isEnabled() and dock.thinking_mode.isEnabled()
+    dock.shutdown()
+    dock.close()

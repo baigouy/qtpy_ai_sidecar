@@ -11,7 +11,7 @@ from qtpy.QtCore import Qt, Signal, QTimer
 from qtpy.QtGui import QImage, QPixmap, QFont
 from qtpy.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QFrame, QLabel, QTextBrowser, QPlainTextEdit, QPushButton, QProgressBar,
-    QFileDialog, QCheckBox, QSizePolicy, QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox)
+    QFileDialog, QCheckBox, QSizePolicy, QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QSlider)
 import qtawesome as qta
 from .engine import Engine
 from .adapters import NullAdapter
@@ -172,6 +172,29 @@ class AssistantDock(QDockWidget):
         self.input.setFixedHeight(76)
         self.input.submitted.connect(self.send)
         root.addWidget(self.input)
+        thinking_row = QHBoxLayout()
+        thinking_row.addWidget(QLabel('Thinking'))
+        self.thinking_mode = QComboBox()
+        for label, value in [('Default', 'default'), ('On', 'enabled'), ('Off', 'disabled')]:
+            self.thinking_mode.addItem(label, value)
+        thinking_row.addWidget(self.thinking_mode)
+        thinking_row.addStretch()
+        root.addLayout(thinking_row)
+        strength_row = QHBoxLayout()
+        strength_row.addWidget(QLabel('Strength'))
+        self.thinking_slider = QSlider(Qt.Orientation.Horizontal)
+        self.thinking_slider.setRange(0, 3)
+        self.thinking_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.thinking_slider.setTickInterval(1)
+        self.thinking_slider.setAccessibleName('Thinking strength')
+        strength_row.addWidget(self.thinking_slider, 1)
+        self.thinking_value = QLabel()
+        self.thinking_value.setMinimumWidth(55)
+        strength_row.addWidget(self.thinking_value)
+        root.addLayout(strength_row)
+        self.sync_thinking_controls()
+        self.thinking_mode.currentIndexChanged.connect(self.change_thinking)
+        self.thinking_slider.valueChanged.connect(self.change_thinking)
         controls = QHBoxLayout()
         self.compress = QPushButton(qta.icon('fa5s.compress-alt'), 'Compress')
         self.compress.clicked.connect(lambda: self.run(lambda: self.engine.compact(self.emit)))
@@ -182,12 +205,9 @@ class AssistantDock(QDockWidget):
         self.inspect_ack.hide()
         controls.addWidget(self.inspect_ack)
         controls.addStretch()
-        self.stop = QPushButton(qta.icon('fa5s.stop'), 'Stop')
-        self.stop.clicked.connect(self.engine.cancel.set)
-        self.stop.setEnabled(False)
-        controls.addWidget(self.stop)
         self.send_button = QPushButton(qta.icon('fa5s.paper-plane'), 'Send')
-        self.send_button.clicked.connect(self.send)
+        self.send_button.clicked.connect(self.send_or_stop)
+        self.stop = self.send_button  # Same control; retained for integration compatibility.
         controls.addWidget(self.send_button)
         root.addLayout(controls)
         self.status = QLabel('Ready')
@@ -335,14 +355,17 @@ class AssistantDock(QDockWidget):
         self.started = time.monotonic()
         self.engine.cancel.clear()
         self.input.setEnabled(False)
-        self.send_button.setEnabled(False)
+        self.send_button.setEnabled(True)
+        self.send_button.setText('Stop')
+        self.send_button.setIcon(qta.icon('fa5s.stop'))
+        self.thinking_mode.setEnabled(False)
+        self.thinking_slider.setEnabled(False)
         self.compress.setEnabled(False)
         self.settings_button.setEnabled(False)
         self.connection_button.setEnabled(False)
         self.library_button.setEnabled(False)
         self.tools_button.setEnabled(False)
         self.preview.setEnabled(False)
-        self.stop.setEnabled(True)
         self.progress.show()
         self.timer.start()
         def work():
@@ -370,13 +393,15 @@ class AssistantDock(QDockWidget):
         self.progress.hide()
         self.input.setEnabled(True)
         self.send_button.setEnabled(True)
+        self.send_button.setText('Send')
+        self.send_button.setIcon(qta.icon('fa5s.paper-plane'))
+        self.sync_thinking_controls()
         self.compress.setEnabled(True)
         self.settings_button.setEnabled(True)
         self.connection_button.setEnabled(True)
         self.library_button.setEnabled(True)
         self.tools_button.setEnabled(True)
         self.preview.setEnabled(True)
-        self.stop.setEnabled(False)
         self.inspect_ack.setVisible(self.engine.uncertain)
         elapsed = time.monotonic() - self.started if self.started else 0
         self.status.setText(f'Finished · {elapsed:.1f}s')
@@ -400,6 +425,41 @@ class AssistantDock(QDockWidget):
 
     def tick(self):
         self.status.setText(self.activity_text + (f' · {time.monotonic() - self.started:.0f}s' if self.busy else ''))
+
+    def sync_thinking_controls(self):
+        config = self.engine.config
+        levels = ('default', 'low', 'medium', 'high')
+        self.thinking_mode.blockSignals(True)
+        self.thinking_slider.blockSignals(True)
+        self.thinking_mode.setCurrentIndex(max(0, self.thinking_mode.findData(config.thinking)))
+        self.thinking_slider.setValue(levels.index(config.thinking_strength))
+        self.thinking_value.setText(config.thinking_strength.capitalize())
+        supported = config.thinking_backend != 'unsupported'
+        self.thinking_mode.setEnabled(supported and not self.busy)
+        self.thinking_slider.setEnabled(supported and not self.busy and config.thinking != 'disabled')
+        tip = 'Model-dependent hint; some models ignore strength.' if supported else 'This backend does not expose thinking controls.'
+        self.thinking_slider.setToolTip(tip)
+        self.thinking_mode.setToolTip(tip)
+        self.thinking_mode.blockSignals(False)
+        self.thinking_slider.blockSignals(False)
+
+    def change_thinking(self, *args):
+        if self.busy:
+            return
+        config = self.engine.config
+        config.thinking = self.thinking_mode.currentData()
+        config.thinking_strength = ('default', 'low', 'medium', 'high')[self.thinking_slider.value()]
+        config.save_performance()
+        self.sync_thinking_controls()
+
+    def send_or_stop(self):
+        if self.busy:
+            self.engine.cancel.set()
+            self.activity_text = 'Stopping; waiting for the current operation to finish safely'
+            self.send_button.setEnabled(False)
+            self.tick()
+        else:
+            self.send()
 
     def send(self):
         text = self.input.toPlainText().strip()
@@ -441,16 +501,7 @@ class AssistantDock(QDockWidget):
         response_time.setValue(config.generation_timeout_seconds)
         response_time.setSuffix(' s')
         form.addRow('Maximum time per model response', response_time)
-        mode, strength = QComboBox(), QComboBox()
-        mode.addItems(['default', 'enabled', 'disabled'])
-        mode.setCurrentText(config.thinking)
-        strength.addItems(['default', 'low', 'medium', 'high'])
-        strength.setCurrentText(config.thinking_strength)
         supported = config.thinking_backend != 'unsupported'
-        mode.setEnabled(supported)
-        strength.setEnabled(supported)
-        form.addRow('Thinking mode', mode)
-        form.addRow('Thinking strength (model dependent)', strength)
         note = QLabel('Thinking controls are unavailable for this backend.' if not supported else
             'Thinking strength is a template hint; some models ignore it. A token budget gives a firmer limit on compatible owned llama.cpp runtimes.')
         note.setWordWrap(True)
@@ -496,7 +547,6 @@ class AssistantDock(QDockWidget):
                 error.setText('Thinking budget must not exceed the total output limit.')
                 return
             config.context_tokens, config.output_tokens = context.value(), output.value()
-            config.thinking, config.thinking_strength = mode.currentText(), strength.currentText()
             config.thinking_budget = budget.value()
             config.generation_timeout_seconds = response_time.value()
             if config.runtime:
@@ -522,8 +572,7 @@ class AssistantDock(QDockWidget):
         if close:
             close()
         self.engine = Engine(config, adapter)
-        self.stop.clicked.disconnect()
-        self.stop.clicked.connect(self.engine.cancel.set)
+        self.sync_thinking_controls()
         self.last_assistant = ''
         self.clear_choices()
         self.update_connection_label()
