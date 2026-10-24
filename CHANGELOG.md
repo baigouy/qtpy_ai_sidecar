@@ -11,3 +11,5 @@
 - Optional host action adapter and PyFigures prototype integration, without original application source changes.
 
 Initial developer release. See README for validation boundaries and remaining integration work.
+
+- Added PyFigures row-swap guidance/verified completion and validated canvas click context (prototype bridge required).

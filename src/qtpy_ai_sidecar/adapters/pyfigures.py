@@ -46,11 +46,13 @@ class PyFiguresAdapter:
 
     def context(self):
         result = self.request('inspect')
-        return {key: result.get(key) for key in ('selection', 'verified_letter_specification', 'panel_references', 'revision', 'dirty')}
+        return {key: result.get(key) for key in ('selection', 'verified_letter_specification', 'panel_references', 'last_canvas_click', 'revision', 'dirty')}
 
     def context_instructions(self, state):
         selection = state.get('selection') or {}
-        return ('Fresh PyFigures selection supersedes earlier focus. This/selected/current letter means the letter on the selected panel. '
+        return ('For whole-row swaps discover swap_rows; use visible row numbers starting at 1. Never simulate row swaps using move_image. '
+                'last_canvas_click contains the last actual canvas press. For clicked/here ROI or arrow requests use its image_position only when valid=true and panel_id matches the intended panel; otherwise ask for a fresh click. Never treat scene/widget coordinates as image pixels. A click gives a point, not ROI width/height; clarify missing dimensions. '
+                'Fresh PyFigures selection supersedes earlier focus. This/selected/current letter means the letter on the selected panel. '
                 'If selected_panels contains exactly one entry, use that panel_id immediately; do not ask which letter. '
                 'For letter styling use edit_panel_letters scope=panels with that panel_ids list, or scope=selection; preserve all unspecified properties. '
                 'A named target or explicit all/group request overrides implicit selection. Selected rows/columns are groups; image2d, scripted and vector panels are valid targets. '
@@ -103,13 +105,25 @@ class PyFiguresAdapter:
         return name, colors.get(name, name)
 
     def verified_completion(self, tool_name, arguments, result, state, text):
+        import re
+        name = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
+        if name == 'swap_rows' and not result.get('is_error'):
+            match = re.fullmatch(r'\s*(?:please\s+)?(?:swap|exchange|switch)\s+rows?\s+(\d+)\s+(?:and|with)\s+(?:row\s+)?(\d+)[.!? ]*', text, re.I)
+            if match:
+                try:
+                    body = json.loads(result.get('content', ''))
+                    op = body.get('operation_result') or {}
+                    pair = {int(match[1]), int(match[2])}
+                    if op.get('completion_verified') and op.get('action') == 'swap_rows' and {op.get('first_row'),op.get('second_row')} == pair:
+                        return f"Rows {int(match[1])} and {int(match[2])} swapped. Image order within each row and lettering preserved; verified in the open figure."
+                except (ValueError, TypeError):
+                    pass
         request = self._color_request(text)
         if not request or result.get('is_error'):
             return None
         name = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
         if name != 'edit_panel_letters':
             return None
-        import json
         try:
             body = json.loads(result.get('content', ''))
         except (ValueError, TypeError):
