@@ -15,3 +15,28 @@ def test_packaged_sidecar_embeds_in_host(tmp_path):
     assert app.applicationName() == name
     dock.shutdown()
     host.close()
+
+def test_long_choices_stay_in_message_and_do_not_expand_host(tmp_path):
+    from qtpy.QtWidgets import QWidget
+    app = QApplication.instance() or QApplication([])
+    host = QMainWindow()
+    host.setCentralWidget(QWidget())
+    dock = attach_to_window(host, Config(state_dir=str(tmp_path)), tmp_path / 'bridge.json')
+    host.show()
+    app.processEvents()
+    width = host.width()
+    dock.receive('assistant', 'Choose an action?\n- ' + 'Long descriptive choice ' * 20 + '\n- Another option')
+    dock.finished()
+    for _ in range(5):
+        app.processEvents()
+    assert host.width() == width
+    assert dock.width() <= min(560, host.width() * .4) + 2
+    assert host.centralWidget().width() > host.width() * .5
+    assert dock.choice_buttons[0].parentWidget() is dock.last_assistant_layout.parentWidget()
+    dock.choice_buttons[0].click()
+    assert dock.input.toPlainText().startswith('Long descriptive choice')
+    host.resize(1100, 800)
+    app.processEvents()
+    assert dock.maximumWidth() <= 440
+    dock.shutdown()
+    host.close()

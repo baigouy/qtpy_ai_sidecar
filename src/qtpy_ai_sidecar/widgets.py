@@ -109,6 +109,7 @@ class AssistantDock(QDockWidget):
         self.closed = False
         self.choice_buttons = []
         self.last_assistant = ''
+        self.last_assistant_layout = None
         self.started = 0
         self.activity_text = 'Ready'
         body = QWidget()
@@ -163,8 +164,6 @@ class AssistantDock(QDockWidget):
         bar.sliderReleased.connect(self._scroll_action)
         bar.actionTriggered.connect(self._scroll_action)
         root.addWidget(self.scroll, 1)
-        self.choice_row = QVBoxLayout()
-        root.addLayout(self.choice_row)
         self.preview = QCheckBox('Preview edits before applying')
         self.preview.setVisible(bool(getattr(self.engine.adapter, 'supports_preview', False)))
         root.addWidget(self.preview)
@@ -262,7 +261,7 @@ class AssistantDock(QDockWidget):
 
     def clear_choices(self):
         for button in self.choice_buttons:
-            self.choice_row.removeWidget(button)
+            button.parentWidget().layout().removeWidget(button)
             button.deleteLater()
         self.choice_buttons.clear()
 
@@ -277,7 +276,7 @@ class AssistantDock(QDockWidget):
         if kind == 'assistant':
             self.clear_choices()
             self.last_assistant = value
-            self.add_message('assistant', value)
+            self.last_assistant_layout = self.add_message('assistant', value)
         elif kind == 'action' and value:
             layout = self.add_message('assistant', 'Document action: ' + value.get('status', 'recorded'))
             for action in value.get('controls', []):
@@ -382,10 +381,21 @@ class AssistantDock(QDockWidget):
         elapsed = time.monotonic() - self.started if self.started else 0
         self.status.setText(f'Finished · {elapsed:.1f}s')
         self.clear_choices()
-        for option in choices(self.last_assistant):
-            button = QPushButton(option)
+        for option in choices(self.last_assistant) if self.last_assistant_layout is not None else []:
+            button = QPushButton()
+            button.setAccessibleName(option)
+            button.setToolTip(option)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
+            content = QVBoxLayout(button)
+            content.setContentsMargins(8, 6, 8, 6)
+            label = QLabel(option)
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setWordWrap(True)
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            label.setMinimumWidth(0)
+            content.addWidget(label)
             button.clicked.connect(lambda checked=False, text=option: self.choose(text))
-            self.choice_row.addWidget(button)
+            self.last_assistant_layout.addWidget(button)
             self.choice_buttons.append(button)
 
     def tick(self):

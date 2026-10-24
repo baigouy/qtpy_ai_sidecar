@@ -50,7 +50,8 @@ class PyFiguresAdapter:
 
     def context_instructions(self, state):
         selection = state.get('selection') or {}
-        return ('For whole-row swaps discover swap_rows; use visible row numbers starting at 1. Never simulate row swaps using move_image. With automatic lettering enabled, row swaps regenerate letters in positional order, like native keyboard rearrangement; retain styles, not old letter text. '
+        return ('Swap named panels/images by default: swap b and c means exchange image panels, including obvious connector typos. Use swap_live_panels target=images. Only exchange letter TEXT when explicitly requested. Ask only if target references do not uniquely resolve. '
+                'For whole-row swaps discover swap_rows; use visible row numbers starting at 1. Never simulate row swaps using move_image. With automatic lettering enabled, row swaps regenerate letters in positional order, like native keyboard rearrangement; retain styles, not old letter text. '
                 'last_canvas_click contains the last actual canvas press. For clicked/here ROI or arrow requests use its image_position only when valid=true and panel_id matches the intended panel; otherwise ask for a fresh click. Never treat scene/widget coordinates as image pixels. A click gives a point, not ROI width/height; clarify missing dimensions. '
                 'Fresh PyFigures selection supersedes earlier focus. This/selected/current letter means the letter on the selected panel. '
                 'If selected_panels contains exactly one entry, use that panel_id immediately; do not ask which letter. '
@@ -168,7 +169,19 @@ def attach_to_window(window, config, descriptor):
     from qtpy_ai_sidecar.branding import application_icon
     dock = create_dock(window, config, PyFiguresAdapter(descriptor))
     dock.setWindowIcon(application_icon())
-    dock.setMinimumWidth(420)
+    dock.setMinimumWidth(320)
+    dock.setMaximumWidth(560)
+    # Message/choice size hints must never steal the host canvas width.
+    from qtpy.QtCore import QObject, QEvent
+    class WidthGuard(QObject):
+        def eventFilter(self, obj, event):
+            if event.type() == QEvent.Type.Resize:
+                cap = max(280, min(560, int(obj.width() * 0.4)))
+                dock.setMinimumWidth(min(320, cap))
+                dock.setMaximumWidth(cap)
+            return False
+    dock._width_guard = WidthGuard(window)
+    window.installEventFilter(dock._width_guard)
     dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
     window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
     dock.setFloating(False)
