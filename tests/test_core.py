@@ -176,3 +176,49 @@ def test_missing_target_asks_without_executing_tool(tmp_path):
     records=[json.loads(l) for l in engine.journal.path.read_text().splitlines()]
     assert not any(e['kind']=='operation_intent' for e in records)
     assert any(k=='assistant' and 'select the panel' in v for k,v in events)
+
+def test_protocol_recovery_never_replays_completed_edit(tmp_path):
+    from qtpy_ai_sidecar.qwen_protocol import ReplyProtocolError
+    class Model(ScriptedModel):
+        rejected=False
+        async def complete(self,messages,tools,cancel,emit,**kwargs):
+            if self.step==1 and not self.rejected:
+                self.rejected=True
+                raise ReplyProtocolError('Unknown function; no tool submitted')
+            return await super().complete(messages,tools,cancel,emit)
+    model=Model()
+    engine=Engine(Config(state_dir=str(tmp_path/'state'),servers=servers(tmp_path/'doc.json')),backend=model)
+    asyncio.run(engine.turn('Make labels white',lambda *a:None))
+    records=[json.loads(l) for l in engine.journal.path.read_text().splitlines()]
+    assert sum(r['kind']=='operation_intent' for r in records)==1
+    assert sum(r['kind']=='protocol_recovery' for r in records)==1
+    assert json.loads((tmp_path/'doc.json').read_text())['color']=='white'
+
+def test_protocol_recovery_is_bounded_without_submission(tmp_path):
+    from qtpy_ai_sidecar.qwen_protocol import ReplyProtocolError
+    import pytest
+    class Bad:
+        calls=0
+        async def complete(self,*a,**kw):
+            self.calls+=1
+            raise ReplyProtocolError('Malformed tool call; no tool submitted')
+    model=Bad()
+    engine=Engine(Config(state_dir=str(tmp_path/'state'),servers=servers(tmp_path/'doc.json')),backend=model)
+    with pytest.raises(BaseException):
+        asyncio.run(engine.turn('Make labels white',lambda *a:None))
+    assert model.calls==2
+    assert not (tmp_path/'doc.json').exists()
+
+def test_direct_names_are_readable_stable_and_collision_safe():
+    from types import SimpleNamespace
+    hub=MCPHub({})
+    def tool(name): return SimpleNamespace(name=name,description='',inputSchema={'type':'object'})
+    hub.tools={'ta':('one',None,tool('inspect_figure'))}
+    assert hub.direct_ids()=={'inspect_figure':'ta'}
+    hub.tools['tb']=('two',None,tool('inspect_figure'))
+    names=hub.direct_ids()
+    assert len(names)==2 and set(names.values())=={'ta','tb'}
+    assert names==hub.direct_ids()
+    assert all(len(n)<=64 for n in names)
+    hub.tools['tc']=('three',None,tool('execute_application_tool'))
+    assert 'execute_application_tool' not in hub.direct_ids()

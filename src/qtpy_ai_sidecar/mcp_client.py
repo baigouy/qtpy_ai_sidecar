@@ -80,16 +80,32 @@ class MCPHub:
                            'description': tool.description, 'arguments_schema': tool.inputSchema}
                           for _, ident, server, tool in ranked[offset:offset + 6]]}
 
-    def model_tools(self):
-        # Keep small/category-based server surfaces intact; avoid nested discovery.
-        if len(self.tools) <= 12:
-            return [{'type': 'function', 'function': {'name': ident + '_' + tool.name[:48],
-                     'description': (tool.description or '') + ' [Application: ' + name + ']',
-                     'parameters': tool.inputSchema}} for ident, (name, _, tool) in self.tools.items()]
-        return DISCOVERY
-
     def direct_ids(self):
-        return {ident + '_' + tool.name[:48]: ident for ident, (_, _, tool) in self.tools.items()} if len(self.tools) <= 12 else {}
+        if len(self.tools)>12: return {}
+        names={}
+        reserved={'find_application_tools','execute_application_tool'}
+        for ident,(server,_,tool) in self.tools.items():
+            raw=tool.name
+            if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,63}',raw) and raw not in reserved and sum(t.name==raw for _,_,t in self.tools.values())==1:
+                public=raw
+            else:
+                stem=re.sub(r'[^A-Za-z0-9_]','_',server+'_'+raw)
+                public='app_'+stem[:44]+'_'+ident
+            names[public]=ident
+        return names
+
+    def model_tools(self):
+        # Stable opaque IDs remain internal. Small surfaces expose readable
+        # callable names so local models need not reproduce random hashes.
+        if len(self.tools)<=12:
+            result=[]
+            for public,ident in self.direct_ids().items():
+                name,_,tool=self.tools[ident]
+                result.append({'type':'function','function':{'name':public,
+                    'description':(tool.description or '')+' [Application: '+name+']',
+                    'parameters':tool.inputSchema}})
+            return result
+        return DISCOVERY
 
     async def execute(self, ident, arguments, emit):
         if ident not in self.tools:

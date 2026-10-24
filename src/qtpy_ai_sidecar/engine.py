@@ -1,3 +1,4 @@
+from .qwen_protocol import ReplyProtocolError
 import asyncio
 import json
 import threading
@@ -74,6 +75,11 @@ class Engine:
                         raise ValueError('Estimated context budget reached; no further tool submitted. Use Compress.')
                     try:
                         answer, usage = await self.backend.complete(messages, model_tools, self.cancel, emit)
+                    except ReplyProtocolError as exc:
+                        emit('status','Tool reply format rejected before execution; requesting one corrected reply')
+                        self.journal.record('protocol_recovery',{'error':str(exc),'tools_submitted':False,'attempts':1})
+                        correction=messages+[{'role':'system','content':'Your previous response was rejected BEFORE any tool execution: '+str(exc)+'. Generate one corrected reply using ONLY exact callable names and schemas in the tools list. Do not repeat earlier completed edits. If no tool is needed, answer normally.'}]
+                        answer,usage=await self.backend.complete(correction,model_tools,self.cancel,emit)
                     except (EmptyModelReply, GenerationTimeout):
                         emit('status', 'Model reply missing or timed out; recovering a text-only summary. No tools or edits will be replayed.')
                         self.journal.record('reply_recovery', {'method': 'one text-only generation', 'tools_enabled': False})
