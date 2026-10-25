@@ -13,6 +13,11 @@ def verify(expect, before, after, events, allowed):
         check(not any(a.get('text','').casefold()==expect['no_text'].casefold() for a in after['annotations']),'Requested text remains')
     if expect.get('no_edit'):
         check(before['letters']==after['letters'] and before['annotations']==after['annotations'] and before['rows']==after['rows'],'UI handoff unexpectedly changed document')
+        # A transaction can advance its revision with byte-identical XML.
+        # Compare the persisted document and staged caption, not that counter.
+        for field in ('document_digest','caption_digest'):
+            if field in before and field in after:
+                check(before[field]==after[field],'Saved '+field+' changed during a no-edit request')
     if 'selected' in expect:
         check(sorted(x for p in after['selection']['selected_panels'] for x in p['letters'])==sorted(expect['selected']),'Wrong live selection')
     if 'swap_rows' in expect:
@@ -32,6 +37,15 @@ def verify(expect, before, after, events, allowed):
         check('editor' in replies or '?' in replies,'No clarification or editor handoff')
     replies=' '.join(str(v) for k,v in events if k=='assistant').lower()
     import re
+    if expect.get('no_success_claim'):
+        claimed=bool(re.search(r"^\s*(?:done\b|successfully\b)|\b(?:i have|i've|successfully)\s+(?:removed|deleted|moved|swapped|changed|rotated)\b",replies))
+        check(not claimed,'Unsupported success claim for unresolved/no-op request')
+    if expect.get('verify_row_deletion_report'):
+        actual=len(before['rows'])-len(after['rows'])
+        plain=re.sub(r'[*_`#]','',replies)
+        claims=re.findall(r'\b(?:deleted|removed)\s+(?:all\s+)?(?:the\s+)?(\d+)\s+rows?\b',plain)
+        claims+=re.findall(r'\b(\d+)\s+rows?\s+(?:were|have been)\s+(?:deleted|removed)\b',plain)
+        check(all(int(n)==actual for n in claims),'Reported deleted-row count differs from actual state')
     def normalized(value): return re.sub(r'\s*,\s*',',',value.lower())
     for alternatives in expect.get('reply_terms_any',[]):
         check(any(normalized(term) in normalized(replies) for term in alternatives),'Missing manual explanation: '+str(alternatives))

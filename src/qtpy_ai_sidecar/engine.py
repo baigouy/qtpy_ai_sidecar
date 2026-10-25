@@ -89,8 +89,21 @@ class Engine:
                     except ReplyProtocolError as exc:
                         emit('status','Tool reply format rejected before execution; requesting one corrected reply')
                         self.journal.record('protocol_recovery',{'error':str(exc),'tools_submitted':False,'attempts':1})
-                        correction=messages+[{'role':'system','content':'Your previous response was rejected BEFORE any tool execution: '+str(exc)+'. Generate one corrected reply using ONLY exact callable names and schemas in the tools list. Do not repeat earlier completed edits. If no tool is needed, answer normally.'}]
-                        answer,usage=await self.backend.complete(correction,model_tools,self.cancel,emit)
+                        dispatcher_hint=''
+                        wrappers=[t['function'] for t in model_tools if {'tool_name','arguments'} <= set(t.get('function',{}).get('parameters',{}).get('properties',{}))]
+                        if len(wrappers)==1 and 'Unknown function in model reply' in str(exc):
+                            inner=str(exc).rsplit(':',1)[-1].strip()
+                            dispatcher_hint=' This is a categorized operation. Call the advertised dispatcher '+wrappers[0]['name']+' with tool_name='+json.dumps(inner)+' and arguments taken from its discovered inner schema. Never call the inner operation as a top-level function; do not copy inspection-only fields into arguments.'
+                        correction=messages+[{'role':'system','content':'Your previous response was rejected BEFORE any tool execution: '+str(exc)+dispatcher_hint+'. Generate one corrected reply using ONLY exact callable names and schemas in the tools list. Do not repeat earlier completed edits. If no tool is needed, answer normally.'}]
+                        try:
+                            answer,usage=await self.backend.complete(correction,model_tools,self.cancel,emit)
+                        except ReplyProtocolError as second:
+                            self.journal.record('protocol_text_recovery',{'error':str(second),'tools_enabled':False})
+                            emit('status','Tool format correction failed; summarizing without further tool submission')
+                            summary=correction+[{'role':'system','content':'Tools are now disabled because both attempted reply formats were invalid. Give a concise text-only response from verified facts already available. Do not claim any rejected call ran, do not repeat completed operations, and explain unresolved work honestly.'}]
+                            answer,usage=await self.backend.complete(summary,[],self.cancel,emit,final_only=True)
+                            if answer.get('tool_calls') or not answer.get('content'):
+                                raise RuntimeError('Tool format recovery failed; no rejected tool call executed')
                     except (EmptyModelReply, GenerationTimeout):
                         emit('status', 'Model reply missing or timed out; recovering a text-only summary. No tools or edits will be replayed.')
                         self.journal.record('reply_recovery', {'method': 'one text-only generation', 'tools_enabled': False})

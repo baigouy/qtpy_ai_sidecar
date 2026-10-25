@@ -91,6 +91,19 @@ class PyFiguresAdapter:
             target = 'panel ' + named[1] if named else 'this panel'
             raise NeedsClarification(f'What would you like to add to {target}?\n- Tell me the annotation you want for {target}\n- Open the annotation editor for {target}\nNo annotation was added.')
         read_only = operation and (operation.startswith(('inspect_', 'get_', 'list_', 'check_', 'describe_', 'audit_', 'explain_')) or operation in ('preview_figure', 'find_pyfigures_tools', 'readability'))
+        args = arguments.get('arguments', {}) if tool_name == 'use_pyfigures_tool' else arguments
+        columns=re.search(r'(?<![\w.])(-?\d+)\s+(?:pictures?|images?|panels?)\s+(?:per|on each|in each|in a|a)\s+row\b',text,re.I)
+        if columns and operation=='arrange_live_images' and args.get('columns')!=int(columns[1]):
+            from ..errors import NeedsClarification
+            raise NeedsClarification('The requested number of images per row is '+columns[1]+'. I cannot substitute a different count; please choose a valid positive number. No replacement layout was submitted.')
+        point_sizes=list(re.finditer(r'(?<![\w.])(minus\s+|negative\s+)?(-?\d+(?:\.\d+)?)\s*(?:pt|points?)\b',text,re.I))
+        relative_size=re.search(r'\b(?:by|increase|decrease|reduce|shrink|grow|bigger|smaller|larger|less|more|add|subtract)\b',text,re.I)
+        point_size=point_sizes[0] if len(point_sizes)==1 and not relative_size else None
+        if point_size and operation in ('edit_panel_letters','restyle_texts') and args.get('font_size') is not None:
+            requested=float(point_size[2])*(-1 if point_size[1] else 1)
+            if float(args['font_size'])!=requested:
+                from ..errors import NeedsClarification
+                raise NeedsClarification('The requested font size is '+str(requested)+' points. I cannot silently change its sign or size; please choose a valid positive size. No replacement style was submitted.')
         if singular and not explicit_target and (len(panels) != 1 or selection.get('stale_selection')) and not read_only:
             from ..errors import NeedsClarification
             raise NeedsClarification('Please select the panel with the hard-to-see letter, or tell me its panel label. I cannot identify which one from the current selection. No lettering edit was submitted.')
@@ -171,8 +184,33 @@ class PyFiguresAdapter:
         verb = ' is' if len(ids) == 1 else ' are'
         return target + verb + (' already ' if not operation.get('changed') else ' now ') + request[0] + '. Verified in the open figure.'
 
+    def finalize_manual_response(self,request):
+        import re
+        manual=bool(re.search(r'\b(?:how|explain|tutorial|instructions?|shortcuts?)\b|\bwhere\s+(?:do|can|should)\b',request,re.I))
+        if not manual:return None
+        positive=re.sub(r"\b(?:without|no|do not|don't)\s+(?:any\s+)?(?:using\s+)?(?:python|code|recipes?|scripts?)\b",'',request,flags=re.I)
+        if re.search(r'\b(?:code|python|recipes?|scripts?)\b',positive,re.I):return None
+        try:
+            guide=self.request('manual_guide',{'topic':request})
+        except Exception:
+            return None
+        if guide.get('status') not in ('explained','source_reviewed'):return None
+        steps=guide.get('steps')
+        if not steps and guide.get('guides'):
+            steps=[s for g in guide['guides'] for s in g.get('steps',[])]
+        if not steps:return None
+        # A broad export keyword must not turn a PDF question into PPTX steps.
+        if guide.get('guide')=='export_pptx' and not re.search(r'powerpoint|pptx|\bppt\b',request,re.I):return None
+        title=guide.get('title') or 'In PyFigures'
+        content=title+':\n\n'+'\n'.join(str(i+1)+'. '+step for i,step in enumerate(steps))
+        if guide.get('guide')=='reorder_panels':
+            content+='\n\nWith automatic lettering enabled, letters follow panel positions.'
+        return {'content':content,'evidence':{'kind':'authored_manual_guide','guide':guide,'operation_executed':False}}
+
     def finalize_response(self,request,reply,state,preview=False):
         import re
+        manual=self.finalize_manual_response(request)
+        if manual:return manual
         if re.search(r'\b(?:how|tutorial|instructions|shortcut)\b',request,re.I):return None
         asks_ready=bool(re.search(r'\b(?:ready|readiness)\b',request,re.I) and
                         re.search(r'\b(?:is|are|whether|tell|check|review|submission|publication|submit)\b',request,re.I))

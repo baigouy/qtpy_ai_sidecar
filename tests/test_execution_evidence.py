@@ -15,7 +15,7 @@ def test_readiness_finalization_uses_measured_evidence_and_skips_manual_help():
     assert 'not ready' in result['content'] and '173 DPI' in result['content']
     assert host.finalize_response('How do I check submission readiness manually?','instructions',{}) is None
     assert host.finalize_response('Make the selected letter blue','done',{}) is None
-    assert len(calls)==1
+    assert calls==['submission_review','manual_guide']
     assert '173 DPI' in host.finalize_response('Would you submit this to a journal as it stands?','Yes.',{})['content']
     host.validate_tool_call('use_pyfigures_tool',{'tool_name':'review_submission_readiness','arguments':{}},{},'Assess this please')
     assert '173 DPI' in host.finalize_response('Assess this please','Looks good.',{})['content']

@@ -206,7 +206,8 @@ def test_protocol_recovery_is_bounded_without_submission(tmp_path):
     engine=Engine(Config(state_dir=str(tmp_path/'state'),servers=servers(tmp_path/'doc.json')),backend=model)
     with pytest.raises(BaseException):
         asyncio.run(engine.turn('Make labels white',lambda *a:None))
-    assert model.calls==2
+    # Initial reply, one format correction, then one text-only attempt.
+    assert model.calls==3
     assert not (tmp_path/'doc.json').exists()
 
 def test_direct_names_are_readable_stable_and_collision_safe():
