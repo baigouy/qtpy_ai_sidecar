@@ -81,6 +81,8 @@ class PyFiguresAdapter:
         panels = selection.get('selected_panels') or []
         explicit_target = re.search(r'\b(?:all|every|whole|entire)\b|\b(?:panel|letter)\s+(?:[a-z]|[0-9]+(?:/[0-9]+)?)\b', text, re.I)
         singular = re.search(r'\b(?:one|a|single|this|that|the)\s+(?:panel\s+)?(?:letter|label)\b', text, re.I)
+        plural_style_collection=re.search(r'\b(?:the|these|those)\s+(?:panel\s+)?(?:letter|label)\s+(?:backgrounds|boxes|fills|fonts|sizes|colours|colors|positions|styles)\b',text,re.I)
+        if plural_style_collection:singular=None
         operation = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
         if operation=='review_submission_readiness':self._quality_review_requested=True
         vague_annotation = re.search(r'\bannot\w*\b', text, re.I) and not re.search(

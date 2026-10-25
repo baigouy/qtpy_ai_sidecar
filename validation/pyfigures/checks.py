@@ -5,7 +5,9 @@ def verify(expect, before, after, events, allowed):
         if not ok: failures.append(message)
     if 'letters' in expect:
         check(after['letters']['visible_letter_count']==expect['letters'],'Wrong visible letter count')
-    if expect.get('letters')==24:
+    if 'letter_sequence' in expect and expect['letter_sequence'] is not None:
+        check([p['letters'][0]['text'] if p['letters'] else None for p in after['letters']['panels']]==expect['letter_sequence'],'Wrong requested letter sequence')
+    elif expect.get('letters')==24 and 'letter_sequence' not in expect:
         check([p['letters'][0]['text'] if p['letters'] else None for p in after['letters']['panels']]==list('abcdefghijklmnopqrstuvwx'),'Wrong automatic letter sequence')
     if expect.get('preserve_letters'):
         check([p['letters'] for p in before['letters']['panels']]==[p['letters'] for p in after['letters']['panels']],'Unrequested lettering change')
@@ -58,18 +60,22 @@ def verify(expect, before, after, events, allowed):
     if 'keep_first' in expect:
         check([p['filename'] for p in after['letters']['panels']]==[p['filename'] for p in before['letters']['panels']][:expect['keep_first']],'Wrong panels retained')
     def styles_equal(actual,key,wanted):
-        if key=='color_family' and wanted=='blue':
+        if key=='color_family':
             try:
+                if isinstance(actual,int):actual=f'#{actual & 0xFFFFFF:06x}'
                 r,g,b=[int(actual[i:i+2],16) for i in (1,3,5)]
-                return b>=128 and b>r+32 and b>g and r<128
-            except (TypeError,ValueError): return False
+                if wanted=='blue':return b>=128 and b>r+32 and b>g and r<128
+                if wanted=='green':return g>=128 and g>r+32 and g>b+32
+                if wanted=='red':return r>=128 and r>g+32 and r>b+32
+            except (TypeError,ValueError):return False
+            return False
         if key=='placement':
             return set(str(actual).replace('_',' ').split())==set(str(wanted).replace('_',' ').split())
         return actual==wanted
     for p in after['letters']['panels']:
         for a in p['letters']:
             for key,wanted in expect.get('all_style',{}).items():
-                check(styles_equal(a.get(key),key,wanted),'Wrong '+key+' on '+a['text']+': '+str(a.get(key)))
+                check(styles_equal(a.get('color' if key=='color_family' else key),key,wanted),'Wrong '+key+' on '+a['text']+': '+str(a.get(key)))
             specific=expect.get('panel_style',{})
             if a['text']==specific.get('ref'):
                 for key,wanted in specific.items():
@@ -84,13 +90,98 @@ def verify(expect, before, after, events, allowed):
             return [{k:v for k,v in a.items() if k not in ignored}
                     for p in snapshot['letters']['panels'] for a in p['letters'] if a['text']==ref]
         check(selected_styles(before)==selected_styles(after),'Unrequested selected letter property changed')
+
+    # Additional independent checks for the 150-request corpus.
+    if 'image_count' in expect:
+        check(len(after['letters']['panels'])==expect['image_count'],'Wrong image count')
+    if expect.get('no_duplicate_letters'):
+        names=[a['text'].casefold() for p in after['letters']['panels'] for a in p['letters']]
+        check(len(names)==len(set(names)),'Duplicate visible panel letters')
+    if 'selected_groups' in expect:
+        check(sorted(after['selection'].get('selected_group_paths',[]))==sorted(expect['selected_groups']),'Wrong selected groups')
+    if expect.get('selection_empty'):
+        check(not after['selection'].get('selected_panels') and not after['selection'].get('selected_group_paths'),'Selection was not cleared')
+    if 'reverse_row' in expect:
+        wanted=[list(r) for r in before['rows']]
+        wanted[expect['reverse_row']-1].reverse()
+        check(after['rows']==wanted,'Wrong reversed row order')
+    if 'expected_order_indices' in expect:
+        check([p['filename'] for p in after['letters']['panels']]==[before['letters']['panels'][i]['filename'] for i in expect['expected_order_indices']],'Wrong combined-operation image order')
+    if 'scale_bars' in expect:
+        check(sum(a['type']=='ScaleBar' for a in after['annotations'])==expect['scale_bars'],'Wrong scale-bar count')
+    def by_ref(snapshot,ref):
+        for p in snapshot['letters']['panels']:
+            if any(a['text'].casefold()==str(ref).casefold() for a in p['letters']):return p['panel_id']
+        return str(ref) if '/' in str(ref) else None
+    images={p['panel_id']:p for p in after.get('images',[])}
+    old_images={p['panel_id']:p for p in before.get('images',[])}
+    for spec in expect.get('image_properties',[]):
+        pid=by_ref(after,spec['ref']);actual=images.get(pid)
+        check(actual is not None,'Missing image target '+spec['ref'])
+        if actual:
+            for key,wanted in spec.items():
+                if key=='ref':continue
+                got=actual.get(key)
+                if key=='theta' and got is None:got=0
+                if isinstance(wanted,(int,float)):
+                    check(isinstance(got,(int,float)) and abs(got-wanted)<1e-5,'Wrong image '+key+' on '+spec['ref'])
+                else:check(got==wanted,'Wrong image '+key+' on '+spec['ref'])
+    for axis in ('h','v'):
+        if expect.get('flip_'+axis):
+            pid=by_ref(after,expect['flip_'+axis])
+            old=old_images.get(pid,{})
+            check(bool(old.get('flip_'+axis+'_digest')) and images.get(pid,{}).get('pixel_digest')==old.get('flip_'+axis+'_digest'),'Displayed pixels were not flipped '+axis)
+    for spec in expect.get('annotations_match',[]):
+        pid=by_ref(after,spec.get('ref')) if spec.get('ref') else None
+        if spec.get('ref') and pid is None:
+            check(False,'Missing annotation owner '+spec['ref']);continue
+        candidates=[a for a in after['annotations'] if (pid is None or a['panel_id']==pid) and (not spec.get('type') or a['type']==spec['type']) and (not spec.get('text') or a.get('text')==spec['text'])]
+        check(len(candidates)==spec.get('count',1),'Wrong requested annotation count '+str(spec))
+        if candidates:
+            a=candidates[-1]
+            for key in ('kind','color','fill_color','stroke'):
+                if key in spec:check(a.get(key)==spec[key],'Wrong annotation '+key)
+            if 'color_family' in spec:check(styles_equal(a.get('color'),'color_family',spec['color_family']),'Wrong annotation color family')
+            if 'geometry' in spec:
+                check(all(abs(x-y)<1e-4 for x,y in zip(a.get('geometry',[]),spec['geometry'])) and len(a.get('geometry',[]))==4,'Wrong ROI geometry')
+            for key,wanted in spec.get('style',{}).items():
+                check(styles_equal(a.get('style',{}).get(key),key,wanted),'Wrong annotation text '+key)
+    if expect.get('preserve_other_image_properties'):
+        targets={by_ref(before,r) for r in expect['preserve_other_image_properties']}
+        for pid,old in old_images.items():
+            if pid not in targets:check(images.get(pid)==old,'Unrequested image-property change on '+pid)
+    for key,wanted in expect.get('caption',{}).items():
+        check((after.get('caption') or {}).get(key)==wanted,'Wrong caption '+key)
+    if 'plot_count' in expect:check(sum(p.get('is_plot',False) for p in images.values())==expect['plot_count'],'Wrong rendered plot count')
+    for filename in expect.get('filename_contains',[]):
+        check(any(filename in p['filename'] for p in images.values()),'Imported image missing: '+filename)
+    if 'all_row_spacing' in expect:
+        check(all(abs(float(r.get('space') or 0)-expect['all_row_spacing'])<1e-4 for r in after.get('row_settings',[])),'Wrong within-row spacing')
+    for spec in expect.get('output_files',[]):
+        from pathlib import Path
+        file=Path(spec['path'])
+        check(file.is_file() and file.stat().st_size>0,'Missing output file '+str(file))
+        if file.is_file():
+            data=file.read_bytes()
+            if spec.get('format')=='png':check(data.startswith(bytes.fromhex('89504e470d0a1a0a')),'Invalid PNG output')
+            if spec.get('format')=='pdf':check(data.startswith(b'%PDF'),'Invalid PDF output')
+            if spec.get('format')=='svg':
+                import xml.etree.ElementTree as ET
+                try:check(ET.fromstring(data).tag.endswith('svg'),'Invalid SVG root')
+                except ET.ParseError:check(False,'Malformed SVG output')
+            if spec.get('format')=='pyf':
+                import xml.etree.ElementTree as ET
+                try:ET.fromstring(data)
+                except ET.ParseError:check(False,'Malformed PYF output')
+            if spec.get('contains'):check(spec['contains'] in data.decode('utf-8',errors='replace'),'Output content missing')
+
     edits=[]
     for kind,value in events:
         if kind=='tool_call':
             args=value.get('arguments',{})
             name=args.get('tool_name','') if 'use_pyfigures_tool' in value.get('name','') else value.get('name','')
-            if name and not any(word in name for word in ('inspect','find_','get_','list_','preview','select_live','open_annotation','explain_','show_me_how','guidance')):
+            if name and not any(word in name for word in ('inspect','find_','get_','list_','preview','select_live','open_annotation','explain_','show_me_how','guidance','check_','audit_','describe_','review_submission','figure_review_brief')):
                 edits.append(name)
     check(all(name in allowed for name in edits),'Unexpected mutation operation: '+str(edits))
-    check(len(edits)<=1,'Efficiency: Too many mutation calls: '+str(edits))
+    check(len(edits)<=expect.get('max_mutations',1),'Efficiency: Too many mutation calls: '+str(edits))
     return failures
