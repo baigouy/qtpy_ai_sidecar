@@ -8,3 +8,10 @@ def qt_application_lifetime():
     app.setQuitOnLastWindowClosed(False)
     yield app
     app.processEvents()
+
+
+def pytest_sessionstart(session):
+    from pathlib import Path
+    marker=Path(__file__).resolve().parents[1]/'validation/pyfigures/CLAUDE_ACTIVE_RUN.json'
+    if marker.exists():
+        pytest.exit('Claude Qt/model run is active. Wait until CLAUDE_ACTIVE_RUN.json is removed.',returncode=4)

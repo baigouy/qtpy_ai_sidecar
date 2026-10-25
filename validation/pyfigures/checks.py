@@ -201,4 +201,70 @@ def verify(expect, before, after, events, allowed):
                 edits.append(name)
     check(all(name in allowed for name in edits),'Unexpected mutation operation: '+str(edits))
     check(len(edits)<=expect.get('max_mutations',1),'Efficiency: Too many mutation calls: '+str(edits))
+    failures+=verify_advanced(expect,before,after)
+    if expect.get('clarification'):check('?' in replies or any(word in replies for word in ('which','clarify','specify','choose')),'No clarification question')
+    return failures
+
+
+"""Independent rich-text and live editor-draft assertions."""
+def verify_advanced(expect,before,after):
+    failures=[]
+    def check(value,message):
+        if not value:failures.append(message)
+    def panel_id(ref):
+        return next((p['panel_id'] for p in before['letters']['panels'] if p['panel_id']==ref or any(a['text']==ref for a in p['letters'])),None)
+    def characters(annotation):
+        result={}
+        for run in annotation.get('runs',[]):
+            position=run['start']
+            style={k:v for k,v in run.items() if k not in ('start','length','text')}
+            for char in run['text']:
+                result[position]=style
+                position+=len(char.encode('utf-16-le'))//2
+        return result
+    for spec in expect.get('text_spans',[]):
+        pid=panel_id(spec['ref'])
+        matches=[a for a in after['annotations'] if a['panel_id']==pid and a.get('text')==spec['text']]
+        check(len(matches)==1,'Text span target not unique or wording changed')
+        if len(matches)!=1:continue
+        actual=matches[0];mapping=characters(actual)
+        positions=[];start=0
+        while True:
+            start=spec['text'].find(spec['match'],start)
+            if start<0:break
+            positions.append(start);start+=len(spec['match'])
+        occurrence=spec.get('occurrence',1)
+        if not 1<=occurrence<=len(positions):
+            failures.append('Text span match missing');continue
+        pos=positions[occurrence-1]
+        start=len(spec['text'][:pos].encode('utf-16-le'))//2
+        end=start+len(spec['match'].encode('utf-16-le'))//2
+        wanted={k:v for k,v in spec.items() if k not in ('ref','text','match','occurrence','preserve_outside')}
+        chosen=[fmt for position,fmt in mapping.items() if start<=position<end]
+        check(bool(chosen) and all(all(fmt.get(k)==v for k,v in wanted.items()) for fmt in chosen),'Wrong selected rich-text formatting')
+        if spec.get('preserve_outside'):
+            previous=next((a for a in before['annotations'] if a['panel_id']==pid and a['index']==actual['index']),None)
+            check(previous is not None,'Original rich-text annotation missing')
+            if previous:
+                old=characters(previous)
+                check(all(fmt==old.get(position) for position,fmt in mapping.items() if not start<=position<end),'Unrequested rich-text formatting changed')
+    for spec in expect.get('editor_annotations_match',[]):
+        found=[a for a in after.get('editor_annotations',[]) if a['type']==spec['type'] and (not spec.get('selected') or a.get('selected'))]
+        check(len(found)==1,'Native editor annotation selection is not unique')
+        if len(found)==1:
+            for key,value in spec.items():
+                check(found[0].get(key)==value,'Wrong editor draft '+key)
+    if 'preserve_editor_except' in expect:
+        permitted=set(expect['preserve_editor_except'])|{'token'}
+        old={a['annotation_index']:a for a in before.get('editor_annotations',[])}
+        for a in after.get('editor_annotations',[]):
+            previous=old.get(a['annotation_index'])
+            if previous is None:failures.append('Editor unexpectedly added an annotation');continue
+            allowed=permitted if a.get('selected') else set()
+            check({k:v for k,v in a.items() if k not in allowed}=={k:v for k,v in previous.items() if k not in allowed},'Editor changed unrequested properties')
+    if expect.get('open_dialog_title'):
+        check(expect['open_dialog_title'] in after.get('open_dialogs',[]),'Requested native property dialog is not open')
+    if expect.get('clarification'):
+        # The caller checks replies separately; this flag also requires no mutation.
+        check(before['document_digest']==after['document_digest'],'Clarification request changed the figure')
     return failures

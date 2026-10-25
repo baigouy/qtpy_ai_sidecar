@@ -21,8 +21,11 @@ class PyFiguresAdapter:
         url = urlsplit(connection['url'])
         if url.hostname not in ('127.0.0.1', 'localhost', '::1'):
             raise ValueError('The PyFigures bridge must be local')
-        data = json.dumps({'operation': operation, 'arguments': arguments or {},
-                           'request_id': str(uuid.uuid4())}).encode()
+        payload={'operation':operation,'arguments':arguments or {},'request_id':str(uuid.uuid4())}
+        if operation in ('inspect_annotation_objects','letter_state','select_live_objects'):
+            current=self.request('inspect')
+            payload.update(session_id=current['session_id'],expected_revision=current['revision'])
+        data=json.dumps(payload).encode()
         req = urllib.request.Request(connection['url'], data,
             headers={'Authorization': 'Bearer ' + connection['token'], 'Content-Type': 'application/json'})
         with urllib.request.urlopen(req, timeout=45) as response:
@@ -46,14 +49,18 @@ class PyFiguresAdapter:
 
     def context(self):
         result = self.request('inspect')
-        return {key: result.get(key) for key in ('selection', 'verified_letter_specification', 'panel_references', 'text_annotations', 'last_canvas_click', 'annotation_editor_status', 'native_gui_jobs', 'native_gui_available', 'revision', 'dirty')}
+        context = {key: result.get(key) for key in ('selection', 'verified_letter_specification', 'panel_references', 'text_annotations', 'roi_annotations', 'last_canvas_click', 'annotation_editor_status', 'native_gui_jobs', 'native_gui_available', 'revision', 'dirty')}
+        if result.get('annotation_editor_open'):
+            context['annotation_editor']=self.request('inspect_annotation_objects')
+        return context
 
     def context_instructions(self, state):
         selection = state.get('selection') or {}
-        return ('If a capability is missing from dedicated MCP tools, discover inspect_native_gui and inspect the actual native controls instead of concluding the GUI cannot do it. Use_native_gui takes only inspected IDs and exact choices. Native context/drag menus are available via open_native_menu; keyboard, canvas gestures and file drops have native_gui tools. Prefer dedicated semantic tools for common edits. '
+        return ('When annotation_editor is present, editor_draft_objects and selected=true describe the live editor selection. Edits there affect its draft until native OK; preserve Cancel. Use inspected native controls for the selected ROI instead of guessing an object from the main figure or silently closing the dialog. '
+                'If a capability is missing from dedicated MCP tools, discover inspect_native_gui and inspect the actual native controls instead of concluding the GUI cannot do it. Use_native_gui takes only inspected IDs and exact choices. Native context/drag menus are available via open_native_menu; keyboard, canvas gestures and file drops have native_gui tools. Prefer dedicated semantic tools for common edits. '
                 'Native GUI calls return queued jobs, not success. Inspect native_gui jobs and active modal controls, fill native fields and accept/cancel as requested, then verify actual document state. Do not claim queued or running work has completed. Teaching requests still do not authorize using edit controls. '
                 'How-to/manual/shortcut questions are teaching requests, not permission to edit. For native arrow keys and drag/drop discover explain_live_interaction; include figure focus, selection level, source/target and relevant verified shortcuts. For other topics use authored explain_how/show_me_how. Never invent modifiers or menu labels. Never provide Python unless code or recipe was explicitly requested. '
-                'Use find_pyfigures_tools for the exact schema before a first use; state field names are not function argument names. remove_annotation uses group_path/image_index/annotation_index, not panel_id. open_annotation_editor uses panel_ref, not panel_id. edit_panel_letters has no letters or style object arguments: pass its flat schema fields. A mixed colour summary is not a valid colour; omit styling to preserve actual styles. '
+                'Use find_pyfigures_tools for the exact schema before a first use; state field names are not function argument names. Native image/annotation tools prefer panel_ref for named panels. Text setters use text_index from inspection; ROI/removal tools use the full annotation_index. panel_id is not a setter argument. open_annotation_editor uses panel_ref, not panel_id. edit_panel_letters has no letters or style object arguments: pass its flat schema fields. A mixed colour summary is not a valid colour; omit styling to preserve actual styles. '
                 'Convert an existing ROI into an inset with roi_to_inset: this magnifies the same source, no external filename required. If multiple ROIs exist ask which; do not redefine the already clear request. '
                 'If a user reports an invisible letter, inspect its appearance and location; existence in state does not prove visibility. Avoid categorical denials based on letter counts alone. '
                 'For lettering a newly constructed figure, use one renumber/all operation for a complete unique sequence. Partial restore preserves earlier IDs. verified_letter_specification.duplicate_letter_references reports ambiguities; a correct count alone does not prove usable panel references. Never silently rename accepted manual labels. '
@@ -98,6 +105,32 @@ class PyFiguresAdapter:
             raise NeedsClarification(f'What would you like to add to {target}?\n- Tell me the annotation you want for {target}\n- Open the annotation editor for {target}\nNo annotation was added.')
         read_only = operation and (operation.startswith(('inspect_', 'get_', 'list_', 'check_', 'describe_', 'audit_', 'explain_')) or operation in ('preview_figure', 'find_pyfigures_tools', 'readability'))
         args = arguments.get('arguments', {}) if tool_name == 'use_pyfigures_tool' else arguments
+        if operation=='add_annotation' and args.get('panel_ref') is None and args.get('group_path') is not None and args.get('image_index') is not None:
+            clause=re.split(r'\bthen\b|;',text,flags=re.I)[0]
+            named=re.search(r'\b(?:write|add|put)\b.{0,160}?\b(?:on|to)\s+(?:(?:image|panel|picture)\s+)?([a-z])(?!\w)',clause,re.I)
+            targets=[p for p in state.get('panel_references',[]) if named and named[1] in p.get('letters',[])]
+            if len(targets)==1 and (args['group_path']!=targets[0]['group_path'] or args['image_index']!=targets[0]['image_index']):
+                raise ValueError('PANEL_ADDRESS_MISMATCH: The requested note target is '+named[1]+'. Use panel_ref for that panel and omit guessed group_path/image_index. No annotation was added.')
+        written=args.get('text') if operation in ('add_annotation','set_annotation_text') else None
+        if isinstance(written,str) and written.strip() and written not in text and not re.search(r'\b(?:capital\w*|upper\s*case|lower\s*case|uppercase|lowercase|title\s*case|caps)\b',text,re.I):
+            # The user's own words go in verbatim: the model may not recapitalise "sample" to "Sample".
+            typed=[m[1] for m in re.finditer(r'(?:\b(?:write|type|put|add|say|saying|reads?|reading|text)\s+|["\'“‘])('+re.escape(written.strip())+r')(?!\w)',text,re.I)]
+            if len(set(typed))==1:args['text']=written.replace(written.strip(),typed[0])
+        picked=args.get('occurrence') if operation in ('style_annotation','edit_annotation_properties') else None
+        if picked is not None and not re.search(r'\b(?:first|second|third|fourth|fifth|last|both|all|every|each|\d+(?:st|nd|rd|th)|occurrence|instance)\b',text,re.I):
+            from ..errors import NeedsClarification
+            word=args.get('match') or args.get('substring') or 'that text'
+            raise NeedsClarification(f'"{word}" appears more than once in that text. Which one do you mean (the first, the second…)? No text was changed.')
+        roi_edit=operation=='set_roi_properties' or (operation=='edit_annotation_properties' and bool(set(args.get('changes',{})) & {'stroke','fill_color','geometry','endpoints'}))
+        if roi_edit and re.search(r'\b(?:the|that|this)\s+(?:box|rectangle)\b',text,re.I) and not re.search(r'\b(?:first|second|third|left|right|top|bottom|red|green|blue|yellow|white|black)\s+(?:box|rectangle)\b|\b(?:box|rectangle)\s+(?:on|at|to)\s+(?:the\s+)?(?:left|right|top|bottom)\b|\bannotation(?:_index| index)\s*[:=]?\s*\d',text,re.I):
+            references=state.get('panel_references',[])
+            target=next((p['panel_id'] for p in references if args.get('panel_ref') in [p['panel_id']]+p.get('letters',[]) or (args.get('group_path')==p.get('group_path') and args.get('image_index')==p.get('image_index'))),None)
+            candidates=[a for a in state.get('roi_annotations',[]) if (target is None or a['panel_id']==target) and a['type'] in ('Rectangle2D','Rect2D','Square2D')]
+            selected=[a for a in (state.get('annotation_editor') or {}).get('editor_draft_objects',[]) if a.get('selected') and a.get('type') in ('Rectangle2D','Rect2D','Square2D')]
+            if len(candidates)>1 and len(selected)!=1:
+                from ..errors import NeedsClarification
+                raise NeedsClarification('Which rectangle do you mean? Several boxes match. Select one in the image editor or identify it by position or colour. No ROI was changed.')
+
         columns=re.search(r'(?<![\w.])(-?\d+)\s+(?:pictures?|images?|panels?)\s+(?:per|on each|in each|in a|a)\s+row\b',text,re.I)
         if columns and operation=='arrange_live_images' and args.get('columns')!=int(columns[1]):
             from ..errors import NeedsClarification
@@ -110,6 +143,9 @@ class PyFiguresAdapter:
             if float(args['font_size'])!=requested:
                 from ..errors import NeedsClarification
                 raise NeedsClarification('The requested font size is '+str(requested)+' points. I cannot silently change its sign or size; please choose a valid positive size. No replacement style was submitted.')
+        preserving_letters=re.search(r'\b(?:leave|keep|preserve)\b.{0,35}\b(?:panel\s+)?letters?\b.{0,20}\b(?:alone|unchanged|as (?:it|they) (?:is|are))\b',text,re.I)
+        if preserving_letters and operation in ('style_annotation','set_annotation_text','add_annotation','set_roi_properties','edit_annotation_properties'):
+            singular=None
         if singular and not explicit_target and (len(panels) != 1 or selection.get('stale_selection')) and not read_only:
             from ..errors import NeedsClarification
             raise NeedsClarification('Please select the panel with the hard-to-see letter, or tell me its panel label. I cannot identify which one from the current selection. No lettering edit was submitted.')
@@ -147,6 +183,7 @@ class PyFiguresAdapter:
 
     def verified_completion(self, tool_name, arguments, result, state, text):
         import re
+        if re.search(r'\b(?:select|highlight|pick)\b',text,re.I):return None
         name = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
         if name == 'swap_rows' and not result.get('is_error'):
             match = re.fullmatch(r'\s*(?:please\s+)?(?:swap|exchange|switch)\s+rows?\s+(\d+)\s+(?:and|with)\s+(?:row\s+)?(\d+)[.!? ]*', text, re.I)
@@ -216,7 +253,7 @@ class PyFiguresAdapter:
     def _verify_letter_style_reply(self,request,reply,state):
         import re
         if not re.search(r'\bletters?\b',request,re.I):return None
-        if re.search(r'\b(?:keep|leave|preserve)\b.{0,50}\bletters?\b.{0,20}\bunchanged\b|\bwithout changing\b.{0,30}\bletters?\b',request,re.I):return None
+        if re.search(r'\b(?:keep|leave|preserve)\b.{0,50}\bletters?\b.{0,20}\b(?:unchanged|alone)\b|\bwithout changing\b.{0,30}\bletters?\b',request,re.I):return None
         if not re.search(r'\b(?:done|success\w*|now|have been|has been|result)\b',reply,re.I):return None
         desired={}
         for prop,word in (('bold','bold'),('italic','italic'),('underline','underlin(?:e|ed)')):
@@ -240,11 +277,76 @@ class PyFiguresAdapter:
                     'evidence':{'status':'unavailable','error':str(exc)}}
         return None
 
+    def _verify_requested_selection(self,request,reply):
+        import re
+        match=re.search(r'\b(?:select|highlight|pick)\s+(?:the\s+)?(?:(?:panel|image|picture)\s+)?([a-z]|\d+(?:/\d+)+)(?!\w)',request,re.I)
+        if not match or re.search(r"\b(?:do not|don't|never)\s+(?:select|highlight|pick)\b",request,re.I):return None
+        if not re.search(r'\b(?:done|success\w*|now|changed|have been|has been|result)\b',reply,re.I):return None
+        refs=[match[1]]
+        tail=request[match.end():]
+        if tail.startswith("'s"):return None
+        next_word=re.match(r'\s+([A-Za-z]+)',tail)
+        if next_word and next_word[1].lower() not in ('and','then','please','only','to','for','as','with'):return None
+        while True:
+            extra=re.match(r'^\s*(?:,|and)\s+([a-z]|\d+(?:/\d+)+)(?!\w)',tail,re.I)
+            if not extra:break
+            refs.append(extra[1]);tail=tail[extra.end():]
+        try:
+            current=self.request('inspect')
+            selected=(current.get('selection') or {}).get('selected_panels',[])
+            actual={str(p['panel_id']) for p in selected}
+            actual.update(str(x) for p in selected for x in p.get('letters',[]))
+            missing=[ref for ref in refs if ref not in actual]
+            if missing:
+                # The missing part is a pure GUI selection the user asked for
+                # word for word (no document change): the host completes it
+                # rather than reporting an unfinished request.
+                try:
+                    self.request('select_live_objects',{'panel_refs':refs})
+                    current=self.request('inspect')
+                    selected=(current.get('selection') or {}).get('selected_panels',[])
+                    actual={str(p['panel_id']) for p in selected}
+                    actual.update(str(x) for p in selected for x in p.get('letters',[]))
+                    if all(ref in actual for ref in refs):
+                        return {'content':reply.rstrip()+'\n\n'+', '.join(refs)+(' is' if len(refs)==1 else ' are')+' now selected in the figure, as requested.',
+                                'evidence':{'status':'selection_completed_by_host','requested':refs,'selection':current.get('selection')}}
+                except Exception:
+                    pass
+                return {'content':'The request is not fully complete: '+', '.join(missing)+' is not selected in the GUI. Other completed edits may remain.',
+                        'evidence':{'status':'incomplete_selection','requested':refs,'missing':missing,'missing_operation':{'tool_name':'select_live_objects','arguments':{'panel_refs':refs}},'selection':current.get('selection')}}
+        except Exception as exc:
+            return {'content':'I could not verify the requested GUI selection: '+str(exc)+'. The full request is not confirmed.',
+                    'evidence':{'status':'unavailable','error':str(exc)}}
+        return None
+
+    def _verify_requested_dialog(self,request,reply):
+        import re
+        if not re.search(r'\b(?:open|show)\b.*\b(?:properties|settings)\b',request,re.I):return None
+        expected='Edit Inset' if re.search(r'\binset\b',request,re.I) else 'Edit ScaleBar' if re.search(r'\bscale[ -]?bar\b',request,re.I) else 'Edit text' if re.search(r'\b(?:text|label)\b',request,re.I) else None
+        if expected is None:return None
+        try:
+            current=self.request('inspect')
+            panel=re.search(r'\b(?:in|on)\s+(?:panel\s+)?([a-z])(?!\w)',request,re.I)
+            wanted=next((p['panel_id'] for p in current.get('panel_references',[]) if panel and panel[1] in p.get('letters',[])),None)
+            correct_owner=wanted is None or wanted==current.get('annotation_editor_panel_id')
+            if expected not in current.get('native_dialogs',[]) or not correct_owner:
+                return {'content':'The requested native properties are not open yet. Opening the panel editor alone did not complete this request.',
+                        'evidence':{'status':'not_verified','expected_dialog':expected,'expected_panel_id':wanted,
+                                    'actual_dialogs':current.get('native_dialogs',[]),'actual_panel_id':current.get('annotation_editor_panel_id')}}
+        except Exception as exc:
+            return {'content':'I could not verify the requested property dialog: '+str(exc),
+                    'evidence':{'status':'unavailable','error':str(exc)}}
+        return None
+
     def finalize_response(self,request,reply,state,preview=False):
         import re
         manual=self.finalize_manual_response(request)
         if manual:return manual
         if re.search(r'\b(?:how|tutorial|instructions|shortcut)\b',request,re.I):return None
+        dialog_verification=self._verify_requested_dialog(request,reply)
+        if dialog_verification:return dialog_verification
+        selection_verification=self._verify_requested_selection(request,reply)
+        if selection_verification:return selection_verification
         style_verification=self._verify_letter_style_reply(request,reply,state)
         if style_verification:return style_verification
         asks_ready=bool(re.search(r'\b(?:ready|readiness)\b',request,re.I) and
