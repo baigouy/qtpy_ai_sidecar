@@ -151,6 +151,21 @@ class PyFiguresAdapter:
                 from ..errors import NeedsClarification
                 raise NeedsClarification('Which rectangle do you mean? Several boxes match. Select one in the image editor or identify it by position or colour. No ROI was changed.')
 
+        if operation=='set_lut' and isinstance(args.get('luts'),list):
+            # After "blorple" was refused the model chose PURPLE itself: a colour table
+            # must be one the user named.
+            spoken=text.lower().replace('grey','gray')
+            def stem(name):
+                return re.sub(r'[^a-z ]','',name.lower().replace('grey','gray')).strip().rstrip('s')   # Grays -> gray
+            unnamed=[l for l in args['luts'] if isinstance(l,str) and stem(l) and stem(l) not in spoken]
+            if unnamed:
+                from ..errors import NeedsClarification
+                raise NeedsClarification('The request does not name the colour table '+', '.join(unnamed)+'. Which LUT do you want (e.g. Grays, Red, Green, Blue, Magenta, Fire)? No LUT was changed.')
+        greek=re.search(r'\b(?:panel|image|picture)\s+(alpha|beta|gamma|delta|epsilon|zeta|eta|theta|iota|kappa|lambda|mu|nu|xi|omicron|pi|rho|sigma|tau|upsilon|phi|chi|psi|omega)\b',text,re.I)
+        if greek and not read_only and not any(greek[1].lower() in [str(x).lower() for x in p.get('letters',[])] for p in state.get('panel_references',[])):
+            # "the letter from panel omega": no such panel, so nothing may be guessed.
+            from ..errors import NeedsClarification
+            raise NeedsClarification(f'There is no panel called {greek[1]} in this figure. Which panel do you mean? Nothing was changed.')
         columns=re.search(r'(?<![\w.])(-?\d+)\s+(?:pictures?|images?|panels?)\s+(?:per|on each|in each|in a|a)\s+row\b',text,re.I)
         if columns and operation=='arrange_live_images' and args.get('columns')!=int(columns[1]):
             from ..errors import NeedsClarification
@@ -249,7 +264,7 @@ class PyFiguresAdapter:
 
     def finalize_manual_response(self,request):
         import re
-        manual=bool(re.search(r'\b(?:how|explain|tutorial|instructions?|shortcuts?)\b|\bwhere\s+(?:do|can|should)\b',request,re.I))
+        manual=bool(re.search(r'\b(?:how|explain|tutorial|instructions?|shortcuts?)\b|\bwhere\s+(?:do|can|should)\b|\bwhat\s+if\b',request,re.I))
         if not manual:return None
         positive=re.sub(r"\b(?:without|no|do not|don't)\s+(?:any\s+)?(?:using\s+)?(?:python|code|recipes?|scripts?)\b",'',request,flags=re.I)
         if re.search(r'\b(?:code|python|recipes?|scripts?)\b',positive,re.I):return None
@@ -263,7 +278,7 @@ class PyFiguresAdapter:
             steps=[s for g in guide['guides'] for s in g.get('steps',[])]
         if not steps:return None
         # A broad export keyword must not turn a PDF question into PPTX steps.
-        if guide.get('guide')=='export_pptx' and not re.search(r'powerpoint|pptx|\bppt\b',request,re.I):return None
+        if guide.get('guide')=='export_pptx' and not re.search(r'powerpoint|pptx|\bppt\b|\bslides?\b',request,re.I):return None
         title=guide.get('title') or 'In PyFigures'
         content=title+':\n\n'+'\n'.join(str(i+1)+'. '+step for i,step in enumerate(steps))
         if guide.get('guide')=='reorder_panels':

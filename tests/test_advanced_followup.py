@@ -209,6 +209,37 @@ def test_every_match_needs_words_that_ask_for_it():
     with pytest.raises(NeedsClarification):
         adapter.validate_tool_call('use_pyfigures_tool',call,{},"On h, make the first 'treated' bold.")
 
+def test_a_colour_table_must_be_one_the_user_named():
+    from qtpy_ai_sidecar.errors import NeedsClarification
+    adapter=PyFiguresAdapter('unused')
+    call={'tool_name':'set_lut','arguments':{'panel_ref':'a','luts':['PURPLE']}}
+    with pytest.raises(NeedsClarification,match='PURPLE'):
+        adapter.validate_tool_call('use_pyfigures_tool',call,{},'Set panel a to use a blorple LUT.')
+    adapter.validate_tool_call('use_pyfigures_tool',{'tool_name':'set_lut','arguments':{'panel_ref':'a','luts':['Grays']}},{},'Make panel a grey.')
+    adapter.validate_tool_call('use_pyfigures_tool',{'tool_name':'set_lut','arguments':{'panel_ref':'a','luts':['Fire']}},{},'Use the fire LUT on a.')
+
+def test_a_panel_named_like_a_greek_letter_must_exist():
+    from qtpy_ai_sidecar.errors import NeedsClarification
+    adapter=PyFiguresAdapter('unused')
+    call={'tool_name':'edit_panel_letters','arguments':{'action':'remove','scope':'panels','panel_ids':['3/2']}}
+    with pytest.raises(NeedsClarification,match='no panel called omega'):
+        adapter.validate_tool_call('use_pyfigures_tool',call,{'panel_references':[{'panel_id':'3/2','letters':['p']}]},'Remove the letter from panel omega.')
+    named={'panel_references':[{'panel_id':'3/2','letters':['omega']}]}
+    adapter.validate_tool_call('use_pyfigures_tool',{'tool_name':'remove_annotation','arguments':{}},named,'Remove the arrow from panel omega.')
+
+def test_what_if_and_slides_questions_get_the_authored_guide():
+    adapter=PyFiguresAdapter('unused')
+    seen=[]
+    def request(operation,arguments=None):
+        seen.append(arguments['topic'])
+        guide='export_pptx' if 'slides' in arguments['topic'] else 'add_scale_bars'
+        return {'status':'explained','guide':guide,'title':guide,'steps':['Choose a menu.']}
+    adapter.request=request
+    assert adapter.finalize_manual_response('What if different images have different pixel sizes when I add scale bars?')['evidence']['guide']['guide']=='add_scale_bars'
+    assert adapter.finalize_manual_response('How do I export slides with editable text rather than one flattened screenshot?')['evidence']['guide']['guide']=='export_pptx'
+    adapter.request=lambda *a:{'status':'explained','guide':'export_pptx','title':'x','steps':['Choose a menu.']}
+    assert adapter.finalize_manual_response('How do I export a PDF?') is None
+
 def test_sources_have_no_mangled_utf8():
     # UTF-8 re-read as cp1252 turns "—" into "â€”" in the user-facing status texts.
     bad=[str(p) for p in (base/'src').rglob('*.py') if 'â€' in p.read_text(encoding='utf-8')]
