@@ -1,4 +1,20 @@
 """Checks compare actual GUI state, never the model's claim."""
+def caption_markup_equal(actual,wanted):
+    if actual==wanted:return True
+    if not isinstance(actual,str) or not isinstance(wanted,str):return False
+    from qtpy.QtGui import QTextDocument,QTextCursor
+    documents=[]
+    for markup in (actual,wanted):
+        doc=QTextDocument();doc.setMarkdown(markup);documents.append(doc)
+    if documents[0].toPlainText()!=documents[1].toPlainText():return False
+    def styles(doc):
+        result=[]
+        for position in range(doc.characterCount()-1):
+            cursor=QTextCursor(doc);cursor.setPosition(position);cursor.movePosition(QTextCursor.MoveOperation.NextCharacter,QTextCursor.MoveMode.KeepAnchor)
+            fmt=cursor.charFormat();result.append((fmt.fontWeight(),fmt.fontItalic(),fmt.fontUnderline(),fmt.verticalAlignment()))
+        return result
+    return styles(documents[0])==styles(documents[1])
+
 def verify(expect, before, after, events, allowed):
     failures=[]
     def check(ok, message):
@@ -151,7 +167,8 @@ def verify(expect, before, after, events, allowed):
         for pid,old in old_images.items():
             if pid not in targets:check(images.get(pid)==old,'Unrequested image-property change on '+pid)
     for key,wanted in expect.get('caption',{}).items():
-        check((after.get('caption') or {}).get(key)==wanted,'Wrong caption '+key)
+        actual=(after.get('caption') or {}).get(key)
+        check(caption_markup_equal(actual,wanted) if key=='caption_markdown' else actual==wanted,'Wrong caption '+key)
     if 'plot_count' in expect:check(sum(p.get('is_plot',False) for p in images.values())==expect['plot_count'],'Wrong rendered plot count')
     for filename in expect.get('filename_contains',[]):
         check(any(filename in p['filename'] for p in images.values()),'Imported image missing: '+filename)

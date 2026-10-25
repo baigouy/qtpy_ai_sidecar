@@ -57,6 +57,7 @@ class PyFiguresAdapter:
                 'Convert an existing ROI into an inset with roi_to_inset: this magnifies the same source, no external filename required. If multiple ROIs exist ask which; do not redefine the already clear request. '
                 'If a user reports an invisible letter, inspect its appearance and location; existence in state does not prove visibility. Avoid categorical denials based on letter counts alone. '
                 'For lettering a newly constructed figure, use one renumber/all operation for a complete unique sequence. Partial restore preserves earlier IDs. verified_letter_specification.duplicate_letter_references reports ambiguities; a correct count alone does not prove usable panel references. Never silently rename accepted manual labels. '
+                'For ordinary rich-text range formatting or ROI property edits, discover inspect_annotation_objects and edit_annotation_properties. Inspect the exact object and pass its token; do not replace whole formatted text to style one substring. Repeated text needs an explicit occurrence. Native dialogs keep OK/Cancel; finish them before direct annotation edits. '
                 'PANEL LETTERS and TEXT ANNOTATIONS are different objects. panel_references.letters are automatic panel IDs; text_annotations lists ordinary text with actual annotation_index and is_letter=false. '
                 'A quoted string or the word text/caption means an ordinary annotation: match its actual text, then use get_annotations/remove_annotation at that index. Example: remove the Panel o text from panel o removes text=Panel o and PRESERVES letter=o. Do not search remove letter or call edit_panel_letters for that request. '
                 'Only explicit letter requests use edit_panel_letters. To restore a missing letter on one panel use action=restore, scope=panels, panel_ids=[its ID], start_letter=the desired letter; style does not restore a hidden letter. '
@@ -85,6 +86,9 @@ class PyFiguresAdapter:
         if plural_style_collection:singular=None
         operation = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
         if operation=='review_submission_readiness':self._quality_review_requested=True
+        if operation=='set_scale_bar_all' and not re.search(r'\b(?:all|every|each|whole|entire|throughout)\b|\bscale[ -]?bars\b',text,re.I):
+            raise ValueError('SCOPE_MISMATCH: A singular scale-bar request does not authorize changing every panel. Use set_scale_bar for the named or selected image; ask which image if the target is unclear. No bulk edit was submitted.')
+
         vague_annotation = re.search(r'\bannot\w*\b', text, re.I) and not re.search(
             r'\b(?:arrow\w*|roi\w*|rectangle|ellipse|circle|polygon|line|text|label|scale|remove|delete|clear)\b|["]', text, re.I)
         if vague_annotation and operation in ('add_annotation', 'add_roi_rect', 'add_roi_ellipse', 'add_roi_line', 'add_roi_polygon', 'add_arrow'):
@@ -209,11 +213,40 @@ class PyFiguresAdapter:
             content+='\n\nWith automatic lettering enabled, letters follow panel positions.'
         return {'content':content,'evidence':{'kind':'authored_manual_guide','guide':guide,'operation_executed':False}}
 
+    def _verify_letter_style_reply(self,request,reply,state):
+        import re
+        if not re.search(r'\bletters?\b',request,re.I):return None
+        if re.search(r'\b(?:keep|leave|preserve)\b.{0,50}\bletters?\b.{0,20}\bunchanged\b|\bwithout changing\b.{0,30}\bletters?\b',request,re.I):return None
+        if not re.search(r'\b(?:done|success\w*|now|have been|has been|result)\b',reply,re.I):return None
+        desired={}
+        for prop,word in (('bold','bold'),('italic','italic'),('underline','underlin(?:e|ed)')):
+            if re.search(r'\b'+word+r'\b',request,re.I):
+                negative=re.search(r'\b(?:not|no longer|remove|disable|without)\s+(?:the\s+)?'+word+r'\b',request,re.I)
+                desired[prop]=not bool(negative)
+        if not desired:return None
+        all_requested=bool(re.search(r'\b(?:all|every|throughout|entire)\b',request,re.I))
+        selected={p['panel_id'] for p in (state.get('selection') or {}).get('selected_panels',[])}
+        named=re.findall(r'\b(?:panel|letter)\s+([a-z])(?!\w)',request,re.I)
+        if not all_requested and not selected and not named:return None
+        try:
+            current=self.request('letter_state')
+            targets=[p for p in current.get('panels',[]) if all_requested or p['panel_id'] in selected or any(a.get('text','').casefold() in {x.casefold() for x in named} for a in p.get('letters',[]))]
+            missing=[p['panel_id'] for p in targets if not p.get('letters') or any(any(bool(a.get(k))!=v for k,v in desired.items()) for a in p['letters'])]
+            if not targets or missing:
+                return {'content':'The requested panel-letter style was not verified in the figure. '+str(len(missing))+' of '+str(len(targets))+' targeted panels do not match '+str(desired)+'. I cannot confirm this edit. Other completed edits may remain.',
+                        'evidence':{'status':'not_verified','requested':desired,'mismatched_panel_ids':missing,'target_count':len(targets)}}
+        except Exception as exc:
+            return {'content':'I could not verify the requested panel-letter style: '+str(exc)+'. The edit is not confirmed.',
+                    'evidence':{'status':'unavailable','error':str(exc)}}
+        return None
+
     def finalize_response(self,request,reply,state,preview=False):
         import re
         manual=self.finalize_manual_response(request)
         if manual:return manual
         if re.search(r'\b(?:how|tutorial|instructions|shortcut)\b',request,re.I):return None
+        style_verification=self._verify_letter_style_reply(request,reply,state)
+        if style_verification:return style_verification
         asks_ready=bool(re.search(r'\b(?:ready|readiness)\b',request,re.I) and
                         re.search(r'\b(?:is|are|whether|tell|check|review|submission|publication|submit)\b',request,re.I))
         asks_compliance=bool(re.search(r'\b(?:check|review|assess|audit)\b.*\b(?:compliance|print resolution|submission)\b',request,re.I))

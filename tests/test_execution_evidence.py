@@ -69,3 +69,26 @@ def test_step_budget_is_bounded_user_controlled_and_persistent(tmp_path):
     profile=tmp_path/'profile.json'
     profile.write_text(json.dumps({'state_dir':str(tmp_path)}))
     assert Config.load(profile).max_steps==17
+
+
+def test_false_bold_success_is_replaced_by_actual_readback():
+    from qtpy_ai_sidecar.adapters.pyfigures import PyFiguresAdapter
+    adapter=PyFiguresAdapter('unused')
+    adapter.request=lambda *args:{'panels':[{'panel_id':'0/0','letters':[{'text':'a','bold':False}]}]}
+    result=adapter.finalize_response('Make all automatic panel letters bold.','Result: All letters have been set to bold.',{})
+    assert result['evidence']['status']=='not_verified'
+    assert 'cannot confirm' in result['content']
+    adapter.request=lambda *args:{'panels':[{'panel_id':'0/0','letters':[{'text':'a','bold':True}]}]}
+    assert adapter.finalize_response('Make all automatic panel letters bold.','Done.',{}) is None
+
+def test_style_readback_uses_only_selected_scope():
+    from qtpy_ai_sidecar.adapters.pyfigures import PyFiguresAdapter
+    adapter=PyFiguresAdapter('unused')
+    adapter.request=lambda *args:{'panels':[{'panel_id':'0/0','letters':[{'text':'a','italic':True}]},{'panel_id':'0/1','letters':[{'text':'b','italic':False}]}]}
+    state={'selection':{'selected_panels':[{'panel_id':'0/0'}]}}
+    assert adapter.finalize_response('Make this letter italic.','Done.',state) is None
+
+def test_annotation_style_request_preserving_letters_is_not_reinterpreted():
+    from qtpy_ai_sidecar.adapters.pyfigures import PyFiguresAdapter
+    adapter=PyFiguresAdapter('unused')
+    assert adapter.finalize_response('Make the note bold, keep all panel letters unchanged.','Done.',{}) is None

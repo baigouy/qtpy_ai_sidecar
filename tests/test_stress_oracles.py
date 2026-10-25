@@ -40,3 +40,9 @@ def test_deleted_row_claim_must_match_actual_count():
     after=scene()
     errors=checks.verify({'verify_row_deletion_report':True},before,after,[('assistant','Deleted 100 rows.')],[])
     assert any('deleted-row count' in e for e in errors)
+
+
+def test_caption_oracle_checks_rendered_style_not_markup_dialect():
+    assert checks.caption_markup_equal('Cells of <i>Drosophila</i>.','Cells of *Drosophila*.')
+    assert not checks.caption_markup_equal('Cells of Drosophila.','Cells of *Drosophila*.')
+    assert not checks.caption_markup_equal('Cells of *Drosophila*','Cells of *Drosophila*.')
