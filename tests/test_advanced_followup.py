@@ -183,6 +183,32 @@ def test_note_text_keeps_the_users_exact_wording():
     adapter.validate_tool_call('use_pyfigures_tool',c,{},'Add a note on h.')
     assert c['arguments']['text']=='Treated cells'
 
+def test_a_word_once_on_its_own_is_not_ambiguous():
+    from qtpy_ai_sidecar.errors import NeedsClarification
+    adapter=PyFiguresAdapter('unused')
+    def state(note):
+        return {'panel_references':[{'panel_id':'1/3','letters':['h']}],
+                'text_annotations':[{'panel_id':'1/3','text_index':0,'text':note}]}
+    call={'tool_name':'style_annotation','arguments':{'panel_ref':'h','text_index':0,'match':'treated','bold':True}}
+    adapter.validate_tool_call('use_pyfigures_tool',call,state('treated and untreated'),"On h, make only 'treated' bold.")
+    call={'tool_name':'style_annotation','arguments':{'panel_ref':'h','text_index':0,'match':'control','bold':True}}
+    with pytest.raises(NeedsClarification):
+        adapter.validate_tool_call('use_pyfigures_tool',call,state('control vs control'),"On h, make only 'control' bold.")
+    call={'tool_name':'style_annotation','arguments':{'panel_ref':'h','text_index':0,'match':'2','vertical_align':'subscript'}}
+    with pytest.raises(NeedsClarification):
+        adapter.validate_tool_call('use_pyfigures_tool',call,state('CO2 at 2 h'),'Put the 2 in CO2 in subscript.')
+
+def test_every_match_needs_words_that_ask_for_it():
+    from qtpy_ai_sidecar.errors import NeedsClarification
+    adapter=PyFiguresAdapter('unused')
+    call={'tool_name':'style_annotation','arguments':{'panel_ref':'h','text_index':0,'match':'treated','occurrence':'all','bold':True}}
+    adapter.validate_tool_call('use_pyfigures_tool',call,{},"On h, make everything containing 'treated' bold.")
+    adapter.validate_tool_call('use_pyfigures_tool',call,{},"On h, make all the 'treated' bold.")
+    with pytest.raises(NeedsClarification):
+        adapter.validate_tool_call('use_pyfigures_tool',call,{},"On h, make only 'treated' bold.")
+    with pytest.raises(NeedsClarification):
+        adapter.validate_tool_call('use_pyfigures_tool',call,{},"On h, make the first 'treated' bold.")
+
 def test_sources_have_no_mangled_utf8():
     # UTF-8 re-read as cp1252 turns "—" into "â€”" in the user-facing status texts.
     bad=[str(p) for p in (base/'src').rglob('*.py') if 'â€' in p.read_text(encoding='utf-8')]
@@ -195,3 +221,18 @@ def test_an_ambiguous_match_is_not_resolved_by_the_model():
     with pytest.raises(NeedsClarification,match='appears more than once'):
         adapter.validate_tool_call('use_pyfigures_tool',call,{},"On h, make only 'treated' bold.")
     adapter.validate_tool_call('use_pyfigures_tool',call,{},"On h, make the first 'treated' bold.")
+
+
+def test_ambiguous_substring_asks_before_the_first_edit():
+    from qtpy_ai_sidecar.errors import NeedsClarification
+    adapter=PyFiguresAdapter('unused')
+    state={'panel_references':[{'panel_id':'1/3','letters':['h']}], 'text_annotations':[{'panel_id':'1/3','text_index':1,'annotation_index':2,'text':'treated and untreated'}]}
+    call={'tool_name':'style_annotation','arguments':{'panel_ref':'h','text_index':1,'match':'treated','bold':True}}
+    # User decision: the one whole word "treated" is meant, no question
+    adapter.validate_tool_call('use_pyfigures_tool',call,state,"On h, make only 'treated' bold.")
+    adapter.validate_tool_call('use_pyfigures_tool',call,state,"On h, make the first 'treated' bold.")
+    state['text_annotations'][0]['text']='treated vs treated'
+    with pytest.raises(NeedsClarification,match='matches 2 places'):
+        adapter.validate_tool_call('use_pyfigures_tool',call,state,"On h, make only 'treated' bold.")
+    state['text_annotations'][0]['text']='control and treated'
+    adapter.validate_tool_call('use_pyfigures_tool',call,state,"On h, make only 'treated' bold.")

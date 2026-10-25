@@ -95,3 +95,53 @@ def test_native_font_normalization_is_equivalent(text_shape):
     assert advanced.draft_matches(text_shape,other)
     advanced.prepare_text(other,{'bold':True})()
     assert not advanced.draft_matches(text_shape,other)
+
+
+def test_literal_text_match_is_case_sensitive(text_shape):
+    text_shape.doc.setPlainText('treated Treated')
+    advanced.prepare_text(text_shape,{'bold':True},'treated')()
+    assert text_shape.doc.find('treated').charFormat().fontWeight()>400
+    from qtpy.QtGui import QTextDocument
+    assert not text_shape.doc.find('Treated',0,QTextDocument.FindFlag.FindCaseSensitively).charFormat().font().bold()
+
+
+def test_default_standalone_word_and_explicit_all_matches(text_shape):
+    from qtpy.QtGui import QTextDocument
+    text_shape.doc.setPlainText('treated and untreated')
+    advanced.prepare_text(text_shape,{'bold':True},'treated')()
+    first=text_shape.doc.find('treated',0,QTextDocument.FindFlag.FindCaseSensitively)
+    second=text_shape.doc.find('treated',first.selectionEnd(),QTextDocument.FindFlag.FindCaseSensitively)
+    assert first.charFormat().font().bold() and not second.charFormat().font().bold()
+    text_shape.doc.setPlainText('treated and untreated')
+    advanced.prepare_text(text_shape,{'bold':True},'treated','all')()
+    first=text_shape.doc.find('treated',0,QTextDocument.FindFlag.FindCaseSensitively)
+    second=text_shape.doc.find('treated',first.selectionEnd(),QTextDocument.FindFlag.FindCaseSensitively)
+    assert first.charFormat().font().bold() and second.charFormat().font().bold()
+
+def test_all_literal_replacements_keep_cursor_positions(text_shape):
+    text_shape.doc.setPlainText('treated and untreated')
+    advanced.prepare_text(text_shape,{'text':'x'},'treated','all')()
+    assert text_shape.doc.toPlainText()=='x and unx'
+
+def test_repeated_words_and_digits_still_need_a_choice(text_shape):
+    for value,match in [('treated vs treated','treated'),('CO2 after 2 h','2'),('a and cat','a')]:
+        text_shape.doc.setPlainText(value)
+        with pytest.raises(ValueError,match='CLARIFICATION_REQUIRED'):
+            advanced.prepare_text(text_shape,{'bold':True},match)
+
+
+def test_figure_text_record_uses_edit_validator_token(text_shape):
+    record=advanced.text_inspection_record(text_shape,'1/3',[1],3,1,1)
+    assert record['token']==advanced.describe(text_shape)['token']
+    assert record['token_source']=='annotation_object'
+    assert record['annotation_index']==1 and record['text_index']==1
+    advanced.prepare_text(text_shape,{'bold':True},'control')()
+    assert record['token']!=advanced.describe(text_shape)['token']
+
+
+def test_text_inspection_token_ignores_paint_geometry(text_shape):
+    text_shape.x=lambda:10; text_shape.y=lambda:20
+    text_shape.width=lambda:100; text_shape.height=lambda:30
+    token=advanced.text_inspection_record(text_shape,'1/3',[1],3,1,1)['token']
+    text_shape.x=lambda:40
+    assert token==advanced.describe(text_shape)['token']

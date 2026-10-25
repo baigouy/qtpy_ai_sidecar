@@ -56,7 +56,7 @@ class PyFiguresAdapter:
 
     def context_instructions(self, state):
         selection = state.get('selection') or {}
-        return ('When annotation_editor is present, editor_draft_objects and selected=true describe the live editor selection. Edits there affect its draft until native OK; preserve Cancel. Use inspected native controls for the selected ROI instead of guessing an object from the main figure or silently closing the dialog. '
+        return ('When annotation_editor is present, editor_draft_objects and selected=true describe the live editor selection. Edits there affect its draft until native OK; preserve Cancel. Use edit_annotation_properties with the CURRENT editor_draft_objects token, or inspected native controls. Main-object tokens describe the unchanged figure, not the draft. After each edit use its returned next_token; never reuse the pre-edit token or silently close the dialog. '
                 'If a capability is missing from dedicated MCP tools, discover inspect_native_gui and inspect the actual native controls instead of concluding the GUI cannot do it. Use_native_gui takes only inspected IDs and exact choices. Native context/drag menus are available via open_native_menu; keyboard, canvas gestures and file drops have native_gui tools. Prefer dedicated semantic tools for common edits. '
                 'Native GUI calls return queued jobs, not success. Inspect native_gui jobs and active modal controls, fill native fields and accept/cancel as requested, then verify actual document state. Do not claim queued or running work has completed. Teaching requests still do not authorize using edit controls. '
                 'How-to/manual/shortcut questions are teaching requests, not permission to edit. For native arrow keys and drag/drop discover explain_live_interaction; include figure focus, selection level, source/target and relevant verified shortcuts. For other topics use authored explain_how/show_me_how. Never invent modifiers or menu labels. Never provide Python unless code or recipe was explicitly requested. '
@@ -116,11 +116,31 @@ class PyFiguresAdapter:
             # The user's own words go in verbatim: the model may not recapitalise "sample" to "Sample".
             typed=[m[1] for m in re.finditer(r'(?:\b(?:write|type|put|add|say|saying|reads?|reading|text)\s+|["\'“‘])('+re.escape(written.strip())+r')(?!\w)',text,re.I)]
             if len(set(typed))==1:args['text']=written.replace(written.strip(),typed[0])
+        match_text=args.get('match') if operation=='style_annotation' else args.get('substring') if operation=='edit_annotation_properties' else None
+        every_match=re.search(r'\b(?:both|all|every\w*|each|wherever|containing|contains)\b',text,re.I)
+        ordinal=every_match or re.search(r'\b(?:first|second|third|fourth|fifth|last|\d+(?:st|nd|rd|th)|occurrence|instance)\b',text,re.I)
+        if isinstance(match_text,str) and match_text and not ordinal:
+            references=state.get('panel_references',[])
+            owner=next((p['panel_id'] for p in references if args.get('panel_ref') in [p['panel_id']]+p.get('letters',[]) or (args.get('group_path')==p.get('group_path') and args.get('image_index')==p.get('image_index'))),None)
+            notes=(state.get('annotation_editor') or {}).get('editor_draft_objects',[]) if operation=='edit_annotation_properties' and state.get('annotation_editor') else state.get('text_annotations',[])
+            index=args.get('text_index',args.get('annotation_index')) if operation=='style_annotation' else args.get('annotation_index')
+            key='text_index' if operation=='style_annotation' else 'annotation_index'
+            candidates=[a for a in notes if isinstance(a.get('text'),str) and (owner is None or a.get('panel_id',owner)==owner) and (index is None or a.get(key)==index)]
+            # User decision 2026-10-25: a word of letters found once as a whole word is that one
+            # ("treated" in "treated and untreated"); the tool applies the same rule.
+            whole_once=len(match_text)>1 and match_text.replace(' ','').isalpha() and len(candidates)==1 and \
+                len(re.findall(r'(?<!\w)'+re.escape(match_text)+r'(?!\w)',candidates[0]['text']))==1
+            if len(candidates)==1 and candidates[0]['text'].count(match_text)>1 and not whole_once:
+                from ..errors import NeedsClarification
+                count=candidates[0]['text'].count(match_text)
+                raise NeedsClarification(f'"{match_text}" matches {count} places in this annotation, including inside longer words. Which occurrence do you mean? No text was changed. Please choose; I will not guess an occurrence.')
         picked=args.get('occurrence') if operation in ('style_annotation','edit_annotation_properties') else None
-        if picked is not None and not re.search(r'\b(?:first|second|third|fourth|fifth|last|both|all|every|each|\d+(?:st|nd|rd|th)|occurrence|instance)\b',text,re.I):
+        # occurrence="all" (every match, inside longer words too) needs words like
+        # "everything containing"/"all"; a numbered occurrence needs an ordinal.
+        if picked is not None and not (every_match if picked=='all' else ordinal):
             from ..errors import NeedsClarification
             word=args.get('match') or args.get('substring') or 'that text'
-            raise NeedsClarification(f'"{word}" appears more than once in that text. Which one do you mean (the first, the second…)? No text was changed.')
+            raise NeedsClarification(f'"{word}" appears more than once in that text. Which one do you mean (the first, the second… or all of them)? No text was changed.')
         roi_edit=operation=='set_roi_properties' or (operation=='edit_annotation_properties' and bool(set(args.get('changes',{})) & {'stroke','fill_color','geometry','endpoints'}))
         if roi_edit and re.search(r'\b(?:the|that|this)\s+(?:box|rectangle)\b',text,re.I) and not re.search(r'\b(?:first|second|third|left|right|top|bottom|red|green|blue|yellow|white|black)\s+(?:box|rectangle)\b|\b(?:box|rectangle)\s+(?:on|at|to)\s+(?:the\s+)?(?:left|right|top|bottom)\b|\bannotation(?:_index| index)\s*[:=]?\s*\d',text,re.I):
             references=state.get('panel_references',[])
