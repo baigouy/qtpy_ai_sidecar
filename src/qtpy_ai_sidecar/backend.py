@@ -72,6 +72,9 @@ class ModelClient:
         if final_only and self.config.thinking_backend == 'llama_cpp':
             payload['chat_template_kwargs'] = {'enable_thinking': False}
             payload['reasoning_effort'] = 'none'
+        progress = {'first_sse_seconds': None, 'stream_events': 0,
+                    'content_characters': 0, 'reasoning_characters': 0,
+                    'tool_argument_characters': 0}
         async def generate():
             text, reasoning, calls, finish, usage = '', '', {}, None, {}
             timeout = httpx.Timeout(connect=15, read=180, write=30, pool=15)
@@ -88,6 +91,9 @@ class ModelClient:
                         if data == '[DONE]':
                             break
                         chunk = json.loads(data)
+                        progress['stream_events'] += 1
+                        if progress['first_sse_seconds'] is None:
+                            progress['first_sse_seconds'] = time.monotonic() - started
                         usage = chunk.get('usage') or usage
                         choices = chunk.get('choices') or []
                         if choices:
@@ -103,6 +109,8 @@ class ModelClient:
                                 item['id'] += part.get('id') or ''
                                 for key in ('name', 'arguments'):
                                     item['function'][key] += (part.get('function') or {}).get(key) or ''
+                        progress.update(content_characters=len(text), reasoning_characters=len(reasoning),
+                                        tool_argument_characters=sum(len(c['function']['arguments']) for c in calls.values()))
                         emit('generation', {'characters': len(text) + len(reasoning), 'usage': usage})
             if finish is None:
                 raise RuntimeError('Incomplete model stream; no partial tool call executed')
@@ -137,6 +145,14 @@ class ModelClient:
         try:
             while not task.done():
                 if time.monotonic() - started > timeout:
+                    emit('generation_timeout', {
+                        **progress, 'final_only': bool(final_only),
+                        'configured_timeout_seconds': self.config.generation_timeout_seconds,
+                        'effective_timeout_seconds': timeout,
+                        'elapsed_seconds_before_cleanup': time.monotonic() - started,
+                        'advertised_tools': len(tools),
+                        'prompt_characters': len(json.dumps(payload.get('messages', []))),
+                        'tool_schema_characters': len(json.dumps(payload.get('tools', [])))})
                     task.cancel()
                     raise GenerationTimeout(f'Model response exceeded {timeout}s. No partial tool call executed; completed edits remain.')
                 if cancel.is_set():

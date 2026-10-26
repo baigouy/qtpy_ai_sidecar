@@ -116,9 +116,9 @@ class Engine:
                             answer,usage=await self.backend.complete(summary,[],self.cancel,emit,final_only=True)
                             if answer.get('tool_calls') or not answer.get('content'):
                                 raise RuntimeError('Tool format recovery failed; no rejected tool call executed')
-                    except (EmptyModelReply, GenerationTimeout):
+                    except (EmptyModelReply, GenerationTimeout) as exc:
                         emit('status', 'Model reply missing or timed out; recovering a text-only summary. No tools or edits will be replayed.')
-                        self.journal.record('reply_recovery', {'method': 'one text-only generation', 'tools_enabled': False})
+                        self.journal.record('reply_recovery', {'method': 'one text-only generation', 'tools_enabled': False, 'cause': type(exc).__name__, 'error': str(exc)})
                         summary_messages = messages + [{'role': 'system', 'content': 'The previous generation returned no visible final reply. Summarize ONLY verified results already in this conversation. Tools are disabled. Do not claim changes unless a verified result proves them. If inspection shows the requested state already existed, say so clearly. If work remains, explain that honestly; no edits have been replayed.'}]
                         answer, usage = await self.backend.complete(summary_messages, [], self.cancel, emit, final_only=True)
                         if answer.get('tool_calls') or not answer.get('content'):
@@ -187,6 +187,7 @@ class Engine:
                             self.messages.append({'role':'tool', 'tool_call_id':call['id'], 'content':json.dumps(result)})
                             for skipped in calls[index + 1:]:
                                 self.messages.append({'role':'tool', 'tool_call_id':skipped['id'], 'content':'Not submitted; target clarification required.'})
+                            self.record('tool_result', result, emit)
                             self.journal.record('target_clarification', result)
                             self.messages.append({'role':'assistant', 'content':str(exc)})
                             self.record('assistant', str(exc), emit)
@@ -233,6 +234,13 @@ class Engine:
                 record = await asyncio.to_thread(self.adapter.finish, interrupted)
                 if record:
                     self.record('action', record, emit)
+                    if interrupted:
+                        outcome = {key: record.get(key) for key in ('status', 'changed')}
+                        outcome['recorded_operations'] = len(record.get('operations') or [])
+                        self.messages.append({'role':'system','content':
+                            '[INTERRUPTED_ACTION_OUTCOME] ' + json.dumps(outcome) +
+                            '. This is inspected outcome data, not a new request. Do not resume unexecuted earlier instructions automatically. '
+                            'An undo request concerns completed changes only; never create an edit just to undo it.'})
             self.context(emit)
 
     async def compact(self, emit):
