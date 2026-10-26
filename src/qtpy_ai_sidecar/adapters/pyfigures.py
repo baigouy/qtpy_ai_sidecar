@@ -60,12 +60,14 @@ class PyFiguresAdapter:
                 'If a capability is missing from dedicated MCP tools, discover inspect_native_gui and inspect the actual native controls instead of concluding the GUI cannot do it. Use_native_gui takes only inspected IDs and exact choices. Native context/drag menus are available via open_native_menu; keyboard, canvas gestures and file drops have native_gui tools. Prefer dedicated semantic tools for common edits. '
                 'Native GUI calls return queued jobs, not success. Inspect native_gui jobs and active modal controls, fill native fields and accept/cancel as requested, then verify actual document state. Do not claim queued or running work has completed. Teaching requests still do not authorize using edit controls. '
                 'How-to/manual/shortcut questions are teaching requests, not permission to edit. For native arrow keys and drag/drop discover explain_live_interaction; include figure focus, selection level, source/target and relevant verified shortcuts. For other topics use authored explain_how/show_me_how. Never invent modifiers or menu labels. Never provide Python unless code or recipe was explicitly requested. '
+                'For arrange_live_images, columns is the number of images per row; a row count is a different request. For set_figure_caption, caption is exact plain text including punctuation, title is separate, and caption_markdown is an optional formatted STRING, never a boolean. Use set_scale_bar with panel_ref for a single panel; set_scale_bar_all is only for a whole-figure request. '
                 'Use find_pyfigures_tools for the exact schema before a first use; state field names are not function argument names. Native image/annotation tools prefer panel_ref for named panels. Text setters use text_index from inspection; ROI/removal tools use the full annotation_index. panel_id is not a setter argument. open_annotation_editor uses panel_ref, not panel_id. edit_panel_letters has no letters or style object arguments: pass its flat schema fields. A mixed colour summary is not a valid colour; omit styling to preserve actual styles. '
                 'Convert an existing ROI into an inset with roi_to_inset: this magnifies the same source, no external filename required. If multiple ROIs exist ask which; do not redefine the already clear request. '
                 'If a user reports an invisible letter, inspect its appearance and location; existence in state does not prove visibility. Avoid categorical denials based on letter counts alone. '
                 'For lettering a newly constructed figure, use one renumber/all operation for a complete unique sequence. Partial restore preserves earlier IDs. verified_letter_specification.duplicate_letter_references reports ambiguities; a correct count alone does not prove usable panel references. Never silently rename accepted manual labels. '
                 'For ordinary rich-text range formatting or ROI property edits, discover inspect_annotation_objects and edit_annotation_properties. Inspect the exact object and pass its token; do not replace whole formatted text to style one substring. Repeated text needs an explicit occurrence. Native dialogs keep OK/Cancel; finish them before direct annotation edits. '
                 'PANEL LETTERS and TEXT ANNOTATIONS are different objects. panel_references.letters are automatic panel IDs; text_annotations lists ordinary text with actual annotation_index and is_letter=false. '
+                'A direct write/type/put text-on-panel instruction supplies literal text even without quotation marks; ask for content only when it is actually missing. Respect ordered clauses: complete an earlier dependent edit before rearranging its target; if that edit needs clarification, pause dependent later mutations. '
                 'A quoted string or the word text/caption means an ordinary annotation: match its actual text, then use get_annotations/remove_annotation at that index. Example: remove the Panel o text from panel o removes text=Panel o and PRESERVES letter=o. Do not search remove letter or call edit_panel_letters for that request. '
                 'Only explicit letter requests use edit_panel_letters. To restore a missing letter on one panel use action=restore, scope=panels, panel_ids=[its ID], start_letter=the desired letter; style does not restore a hidden letter. '
                 'removal_request is a literal quote of the human request, never a rewritten instruction invented to pass validation. On a tool exception inspect and explain the failure; changing file paths cannot fix an internal exception. '
@@ -82,6 +84,132 @@ class PyFiguresAdapter:
                 'If selection is missing, stale or ambiguous ask for clarification. '
                 'Follow-up it/them keeps this focus; color-only corrections must not change font, placement, background or numbering. A preview is displayed only to the human: this model cannot inspect image pixels. Property readback does not prove contrast/readability; never claim a color ensures visibility without a real check. Current focus: ' + str({'kind': selection.get('selection_kind'), 'panels': [p.get('panel_id') for p in selection.get('selected_panels', [])],
                                         'groups': selection.get('selected_group_paths', [])}))
+
+
+    @staticmethod
+    def _efficient_arguments(operation, args, state):
+        """Normalize only proven no-ops; never invent targets or authorization."""
+        if operation == 'arrange_live_images' and 'rows' in args:
+            raise ValueError('Use columns for images per row; rows is not an accepted argument. A number of rows and images per row mean different layouts. Inspect the schema; no layout was changed.')
+        if operation == 'edit_annotation_properties':
+            refs = state.get('panel_references', [])
+            owners = [p['panel_id'] for p in refs if args.get('panel_ref') in [p['panel_id']] + p.get('letters', [])]
+            if len(owners) == 1 and isinstance(args.get('annotation_index'), int) and not isinstance(args.get('annotation_index'), bool):
+                editor = state.get('annotation_editor') or {}
+                if state.get('annotation_editor_open') or editor.get('editor_open'):
+                    objects = editor.get('editor_draft_objects', []) if editor.get('editor_panel_id') == owners[0] else []
+                else:
+                    objects = state.get('text_annotations', []) + state.get('roi_annotations', [])
+                matches = [a for a in objects if a.get('panel_id', owners[0]) == owners[0] and a.get('annotation_index') == args['annotation_index']]
+                if len(matches) == 1 and matches[0].get('token') and args.get('token') != matches[0]['token']:
+                    raise ValueError('ANNOTATION_TOKEN_REQUIRED: No edit submitted. The current object at panel ' + owners[0] + ', annotation_index=' + str(args['annotation_index']) + ' has token=' + matches[0]['token'] + '. Use this object token, not a selection or another annotation token. If this is not the intended object, inspect_annotation_objects before retrying.')
+        if operation == 'edit_panel_letters':
+            extras = set(args) & {'opacity', 'bold', 'italic', 'underline'}
+            if extras:
+                scope = args.get('scope', 'auto')
+                selected = (state.get('selection') or {}).get('selected_panels', [])
+                targets = args.get('panel_ids') if scope in ('auto', 'panels') else [p['panel_id'] for p in selected] if scope == 'selection' else None
+                styles = []
+                if targets:
+                    for target in targets:
+                        matches = [p for p in selected if p.get('panel_id') == target and p.get('letter_styles')]
+                        if len(matches) != 1:break
+                        styles.extend(matches[0]['letter_styles'])
+                    else:
+                        if styles:
+                            for field in list(extras):
+                                if all(field in a and a[field] == args[field] for a in styles):args.pop(field)
+                # A genuinely uniform whole-figure value also proves a subset's no-op.
+                uniform = (state.get('verified_letter_specification') or {}).get('uniform_letter_style') or {}
+                for field in extras & set(args):
+                    if field in uniform and uniform[field] == args[field]:args.pop(field)
+                unsupported = extras & set(args)
+                if unsupported:
+                    raise ValueError('Unsupported edit_panel_letters fields: ' + ', '.join(sorted(unsupported)) + '. Bold/italic/underline use restyle_texts(target=letters); opacity requires a supported discovered tool. No edit submitted; fields that would change state were not silently discarded.')
+
+
+
+    @staticmethod
+    def _named_panel_address_guard(operation, args, state, text):
+        """Refuse proven named-panel/numeric-address conflicts without retargeting."""
+        import re
+        # Explicit family: schema-known panel mutations only, never an unknown tool.
+        panel_operations = {
+            'edit_panel_letters', 'style_annotation', 'set_annotation_text',
+            'edit_annotation_properties', 'set_roi_properties', 'add_annotation',
+            'remove_annotation', 'add_roi_rect', 'add_roi_ellipse', 'add_roi_line',
+            'add_roi_polygon', 'add_arrow', 'set_scale_bar', 'remove_scale_bar',
+            'set_image_property', 'set_lut', 'crop_image', 'rotate_image',
+        }
+        if operation not in panel_operations:
+            return
+        # A genuinely named reference goes through the existing native resolver.
+        ref = args.get('panel_ref')
+        if ref is not None and not re.fullmatch(r'[0-9]+(?:/[0-9]+)*', str(ref)):
+            return
+        # Do not infer the complete target set for relative, broader or exclusion requests.
+        if re.search(r'\b(?:neighbou?rs?|adjacent|remaining|rest|except|excluding|all|every|each|whole|entire)\b|\bnext\s+to\b', text, re.I):
+            return
+        # Quoted annotation contents can mention panel names without targeting them.
+        source = re.sub(r'"[^"]*"|\x27[^\x27]*\x27', ' ', text)
+        if re.search(r'\b(?:panels?|images?|pictures?|letters?|and|or)\s+(?:alpha|beta|gamma|delta|epsilon|zeta|eta|theta|iota|kappa|lambda|mu|nu|xi|omicron|pi|rho|sigma|tau|upsilon|phi|chi|psi|omega)\b', source, re.I):
+            return
+        names = []
+        pattern = r'\b(?P<kind>panels?|images?|pictures?|letters?|select|pick|highlight|choose|annotate|rotate|unrotate|crop|delete|remove|style|move|swap|exchange|switch|make)\s+(?P<labels>[a-z](?!\w)(?:\s*(?:,|and|or|&)\s*[a-z](?!\w))*)'
+        for found in re.finditer(pattern, source, re.I):
+            labels = re.findall(r'\b[a-z]\b', found['labels'].lower())
+            if 'a' in labels and found['kind'].lower() not in ('panel', 'panels', 'image', 'images', 'picture', 'pictures', 'letter', 'letters'):
+                # After a verb, a may be an article. The full target set is uncertain.
+                return
+            names.extend(labels)
+        names = list(dict.fromkeys(names))
+        if not names:
+            return
+        panels = state.get('panel_references') or []
+        requested = []
+        for name in names:
+            matches = [p for p in panels if name in [str(v).casefold() for v in p.get('letters', [])]]
+            # Missing/duplicated labels remain the existing clarification path's job.
+            if len(matches) != 1:
+                return
+            requested.append(matches[0])
+        targets = []
+        if 'panel_ids' in args:
+            values = args['panel_ids']
+            if not isinstance(values, list) or not values:
+                return
+            for value in values:
+                if not isinstance(value, str) or not re.fullmatch(r'[0-9]+(?:/[0-9]+)*', value):
+                    return
+                targets.append(value)
+        elif ref is not None:
+            targets = [str(ref)]
+        elif 'group_path' in args and 'image_index' in args:
+            group, index = args['group_path'], args['image_index']
+            if not isinstance(group, list) or isinstance(index, bool) or not isinstance(index, int):
+                return
+            if any(isinstance(v, bool) or not isinstance(v, int) for v in group):
+                return
+            matches = [p for p in panels if p.get('group_path') == group and p.get('image_index') == index]
+            if len(matches) != 1:
+                return
+            targets = [matches[0]['panel_id']]
+        else:
+            # Unspecified row/column numbering conventions are not safe to guess.
+            return
+        allowed = {p['panel_id'] for p in requested}
+        conflicts = []
+        for target in targets:
+            matches = [p for p in panels if p.get('panel_id') == target]
+            if len(matches) != 1 or len(matches[0].get('letters', [])) != 1:
+                return
+            if target not in allowed:
+                conflicts.append(matches[0])
+        if conflicts:
+            actual = ', '.join(str(p['letters'][0]) + ' (' + p['panel_id'] + ')' for p in conflicts)
+            intended = ', '.join(name + ' (' + panel['panel_id'] + ')' for name, panel in zip(names, requested))
+            raise ValueError('PANEL_ADDRESS_MISMATCH: you targeted ' + actual + '; the request names ' + intended + '. No edit was dispatched. Inspect current references and correct the target explicitly; nothing was retargeted or undone.')
+
 
     def validate_tool_call(self, tool_name, arguments, state, text):
         import re
@@ -105,6 +233,8 @@ class PyFiguresAdapter:
             raise NeedsClarification(f'What would you like to add to {target}?\n- Tell me the annotation you want for {target}\n- Open the annotation editor for {target}\nNo annotation was added.')
         read_only = operation and (operation.startswith(('inspect_', 'get_', 'list_', 'check_', 'describe_', 'audit_', 'explain_')) or operation in ('preview_figure', 'find_pyfigures_tools', 'readability'))
         args = arguments.get('arguments', {}) if tool_name == 'use_pyfigures_tool' else arguments
+        self._named_panel_address_guard(operation, args, state, text)
+        self._efficient_arguments(operation, args, state)
         if operation=='add_annotation' and args.get('panel_ref') is None and args.get('group_path') is not None and args.get('image_index') is not None:
             clause=re.split(r'\bthen\b|;',text,flags=re.I)[0]
             named=re.search(r'\b(?:write|add|put)\b.{0,160}?\b(?:on|to)\s+(?:(?:image|panel|picture)\s+)?([a-z])(?!\w)',clause,re.I)
@@ -262,9 +392,21 @@ class PyFiguresAdapter:
         verb = ' is' if len(ids) == 1 else ' are'
         return target + verb + (' already ' if not operation.get('changed') else ' now ') + request[0] + '. Verified in the open figure.'
 
+
+    def preflight_manual_response(self, request):
+        """Resolve a pure control-location question from reviewed help before model discovery."""
+        import re
+        if not re.match(r'^\s*where\s+(?:is|are)\b', request, re.I):
+            return None
+        # Mixed questions/actions must retain the normal conversational/tool path.
+        if re.search(r'\b(?:and|then|also)\s+(?:please\s+)?(?:do|apply|flip|rotate|change|set|move|remove|delete|make|swap|open)\b', request, re.I):
+            return None
+        return self.finalize_manual_response(request)
+
+
     def finalize_manual_response(self,request):
         import re
-        manual=bool(re.search(r'\b(?:how|explain|tutorial|instructions?|shortcuts?)\b|\bwhere\s+(?:do|can|should)\b|\bwhat\s+if\b',request,re.I))
+        manual=bool(re.search(r'\b(?:how|explain|tutorial|instructions?|shortcuts?)\b|\bwhere\s+(?:is|are|do|can|should)\b|\bwhat\s+if\b',request,re.I))
         if not manual:return None
         positive=re.sub(r"\b(?:without|no|do not|don't)\s+(?:any\s+)?(?:using\s+)?(?:python|code|recipes?|scripts?)\b",'',request,flags=re.I)
         if re.search(r'\b(?:code|python|recipes?|scripts?)\b',positive,re.I):return None

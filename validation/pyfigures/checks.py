@@ -192,15 +192,29 @@ def verify(expect, before, after, events, allowed):
                 except ET.ParseError:check(False,'Malformed PYF output')
             if spec.get('contains'):check(spec['contains'] in data.decode('utf-8',errors='replace'),'Output content missing')
 
-    edits=[]
+
+    attempts=[]
+    pending=[]
     for kind,value in events:
         if kind=='tool_call':
             args=value.get('arguments',{})
-            name=args.get('tool_name','') if 'use_pyfigures_tool' in value.get('name','') else value.get('name','')
-            if name and not any(word in name for word in ('inspect','find_','get_','list_','preview','select_live','open_annotation','explain_','show_me_how','guidance','check_','audit_','describe_','review_submission','figure_review_brief')):
-                edits.append(name)
+            name=args.get('tool_name','') if value.get('name')=='use_pyfigures_tool' else value.get('name','')
+            read_only = name == 'simulate_color_blindness' or any(word in name for word in ('inspect','find_','get_','list_','preview','select_live','open_annotation','explain_','show_me_how','guidance','check_','audit_','describe_','review_submission','figure_review_brief'))
+            item={'name':name,'refused':False,'completed':False,'read_only':read_only}
+            attempts.append(item)
+            pending.append(item)
+        elif kind=='tool_result' and pending:
+            # Engine emits call/result pairs sequentially; a result must match its call.
+            item=pending.pop(0)
+            item['completed']=True
+            item['refused']=bool(value.get('is_error'))
+    edits=[a['name'] for a in attempts if a['name'] and not a['read_only'] and not a['refused']]
+    refused=[a['name'] for a in attempts if a['name'] and not a['read_only'] and a['refused']]
     check(all(name in allowed for name in edits),'Unexpected mutation operation: '+str(edits))
-    check(len(edits)<=expect.get('max_mutations',1),'Efficiency: Too many mutation calls: '+str(edits))
+    # Refusal does not prove no change. Existing no-edit document/caption digests and
+    # all requested property/preservation checks above still run independently.
+    check(all(name in allowed for name in refused),'Efficiency: Disallowed refused mutation attempt: '+str(refused))
+    check(len(edits)+len(refused)<=expect.get('max_mutations',1),'Efficiency: Too many mutation calls: '+str(edits+refused))
     failures+=verify_advanced(expect,before,after)
     if expect.get('clarification'):check('?' in replies or any(word in replies for word in ('which','clarify','specify','choose')),'No clarification question')
     return failures
