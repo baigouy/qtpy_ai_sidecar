@@ -146,7 +146,11 @@ def verify(expect, before, after, events, allowed):
         if expect.get('flip_'+axis):
             pid=by_ref(after,expect['flip_'+axis])
             old=old_images.get(pid,{})
-            check(bool(old.get('flip_'+axis+'_digest')) and images.get(pid,{}).get('pixel_digest')==old.get('flip_'+axis+'_digest'),'Displayed pixels were not flipped '+axis)
+            current=images.get(pid,{})
+            source_unchanged=bool(old.get('pixel_digest')) and current.get('pixel_digest')==old['pixel_digest']
+            native_flip=current.get('flip_'+axis) is True and source_unchanged
+            legacy_flip=bool(old.get('flip_'+axis+'_digest')) and current.get('pixel_digest')==old['flip_'+axis+'_digest']
+            check(native_flip or legacy_flip,'Displayed pixels were not flipped '+axis)
     for spec in expect.get('annotations_match',[]):
         pid=by_ref(after,spec.get('ref')) if spec.get('ref') else None
         if spec.get('ref') and pid is None:
