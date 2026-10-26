@@ -147,11 +147,13 @@ class PyFiguresAdapter:
         ref = args.get('panel_ref')
         if ref is not None and not re.fullmatch(r'[0-9]+(?:/[0-9]+)*', str(ref)):
             return
-        # Do not infer the complete target set for relative, broader or exclusion requests.
-        if re.search(r'\b(?:neighbou?rs?|adjacent|remaining|rest|except|excluding|all|every|each|whole|entire)\b|\bnext\s+to\b', text, re.I):
-            return
         # Quoted annotation contents can mention panel names without targeting them.
         source = re.sub(r'"[^"]*"|\x27[^\x27]*\x27', ' ', text)
+        # "Leave every other letter alone" restricts the target; it names nothing to edit.
+        source = re.sub(r'\b(?:leave|keep|preserve|(?:do\s+not|don\'?t)\s+(?:touch|change)|without\s+(?:touching|changing))\b[^.;!?]*', ' ', source, flags=re.I)
+        # Do not infer the complete target set for relative, broader or exclusion requests.
+        if re.search(r'\b(?:neighbou?rs?|adjacent|remaining|rest|except|excluding|all|every|each|whole|entire)\b|\bnext\s+to\b', source, re.I):
+            return
         if re.search(r'\b(?:panels?|images?|pictures?|letters?|and|or)\s+(?:alpha|beta|gamma|delta|epsilon|zeta|eta|theta|iota|kappa|lambda|mu|nu|xi|omicron|pi|rho|sigma|tau|upsilon|phi|chi|psi|omega)\b', source, re.I):
             return
         names = []

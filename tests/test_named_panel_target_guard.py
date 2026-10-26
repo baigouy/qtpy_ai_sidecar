@@ -19,6 +19,14 @@ def test_wrong_numeric_address_is_refused_and_never_retargeted():
         guard('Select h and make only its letter yellow.',args)
     assert args==original
 
+@pytest.mark.parametrize('utterance',[
+    'Select h and make only its letter yellow. Leave every other letter alone.',
+    'Make letter h yellow and keep all the others as they are.',
+    'Make letter h yellow without changing any other letter.'])
+def test_a_preservation_clause_does_not_disable_the_guard(utterance):
+    with pytest.raises(ValueError,match='you targeted f'):
+        guard(utterance,{'scope':'panels','panel_ids':['1/1']})
+
 def test_matching_numeric_address_passes():
     guard('Make letter h yellow.',{'scope':'panels','panel_ids':['1/3']})
 
