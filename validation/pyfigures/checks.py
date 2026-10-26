@@ -64,7 +64,8 @@ def verify(expect, before, after, events, allowed):
         claims=re.findall(r'\b(?:deleted|removed)\s+(?:all\s+)?(?:the\s+)?(\d+)\s+rows?\b',plain)
         claims+=re.findall(r'\b(\d+)\s+rows?\s+(?:were|have been)\s+(?:deleted|removed)\b',plain)
         check(all(int(n)==actual for n in claims),'Reported deleted-row count differs from actual state')
-    def normalized(value): return re.sub(r'\s*,\s*',',',value.lower())
+    # typographic apostrophes/quotes ("don’t", “aa”) count as their ASCII forms
+    def normalized(value): return re.sub(r'\s*,\s*',',',value.lower().translate({0x2018:39,0x2019:39,0x201c:34,0x201d:34}))
     for alternatives in expect.get('reply_terms_any',[]):
         check(any(normalized(term) in normalized(replies) for term in alternatives),'Missing manual explanation: '+str(alternatives))
     if expect.get('reply_terms_any'):
@@ -219,6 +220,8 @@ def verify(expect, before, after, events, allowed):
     # all requested property/preservation checks above still run independently.
     check(all(name in allowed for name in refused),'Efficiency: Disallowed refused mutation attempt: '+str(refused))
     check(len(edits)+len(refused)<=expect.get('max_mutations',1),'Efficiency: Too many mutation calls: '+str(edits+refused))
+    if 'font_reply' in expect:
+        failures+=verify_font_reply(expect['font_reply'],after,events)
     failures+=verify_advanced(expect,before,after)
     if expect.get('clarification'):check('?' in replies or any(word in replies for word in ('which','clarify','specify','choose')),'No clarification question')
     return failures
@@ -285,4 +288,45 @@ def verify_advanced(expect,before,after):
     if expect.get('clarification'):
         # The caller checks replies separately; this flag also requires no mutation.
         check(before['document_digest']==after['document_digest'],'Clarification request changed the figure')
+    return failures
+
+
+def verify_font_reply(spec,after,events):
+    """Availability comes from the GUI font database, never the model's claim."""
+    import re
+    failures=[]
+    replies=' '.join(str(v) for k,v in events if k=='assistant').lower()
+    plain=re.sub('[*_#'+chr(96)+']','',replies)
+    calls=[]
+    for kind,value in events:
+        if kind!='tool_call':continue
+        args=value.get('arguments',{})
+        name=args.get('tool_name') if value.get('name')=='use_pyfigures_tool' else value.get('name')
+        args=args.get('arguments',{}) if value.get('name')=='use_pyfigures_tool' else args
+        if name=='list_fonts':calls.append(args)
+    if spec['kind']=='inventory':
+        if not any(not c.get('query') for c in calls):failures.append('Font inventory not read with list_fonts()')
+        if not re.search(r'\bfonts?\b|\bfamil(?:y|ies)\b',plain):failures.append('No font inventory explanation')
+        return failures
+    query=spec['query']
+    status=after.get('font_status',{}).get(query)
+    if not status:return ['Missing independent font status for '+query]
+    if spec['kind']=='query' and not any(str(c.get('query','')).casefold()==query.casefold() for c in calls):
+        failures.append('Font query not checked using exact requested family')
+    if query.lower() not in plain:failures.append('Requested font missing from reply')
+    if status['installed']:
+        if spec['kind']=='query':
+            if not re.search(r'\binstalled\b|\bavailable\b',plain):failures.append('No installed-font answer')
+            if re.search(r'\b'+re.escape(query.lower())+r'\b[^\n.!?]{0,70}\b(?:not|isn.t)\s+(?:currently\s+)?(?:installed|available)\b',plain) or re.search(r'\b(?:font_check\.)?installed\s*:\s*false\b',plain):
+                failures.append('Installed font wrongly described as missing')
+    else:
+        if not re.search(r'\b(?:not|isn.t|is not|unavailable|missing|doesn.t|does not|no)\b',plain):
+            failures.append('Missing font not disclosed')
+        if str(status.get('drawn_as','')).lower() not in plain:
+            failures.append('Actual drawn/exported font missing from reply')
+        alternatives=status.get('alternatives',[])
+        if alternatives and not any(a.lower() in plain for a in alternatives):
+            failures.append('No installed font alternative offered')
+        if not re.search(r'\bdraw\w*|\bexport\w*|\brender\w*|\bsubstitut\w*|\bfallback\b|\breplac\w*',plain):
+            failures.append('Font substitution behavior not explained')
     return failures

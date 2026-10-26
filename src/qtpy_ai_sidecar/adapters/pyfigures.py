@@ -63,6 +63,7 @@ class PyFiguresAdapter:
                 'For arrange_live_images, columns is the number of images per row; a row count is a different request. For set_figure_caption, caption is exact plain text including punctuation, title is separate, and caption_markdown is an optional formatted STRING, never a boolean. Use set_scale_bar with panel_ref for a single panel; set_scale_bar_all is only for a whole-figure request. '
                 'Use find_pyfigures_tools for the exact schema before a first use; state field names are not function argument names. Native image/annotation tools prefer panel_ref for named panels. Text setters use text_index from inspection; ROI/removal tools use the full annotation_index. panel_id is not a setter argument. open_annotation_editor uses panel_ref, not panel_id. edit_panel_letters has no letters or style object arguments: pass its flat schema fields. A mixed colour summary is not a valid colour; omit styling to preserve actual styles. '
                 'Convert an existing ROI into an inset with roi_to_inset: this magnifies the same source, no external filename required. If multiple ROIs exist ask which; do not redefine the already clear request. '
+                'Is a font available? Use list_fonts(query=the_font), answer from font_check. '
                 'Give a a scale bar names panel a, not all panels; bulk needs an explicit whole-figure request. Unknown-name suggestions require human confirmation. Report completed edits briefly using verified changes, not full state dumps unless asked. If a user reports an invisible letter, inspect its appearance and location; existence in state does not prove visibility. Avoid categorical denials based on letter counts alone. '
                 'For lettering a newly constructed figure, use one renumber/all operation for a complete unique sequence. Partial restore preserves earlier IDs. verified_letter_specification.duplicate_letter_references reports ambiguities; a correct count alone does not prove usable panel references. Never silently rename accepted manual labels. '
                 'For ordinary rich-text range formatting or ROI property edits, discover inspect_annotation_objects and edit_annotation_properties. Inspect the exact object and pass its token; do not replace whole formatted text to style one substring. Repeated text needs an explicit occurrence. Native dialogs keep OK/Cancel; finish them before direct annotation edits. '
@@ -73,7 +74,8 @@ class PyFiguresAdapter:
                 'removal_request is a literal quote of the human request, never a rewritten instruction invented to pass validation. On a tool exception inspect and explain the failure; changing file paths cannot fix an internal exception. '
                 'select_live_objects is directly available: clear=true clears the selection without panel_refs. Select actual GUI targets with panel_refs for letters/IDs, row_numbers starting at 1, or group_paths for rows/columns. For a named row reversal select that row then reverse_selected_row. '
                 'A general request to annotate/add annotations to a panel specifies no annotation content. Select the panel, then ask what to add or offer to open_annotation_editor. Never invent a placeholder annotation. Explicit open-editor requests use open_annotation_editor, which selects its panel and schedules the native dialog; do not claim annotations were added. '
-                'Swap named panels/images by default: swap b and c means exchange image panels, including obvious connector typos. Use swap_live_panels target=images. Only exchange letter TEXT when explicitly requested. Ask only if target references do not uniquely resolve. '
+                'Swap IMAGE PANELS by default: swap b and c or put b in place of a and a in place of b means exchange images. Use swap_live_panels target=images. Letter TEXT swaps require an explicit swap-the-letters/labels request. If a reference is missing or non-unique, STOP and ask; never substitute an existing panel or retry with other references. '
+                'A uniquely named panel wins over a positional/visual description; act on that name and mention the discrepancy. Never edit then undo to ask. '
                 'For whole-row swaps discover swap_rows; use visible row numbers starting at 1. Never simulate row swaps using move_image. With automatic lettering enabled, row swaps regenerate letters in positional order, like native keyboard rearrangement; retain styles, not old letter text. '
                 'last_canvas_click contains the last actual canvas press. For clicked/here ROI or arrow requests use its image_position only when valid=true and panel_id matches the intended panel; otherwise ask for a fresh click. Never treat scene/widget coordinates as image pixels. A click gives a point, not ROI width/height; clarify missing dimensions. '
                 'Fresh PyFigures selection supersedes earlier focus. This/selected/current letter means the letter on the selected panel. '
@@ -224,7 +226,15 @@ class PyFiguresAdapter:
         operation = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
         if operation=='review_submission_readiness':self._quality_review_requested=True
         if operation=='set_scale_bar_all' and not re.search(r'\b(?:all|every|each|whole|entire|throughout)\b|\bscale[ -]?bars\b',text,re.I):
-            raise ValueError('SCOPE_MISMATCH: A singular scale-bar request does not authorize changing every panel. Use set_scale_bar for the named or selected image; ask which image if the target is unclear. No bulk edit was submitted.')
+            # "Give a a scale bar", "put b a scale bar", "panel c": the request names its panel
+            named=re.search(r'\b(?:panel|image)\s+([a-z]{1,2}|\d+/\d+)\b',text,re.I)
+            if named and (re.search(r'\b(?:this|that|the|selected|current|same)\s*$',text[:named.start()],re.I)
+                          or (named.group(1).lower() in ('a','an') and re.match(r'\s+(?:\d|scale|new|single|micro|µ)',text[named.end():],re.I))):
+                # "the selected panel a 10 um scale bar", "this image a scale bar": an article, not panel a
+                named=None
+            named=named or re.search(r'\b(?:give|put|add|draw)\s+(?:panel\s+)?([a-z])\s+(?:a|an|one)\b',text,re.I)
+            hint=(' The request names panel '+repr(named.group(1))+': call set_scale_bar with panel_ref='+repr(named.group(1))+' and the same length/pixel size; do not ask.') if named else ' Ask which image if the target is unclear.'
+            raise ValueError('SCOPE_MISMATCH: A singular scale-bar request does not authorize changing every panel. Use set_scale_bar for the named or selected image.'+hint+' No bulk edit was submitted.')
 
         vague_annotation = re.search(r'\bannot\w*\b', text, re.I) and not re.search(
             r'\b(?:arrow\w*|roi\w*|rectangle|ellipse|circle|polygon|line|text|label|scale|remove|delete|clear)\b|["]', text, re.I)
@@ -310,6 +320,12 @@ class PyFiguresAdapter:
             if float(args['font_size'])!=requested:
                 from ..errors import NeedsClarification
                 raise NeedsClarification('The requested font size is '+str(requested)+' points. I cannot silently change its sign or size; please choose a valid positive size. No replacement style was submitted.')
+        corner=re.search(r'\b([a-z]+)\s+corners?\b',text,re.I)
+        known_corner=r'top|bottom|upper|lower|left|right|centre|center|middle|same|other|opposite|each|every|all|any|one|that|this|which|its|their|the|a|different|another|nearest'
+        if corner and not re.fullmatch(known_corner,corner[1],re.I) and (operation=='set_panel_letter_position' or (operation=='edit_panel_letters' and args.get('placement'))):
+            # "the flarble corner" names no corner: never substitute one.
+            from ..errors import NeedsClarification
+            raise NeedsClarification('"'+corner[1]+' corner" is not a corner I know. Which corner do you want: top left, top right, bottom left or bottom right? Nothing was moved.')
         preserving_letters=re.search(r'\b(?:leave|keep|preserve)\b.{0,35}\b(?:panel\s+)?letters?\b.{0,20}\b(?:alone|unchanged|as (?:it|they) (?:is|are))\b',text,re.I)
         if preserving_letters and operation in ('style_annotation','set_annotation_text','add_annotation','set_roi_properties','edit_annotation_properties'):
             singular=None
