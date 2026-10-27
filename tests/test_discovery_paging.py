@@ -52,6 +52,17 @@ def test_pagination_returns_whole_schema_entries(monkeypatch):
     for entry in result['tools']:
         if 'arguments_schema' not in entry:assert entry['summary'] and entry['name'] in entry['schema']
 
+def test_common_contracts_off_by_default_and_scoped_when_on(monkeypatch):
+    monkeypatch.delenv('PYFIGURES_COMMON_CONTRACTS',raising=False)
+    s,_=server(monkeypatch)
+    assert 'Common exact contracts' in s._tool_manager._tools['use_pyfigures_tool'].description
+    assert 'except the common operations' not in s.instructions
+    monkeypatch.setenv('PYFIGURES_COMMON_CONTRACTS','1')
+    s,_=server(monkeypatch)
+    text=s._tool_manager._tools['use_pyfigures_tool'].description
+    assert 'call them through use_pyfigures_tool' in text and 'callable directly' not in text
+    assert 'except the common operations' in s.instructions
+
 def test_compact_discovery_can_be_switched_off(monkeypatch):
     monkeypatch.setenv('PYFIGURES_COMPACT_DISCOVERY','0')
     s,full=server(monkeypatch)
