@@ -1,10 +1,22 @@
 """Optional owned llama.cpp process. Never installs globally or stops other servers."""
 import asyncio
+import re
 import secrets
 import socket
 import subprocess
 from pathlib import Path
 import httpx
+
+
+def reasoning_control(template):
+    """How a chat template lets reasoning be steered: 'toggle' (enable_thinking), 'strength'
+    (only a 'Reasoning strength: <level>' system line, e.g. Muse-Glimmer; reasoning cannot be
+    switched off) or None (unknown)."""
+    if 'enable_thinking' in template:
+        return 'toggle'
+    if re.search(r'reasoning[ _]strength', template, re.I):
+        return 'strength'
+    return None
 
 
 class OwnedLlama:
@@ -14,6 +26,14 @@ class OwnedLlama:
         self.log = None
         self.url = None
         self.key = secrets.token_urlsafe(32)
+        self.reasoning_control = None   # 'toggle', 'strength' or None, read from the loaded chat template
+
+    async def _read_template(self, client):
+        try:
+            response = await client.get(self.url + '/props', headers={'Authorization': 'Bearer ' + self.key})
+            self.reasoning_control = reasoning_control(response.json().get('chat_template') or '')
+        except (httpx.HTTPError, ValueError, AttributeError):
+            self.reasoning_control = None
 
     @property
     def raw_qwen(self):
@@ -63,6 +83,7 @@ class OwnedLlama:
                     try:
                         response = await client.get(self.url + '/health', headers={'Authorization': 'Bearer ' + self.key})
                         if response.status_code == 200:
+                            await self._read_template(client)
                             emit('status', 'Local model ready')
                             return self.url, self.key
                     except httpx.HTTPError:

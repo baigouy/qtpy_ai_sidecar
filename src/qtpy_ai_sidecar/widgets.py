@@ -472,6 +472,14 @@ class AssistantDock(QDockWidget):
         self.thinking_mode.setEnabled(supported and not self.busy)
         self.thinking_slider.setEnabled(supported and not self.busy and config.thinking != 'disabled')
         tip = 'Default means backend default, not Low. Strength is a model-dependent hint; some models ignore it.' if supported else 'This backend does not expose thinking controls.'
+        # A strength-only template (e.g. Muse-Glimmer) always reasons: 'Off' would be a false promise.
+        strength_only = getattr(getattr(self.engine.backend, 'runtime', None), 'reasoning_control', None) == 'strength'
+        off = self.thinking_mode.model().item(self.thinking_mode.findData('disabled'))
+        if off is not None:
+            off.setEnabled(not strength_only)
+        if strength_only:
+            tip = 'This model cannot switch reasoning off; set its strength instead (Off is sent as Low).'
+            self.thinking_slider.setEnabled(supported and not self.busy)
         self.thinking_slider.setToolTip(tip)
         self.thinking_mode.setToolTip(tip)
         self.thinking_mode.blockSignals(False)

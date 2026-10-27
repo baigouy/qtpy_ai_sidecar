@@ -14,6 +14,21 @@ class EmptyModelReply(RuntimeError):
     pass
 
 
+def apply_reasoning_strength(transport, config, final_only, emit):
+    """Strength-only templates ignore enable_thinking and reasoning_effort; they read a system
+    line instead. 'Off' cannot be honoured there, so it becomes the lowest strength."""
+    level = 'low' if final_only or config.thinking == 'disabled' else config.thinking_strength
+    if level == 'default':
+        return
+    if config.thinking == 'disabled' and not final_only:
+        emit('status', 'This model cannot switch reasoning off; using Reasoning strength: low')
+    line = f'Reasoning strength: {level}.'
+    if transport and transport[0]['role'] == 'system':
+        transport[0] = {'role': 'system', 'content': transport[0]['content'] + '\n\n' + line}
+    else:
+        transport.insert(0, {'role': 'system', 'content': line})
+
+
 class ModelClient:
     def __init__(self, config, secret_sink=lambda value: None):
         self.config = config
@@ -72,6 +87,8 @@ class ModelClient:
         if final_only and self.config.thinking_backend == 'llama_cpp':
             payload['chat_template_kwargs'] = {'enable_thinking': False}
             payload['reasoning_effort'] = 'none'
+        if self.config.thinking_backend == 'llama_cpp' and getattr(self.runtime, 'reasoning_control', None) == 'strength':
+            apply_reasoning_strength(transport, self.config, final_only, emit)
         progress = {'first_sse_seconds': None, 'stream_events': 0,
                     'content_characters': 0, 'reasoning_characters': 0,
                     'tool_argument_characters': 0}
