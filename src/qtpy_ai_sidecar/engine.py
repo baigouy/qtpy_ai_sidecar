@@ -27,6 +27,33 @@ class Engine:
         self.messages = [{'role': 'system', 'content': SYSTEM + '\n' + config.instructions}]
         self.cancel = threading.Event()
         self.uncertain = False
+        self._turn = 0
+        self._tool_meta = {}       # tool_call_id -> (turn, is_discovery)
+
+    # Small local models ran out of context mostly on old tool results: every
+    # search returns full schemas and they stayed in the history. What is SENT
+    # is shortened; self.messages and the journal keep every full result.
+    OLD_RESULT_CHARS = 1500
+    KEEP_RECENT_DISCOVERY = 2
+
+    def _outgoing(self):
+        if not getattr(self.config, 'compact_history', True):
+            return list(self.messages)
+        recent = [m.get('tool_call_id') for m in self.messages if m.get('role') == 'tool'
+                  and self._tool_meta.get(m.get('tool_call_id'), (None, False)) == (self._turn, True)]
+        keep = set(recent[-self.KEEP_RECENT_DISCOVERY:])
+        out = []
+        for m in self.messages:
+            meta = self._tool_meta.get(m.get('tool_call_id')) if m.get('role') == 'tool' else None
+            content = m.get('content')
+            if meta and isinstance(content, str) and len(content) > self.OLD_RESULT_CHARS and m['tool_call_id'] not in keep:
+                turn, discovery = meta
+                if turn < self._turn or discovery:
+                    m = dict(m, content=content[:400] + f'\n[Older result shortened to save context ({len(content)} chars). '
+                             + ('Current state is in CURRENT_HOST_STATE; inspect again if needed.]' if turn < self._turn
+                                else 'Search again or call the operation; its exact schema is returned on a wrong argument.]'))
+            out.append(m)
+        return out
 
     def record(self, kind, value, emit):
         self.journal.record(kind, value)
@@ -56,7 +83,8 @@ class Engine:
             'thinking_budget', 'context_tokens', 'output_tokens', 'max_steps')}, emit)
         if self.uncertain:
             raise RuntimeError('An earlier tool outcome is uncertain. Check the application, then use Acknowledge inspection before another request. No action replayed.')
-        if size_estimate(self.messages) + self.config.output_tokens > self.config.context_tokens:
+        self._turn += 1           # earlier turns' results now go out shortened
+        if size_estimate(self._outgoing()) + self.config.output_tokens > self.config.context_tokens:
             raise ValueError('Estimated context is full. Use Compress before sending more; no edit submitted.')
         self.messages.append({'role': 'user', 'content': text})
         begun = False
@@ -98,7 +126,7 @@ class Engine:
                     step=tool_steps
                     if self.cancel.is_set():
                         raise InterruptedError('Stopped before further tool submission')
-                    messages = self.messages + [{'role': 'system', 'content': 'Connected application MCP guidance:\n' + json.dumps(hub.instructions)}]
+                    messages = self._outgoing() + [{'role': 'system', 'content': 'Connected application MCP guidance:\n' + json.dumps(hub.instructions)}]
                     self.context(emit, messages)
                     emit('status', f'Thinking — step {step + 1}/{self.config.max_steps}')
                     if size_estimate(messages) + self.config.output_tokens > self.config.context_tokens:
@@ -249,6 +277,7 @@ class Engine:
                         if len(serialized) > 24000:
                             serialized = serialized[:24000] + '\n[Result truncated for model context; full result retained in local log. Inspect smaller scope; never infer omitted success.]'
                         self.messages.append({'role': 'tool', 'tool_call_id': call['id'], 'content': serialized})
+                        self._tool_meta[call['id']] = (self._turn, bool(discovery_call))
                         emit('tool_result', {'is_error': result.get('is_error', False)})
                         completion = getattr(self.adapter, 'verified_completion', None)
                         if completion and completion_tool and len(calls) == 1 and not result.get('is_error'):
@@ -263,7 +292,7 @@ class Engine:
                     if discovery_stalled:
                         emit('status','Read-only request repeated; answering from earlier results without further tools')
                         self.journal.record('discovery_loop_stopped',{'identical_results':3,'tools_enabled':False})
-                        prompt=self.messages+[{'role':'system','content':'A read-only request repeated data already returned in this turn. Tools are now disabled. Give a concise answer from verified facts already available, or explain what remains unresolved. Do not claim an edit was done without verified evidence. No completed operation is being replayed.'}]
+                        prompt=self._outgoing()+[{'role':'system','content':'A read-only request repeated data already returned in this turn. Tools are now disabled. Give a concise answer from verified facts already available, or explain what remains unresolved. Do not claim an edit was done without verified evidence. No completed operation is being replayed.'}]
                         summary,_=await self.backend.complete(prompt,[],self.cancel,emit,final_only=True)
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Discovery loop stopped; no valid text summary returned')
                         summary=await self._finalize_reply(text,summary,state,preview,emit)
