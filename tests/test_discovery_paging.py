@@ -43,7 +43,8 @@ def test_pagination_returns_whole_schema_entries(monkeypatch):
     # The server retains the tool objects; exercise large documentation results.
     for tool in full._tool_manager._tools.values():tool.description='documentation '*650
     find=s._tool_manager._tools['find_pyfigures_tools'].fn
-    result=find(query='',limit=12)
+    assert all('arguments_schema' in e for e in find(query='',limit=6)['tools'])   # auto: full unless the client asks
+    result=find(query='',limit=12,compact=True)
     assert result['next_offset'] in (None,len(result['tools']))
     assert len(json.dumps(result))<24000
     full_entries=[e for e in result['tools'] if 'arguments_schema' in e]
@@ -75,6 +76,6 @@ def test_compact_discovery_can_be_switched_off(monkeypatch):
     monkeypatch.setenv('PYFIGURES_COMPACT_DISCOVERY','0')
     s,full=server(monkeypatch)
     for tool in full._tool_manager._tools.values():tool.description='documentation '*650
-    result=s._tool_manager._tools['find_pyfigures_tools'].fn(query='',limit=12)
+    result=s._tool_manager._tools['find_pyfigures_tools'].fn(query='',limit=12,compact=True)
     assert result['next_offset']==len(result['tools'])
     for entry in result['tools']:assert entry['arguments_schema']['type']=='object'

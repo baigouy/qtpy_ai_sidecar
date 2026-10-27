@@ -36,8 +36,14 @@ class Engine:
     OLD_RESULT_CHARS = 1500
     KEEP_RECENT_DISCOVERY = 2
 
-    def _outgoing(self):
-        if not getattr(self.config, 'compact_history', True):
+    # Compacting always made Qwen 9B slower (more searches), so it starts only once the
+    # context is filling: full results while there is room, short ones when it is tight.
+    def _tight(self, extra=()):
+        estimate = size_estimate(self.messages + list(extra)) + self.config.output_tokens
+        return estimate > getattr(self.config, 'compact_from', 0.5) * self.config.context_tokens
+
+    def _outgoing(self, extra=()):
+        if not getattr(self.config, 'compact_history', True) or not self._tight(extra):
             return list(self.messages)
         recent = [m.get('tool_call_id') for m in self.messages if m.get('role') == 'tool'
                   and self._tool_meta.get(m.get('tool_call_id'), (None, False)) == (self._turn, True)]
@@ -127,7 +133,9 @@ class Engine:
                     step=tool_steps
                     if self.cancel.is_set():
                         raise InterruptedError('Stopped before further tool submission')
-                    messages = self._outgoing() + [{'role': 'system', 'content': 'Connected application MCP guidance:\n' + json.dumps(hub.instructions)}]
+                    guidance = [{'role': 'system', 'content': 'Connected application MCP guidance:\n' + json.dumps(hub.instructions)}]
+                    messages = self._outgoing(guidance) + guidance
+                    tight = self._tight(guidance)
                     self.context(emit, messages)
                     emit('status', f'Thinking — step {step + 1}/{self.config.max_steps}')
                     if size_estimate(messages) + self.config.output_tokens > self.config.context_tokens:
@@ -209,6 +217,10 @@ class Engine:
                                     args={'tool_id':direct_ids[name],'arguments':args}
                                 elif args['tool_id'] not in discovered:
                                     raise ValueError('Discover this tool schema before execution')
+                                schema=getattr(hub.tools[args['tool_id']][2],'inputSchema',None) or {}
+                                if (tight and getattr(self.config,'compact_history',True) and 'compact' in schema.get('properties',{})
+                                        and 'compact' not in args['arguments']):
+                                    args={'tool_id':args['tool_id'],'arguments':dict(args['arguments'],compact=True)}
                                 completion_tool=hub.tools[args['tool_id']][2].name
                                 completion_arguments=args['arguments']
                                 read_only=getattr(hub,'is_read_only',lambda ident:False)(args['tool_id'])

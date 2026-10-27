@@ -25,6 +25,7 @@ class Config:
     generation_timeout_seconds: int = 120
     response_timeout_s: int = 30  # Final-only recovery cap, owned by this model profile.
     compact_history: bool = True  # false: send every earlier tool result in full (the behaviour before 2026-10-27)
+    compact_from: float = 0.5     # compact history and searches once the payload fills this share of the context; 0 = always
 
     def __post_init__(self):
         if not 512 <= self.output_tokens < self.context_tokens:

@@ -89,6 +89,35 @@ def test_the_same_refused_call_stops_after_three(tmp_path):
     assert 'rejected_call_loop_stopped' in engine.journal.path.read_text()
     assert any(k=='assistant' and 'refused' in v for k,v in events)
 
+def test_searches_ask_for_compact_results_only_when_the_context_is_tight(tmp_path):
+    def run(compact_from):
+        class Hub:
+            instructions=[]
+            def __init__(self,*a):
+                self.args=[]
+                schema={'type':'object','properties':{'query':{'type':'string'},'compact':{'type':'boolean'}}}
+                self.tools={'id':('demo',None,SimpleNamespace(name='find_pyfigures_tools',inputSchema=schema,annotations=SimpleNamespace(readOnlyHint=True)))}
+            async def __aenter__(self):return self
+            async def __aexit__(self,*a):pass
+            def model_tools(self):return []
+            def direct_ids(self):return {'find_pyfigures_tools':'id'}
+            def is_discovery(self,ident):return True
+            async def execute(self,ident,arguments,emit):
+                self.args.append(arguments)
+                return {'is_error':False,'content':'tools'}
+        class Model:
+            calls=0
+            async def complete(self,messages,tools,cancel,emit,final_only=False):
+                self.calls+=1
+                if self.calls>1:return {'role':'assistant','content':'Found it.'},{}
+                return {'role':'assistant','content':'','tool_calls':[{'id':'1','type':'function','function':{'name':'find_pyfigures_tools','arguments':'{"query": "scale bar"}'}}]},{}
+        hub=Hub()
+        engine=Engine(Config(state_dir=str(tmp_path/str(compact_from)),context_tokens=65536,compact_from=compact_from),backend=Model(),hub_factory=lambda *a:hub)
+        asyncio.run(engine.turn('Find the scale bar tool',lambda *a:None))
+        return hub.args[0]
+    assert 'compact' not in run(0.5)                       # plenty of room: full schemas
+    assert run(0.01)['compact'] is True                    # past the threshold: compact
+
 def test_step_budget_is_bounded_user_controlled_and_persistent(tmp_path):
     assert Config().max_steps==32
     assert Config(max_steps=12).max_steps==12
