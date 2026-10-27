@@ -47,3 +47,66 @@ def test_unknown_corner_is_never_replaced_by_a_real_one(call):
 def test_known_corner_passes_the_corner_guard():
     adapter=PyFiguresAdapter('unused')
     adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_panel_letter_position',arguments={'placement':'bottom right'}),{},'Put all letters in the bottom right corner.')
+
+def test_exact_caption_keeps_its_final_period():
+    adapter=PyFiguresAdapter('unused')
+    request='Set the légende to exactly: Cellules traitées.'
+    with pytest.raises(ValueError,match="CAPTION_NOT_EXACT.*'Cellules traitées.'"):
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_figure_caption',arguments={'caption':'Cellules traitées'}),{},request)
+    adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_figure_caption',arguments={'caption':'Cellules traitées.'}),{},request)
+
+@pytest.mark.parametrize('operation',['export_source_data','consolidate_figure','set_scale_bar'])
+def test_how_to_questions_never_edit(operation):
+    adapter=PyFiguresAdapter('unused')
+    for request in ('How do I export the original source data alongside a finished figure?','How can I make a portable copy?','Can I add a scale bar?'):
+        with pytest.raises(ValueError,match='HOW_TO_NO_EDIT'):
+            adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name=operation,arguments={}),{},request)
+    adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='explain_how',arguments={'operation':'x'}),{},'How do I export the source data?')
+    adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='export_source_data',arguments={}),{},'Export the source data for me.')
+    adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='export_source_data',arguments={}),{},'How do I export the source data? Please do it for me.')
+
+SWAP_STATE={'panel_references':[{'panel_id':'0/0','letters':['a']},{'panel_id':'0/2','letters':['c']},{'panel_id':'0/1','letters':['b']}]}
+
+def test_swap_never_substitutes_a_missing_reference():
+    adapter=PyFiguresAdapter('unused')
+    with pytest.raises(ValueError,match='SWAP_REFERENCE_MISMATCH'):
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='swap_live_panels',arguments={'first':'a','second':'c'}),SWAP_STATE,'Swap aa with c please.')
+    for first,second,request in (('a','c','Swap a with c.'),('c','a','Swap a and c'),('0/0','c','Swap a with c.'),('a','0/0','Swap a with panel 0/0.')):
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='swap_live_panels',arguments={'first':first,'second':second}),SWAP_STATE,request)
+
+def test_caption_after_a_colon_keeps_its_final_period():
+    adapter=PyFiguresAdapter('unused')
+    request='Use this caption and italicize the species name: Cells of Drosophila melanogaster.'
+    with pytest.raises(ValueError,match='CAPTION_NOT_EXACT'):
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_figure_caption',arguments={'caption':'Cells of Drosophila melanogaster','caption_markdown':'Cells of *Drosophila melanogaster*'}),{},request)
+    adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_figure_caption',arguments={'caption':'Cells of Drosophila melanogaster.'}),{},request)
+    # a caption that differs in wording is not this guard's business
+    adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_figure_caption',arguments={'caption':'Drosophila cells'}),{},request)
+
+LUT_STATE={'panel_references':[{'panel_id':'1/0','letters':['e'],'luts':['MAGENTA','GREEN','BLUE']}]}
+
+def test_unchanged_channels_need_no_lut_name():
+    adapter=PyFiguresAdapter('unused')
+    adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_lut',arguments={'panel_ref':'e','luts':['MAGENTA','YELLOW','BLUE']}),
+                               LUT_STATE,'Make the second channel of panel e yellow and leave the other channels alone.')
+
+def test_a_changed_channel_still_needs_a_named_lut():
+    adapter=PyFiguresAdapter('unused')
+    with pytest.raises(NeedsClarification,match='PURPLE'):
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_lut',arguments={'panel_ref':'e','luts':['PURPLE','GREEN','BLUE']}),
+                                   LUT_STATE,'Set panel e to use a blorple LUT.')
+
+@pytest.mark.parametrize('call',[('remove_group',{'group_path':[5]}),('delete_last_rows',{'count':1})])
+def test_one_picture_never_removes_a_row(call):
+    adapter=PyFiguresAdapter('unused')
+    with pytest.raises(ValueError,match='SCOPE_MISMATCH.*remove_image'):
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name=call[0],arguments=call[1]),{},'Delete the very last picture.')
+    for request in ('Delete the last row.','Remove the last two rows of images.','Delete the bottom group'):
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name=call[0],arguments=call[1]),{},request)
+
+@pytest.mark.parametrize('request_text',['Make the letter of the third picture in the second row yellow.',
+                                         'Make the letter of the top-left image yellow.'])
+def test_positional_reference_is_an_explicit_target(request_text):
+    adapter=PyFiguresAdapter('unused')
+    adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='edit_panel_letters',arguments={'action':'style','scope':'panels','panel_ids':['1/2'],'color':'#ffff00'}),
+                               {'selection':{'selected_panels':[]}},request_text)

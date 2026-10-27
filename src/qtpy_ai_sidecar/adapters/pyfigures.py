@@ -47,6 +47,33 @@ class PyFiguresAdapter:
                 controls = ['undo']
         return {**record, 'controls': controls}
 
+    def read_cache_epoch(self):
+        # A cheap host stamp prevents reuse after an external selection/document change.
+        import hashlib
+        state=self.request('inspect')
+        value={k:state.get(k) for k in ('session_id','revision','selection','native_gui_jobs','last_canvas_click')}
+        if state.get('annotation_editor_open'):
+            value['editor']=self.request('inspect_annotation_objects')
+        return hashlib.sha256(json.dumps(value,sort_keys=True,default=str).encode()).hexdigest()
+
+    def is_read_only_call(self, tool_name, arguments):
+        # Exact pure observations, not name prefixes or merely non-document GUI actions.
+        pure={'inspect_figure','inspect_native_gui','inspect_annotation_objects',
+              'inspect_panel_letters','get_annotations','get_figure_caption',
+              'get_figure_properties','list_how_to_guides','explain_how',
+              'explain_live_interaction','find_pyfigures_tools',
+              'list_pyfigures_categories','list_fonts'}
+        if tool_name=='use_pyfigures_tool':
+            return arguments.get('tool_name') in pure
+        if tool_name in pure:return True
+        if tool_name in ('select_live_objects','undo_redo','show_me_how','close_guidance',
+                         'open_annotation_editor','open_annotation_properties',
+                         'open_native_menu','use_native_gui','native_gui_keys',
+                         'native_gui_gesture','native_gui_drop_files'):
+            return False
+        return None  # Other connected services need their own explicit MCP hint.
+
+
     def context(self):
         result = self.request('inspect')
         context = {key: result.get(key) for key in ('selection', 'verified_letter_specification', 'panel_references', 'text_annotations', 'roi_annotations', 'last_canvas_click', 'annotation_editor_status', 'native_gui_jobs', 'native_gui_available', 'revision', 'dirty')}
@@ -220,6 +247,8 @@ class PyFiguresAdapter:
         selection = state.get('selection') or {}
         panels = selection.get('selected_panels') or []
         explicit_target = re.search(r'\b(?:all|every|whole|entire)\b|\b(?:panel|letter)\s+(?:[a-z]|[0-9]+(?:/[0-9]+)?)\b', text, re.I)
+        # "the third picture in the second row", "the top-left image" name a position, not a selection
+        explicit_target = explicit_target or re.search(r'\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|last|\d+(?:st|nd|rd|th))\s+(?:picture|image|panel)\b|\b(?:top|bottom|upper|lower)[ -](?:left|right)\s+(?:picture|image|panel)\b', text, re.I)
         singular = re.search(r'\b(?:one|a|single|this|that|the)\s+(?:panel\s+)?(?:letter|label)\b', text, re.I)
         plural_style_collection=re.search(r'\b(?:the|these|those)\s+(?:panel\s+)?(?:letter|label)\s+(?:backgrounds|boxes|fills|fonts|sizes|colours|colors|positions|styles)\b',text,re.I)
         if plural_style_collection:singular=None
@@ -235,6 +264,11 @@ class PyFiguresAdapter:
             named=named or re.search(r'\b(?:give|put|add|draw)\s+(?:panel\s+)?([a-z])\s+(?:a|an|one)\b',text,re.I)
             hint=(' The request names panel '+repr(named.group(1))+': call set_scale_bar with panel_ref='+repr(named.group(1))+' and the same length/pixel size; do not ask.') if named else ' Ask which image if the target is unclear.'
             raise ValueError('SCOPE_MISMATCH: A singular scale-bar request does not authorize changing every panel. Use set_scale_bar for the named or selected image.'+hint+' No bulk edit was submitted.')
+        if operation in ('remove_group','delete_last_rows') and re.search(r'\b(?:picture|image|panel|photo)\b',text,re.I) \
+                and not re.search(r'\b(?:rows?|groups?|lines?|columns?|pictures|images|panels|photos)\b',text,re.I):
+            # "Delete the very last picture" once removed the whole last row
+            raise ValueError('SCOPE_MISMATCH: The request names one picture, not a row. Remove only that panel with remove_image '
+                             '(panel_ref = its letter; "the last picture" is the last letter in inspect_figure). Nothing was removed.')
 
         vague_annotation = re.search(r'\bannot\w*\b', text, re.I) and not re.search(
             r'\b(?:arrow\w*|roi\w*|rectangle|ellipse|circle|polygon|line|text|label|scale|remove|delete|clear)\b|["]', text, re.I)
@@ -245,8 +279,29 @@ class PyFiguresAdapter:
             raise NeedsClarification(f'What would you like to add to {target}?\n- Tell me the annotation you want for {target}\n- Open the annotation editor for {target}\nNo annotation was added.')
         read_only = operation and (operation.startswith(('inspect_', 'get_', 'list_', 'check_', 'describe_', 'audit_', 'explain_')) or operation in ('preview_figure', 'find_pyfigures_tools', 'readability'))
         args = arguments.get('arguments', {}) if tool_name == 'use_pyfigures_tool' else arguments
+        # "How do I export the source data?" asks for steps; a local model ran export_source_data
+        # or consolidate_figure instead. Teaching is not permission to edit or write files.
+        how_to = re.match(r'\s*(?:how\s+(?:do|can|could|would|should)\s+(?:i|we|one)|can\s+i|could\s+i)\b', text, re.I) \
+            and not re.search(r'\b(?:do it|for me|go ahead|then do|and do|please (?:do|apply|make|change|add|set))\b', text, re.I)
+        if how_to and operation and operation.startswith(('export_', 'consolidate_', 'save_', 'render_', 'set_', 'add_', 'remove_', 'delete_', 'swap_',
+                                                          'edit_', 'apply_', 'arrange_', 'restyle_', 'reorder_', 'move_', 'crop_', 'rotate_', 'split_', 'merge_')):
+            raise ValueError('HOW_TO_NO_EDIT: the user asked HOW to do this, not to do it. Answer with the human GUI steps '
+                             '(explain_how / explain_live_interaction), then offer to do it. Nothing was changed or written.')
+        if operation == 'swap_live_panels':
+            spoken = re.search(r'\bswap\s+(?:panels?\s+|pictures?\s+|images?\s+)?([a-z]{1,2}|\d+/\d+)\s+(?:with|and)\s+(?:panel\s+)?([a-z]{1,2}|\d+/\d+)\b', text, re.I)
+            if spoken:
+                refs = {p['panel_id']: p['panel_id'] for p in state.get('panel_references', [])}
+                for p in state.get('panel_references', []):
+                    for letter in p.get('letters', []):refs[str(letter).lower()] = p['panel_id']
+                canon = lambda r: refs.get(str(r).lower(), str(r).lower())
+                if {canon(spoken[1]), canon(spoken[2])} != {canon(args.get('first')), canon(args.get('second'))}:
+                    # "Swap aa with c": never swap a and c instead of saying aa does not exist
+                    raise ValueError(f'SWAP_REFERENCE_MISMATCH: the request names {spoken[1]!r} and {spoken[2]!r}. Never substitute another panel; '
+                                     'if a reference does not exist, tell the user and ask. Nothing was swapped.')
         self._named_panel_address_guard(operation, args, state, text)
-        self._efficient_arguments(operation, args, state)
+        # Annotation tokens change after an earlier edit in this same turn.
+        token_state = self.context() if operation == 'edit_annotation_properties' else state
+        self._efficient_arguments(operation, args, token_state)
         if operation=='add_annotation' and args.get('panel_ref') is None and args.get('group_path') is not None and args.get('image_index') is not None:
             clause=re.split(r'\bthen\b|;',text,flags=re.I)[0]
             named=re.search(r'\b(?:write|add|put)\b.{0,160}?\b(?:on|to)\s+(?:(?:image|panel|picture)\s+)?([a-z])(?!\w)',clause,re.I)
@@ -299,10 +354,15 @@ class PyFiguresAdapter:
             spoken=text.lower().replace('grey','gray')
             def stem(name):
                 return re.sub(r'[^a-z ]','',name.lower().replace('grey','gray')).strip().rstrip('s')   # Grays -> gray
-            unnamed=[l for l in args['luts'] if isinstance(l,str) and stem(l) and stem(l) not in spoken]
+            # a channel keeping its current table ("leave the other channels alone") needs no name
+            ref=str(args.get('panel_ref') or '')
+            current=next((p.get('luts') or [] for p in state.get('panel_references',[])
+                          if ref and (p.get('panel_id')==ref or ref in [str(x) for x in p.get('letters',[])])),[])
+            unnamed=[l for i,l in enumerate(args['luts']) if isinstance(l,str) and stem(l) and stem(l) not in spoken
+                     and not (i<len(current) and isinstance(current[i],str) and stem(current[i])==stem(l))]
             if unnamed:
                 from ..errors import NeedsClarification
-                raise NeedsClarification('The request does not name the colour table '+', '.join(unnamed)+'. Which LUT do you want (e.g. Grays, Red, Green, Blue, Magenta, Fire)? No LUT was changed.')
+                raise NeedsClarification('The request does not name the colour table '+', '.join(unnamed)+'. Which LUT do you want (e.g. GRAY, RED, GREEN, BLUE, MAGENTA, YELLOW_HOT; list_luts lists them all)? No LUT was changed.')
         greek=re.search(r'\b(?:panel|image|picture)\s+(alpha|beta|gamma|delta|epsilon|zeta|eta|theta|iota|kappa|lambda|mu|nu|xi|omicron|pi|rho|sigma|tau|upsilon|phi|chi|psi|omega)\b',text,re.I)
         if greek and not read_only and not any(greek[1].lower() in [str(x).lower() for x in p.get('letters',[])] for p in state.get('panel_references',[])):
             # "the letter from panel omega": no such panel, so nothing may be guessed.
@@ -320,6 +380,13 @@ class PyFiguresAdapter:
             if float(args['font_size'])!=requested:
                 from ..errors import NeedsClarification
                 raise NeedsClarification('The requested font size is '+str(requested)+' points. I cannot silently change its sign or size; please choose a valid positive size. No replacement style was submitted.')
+        # "exactly: X." or "Use this caption and italicize ...: X." both give the text verbatim
+        exact=re.search(r'\bexactly\s*:\s*(.+?)\s*$',text,re.I|re.S) or re.search(r'\b(?:caption|l[ée]gende|legend)\b[^:\n]*:\s*(.+?)\s*$',text,re.I|re.S)
+        if exact and operation=='set_figure_caption' and isinstance(args.get('caption'),str) and ' and ' not in exact[1] and ' then ' not in exact[1].lower():
+            wanted=exact[1].strip().strip('"“”')
+            if args['caption'].strip()!=wanted and args['caption'].strip().rstrip('.')==wanted.rstrip('.'):
+                # "exactly: Cellules traitées." -> the model dropped the final period
+                raise ValueError('CAPTION_NOT_EXACT: the request gives the exact caption '+repr(wanted)+', final punctuation included. Call set_figure_caption again with caption='+repr(wanted)+' (and the same final punctuation in caption_markdown). Nothing was changed.')
         corner=re.search(r'\b([a-z]+)\s+corners?\b',text,re.I)
         known_corner=r'top|bottom|upper|lower|left|right|centre|center|middle|same|other|opposite|each|every|all|any|one|that|this|which|its|their|the|a|different|another|nearest'
         if corner and not re.fullmatch(known_corner,corner[1],re.I) and (operation=='set_panel_letter_position' or (operation=='edit_panel_letters' and args.get('placement'))):

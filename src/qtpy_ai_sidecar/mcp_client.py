@@ -94,6 +94,10 @@ class MCPHub:
             names[public]=ident
         return names
 
+    def is_read_only(self,ident):
+        annotations=getattr(self.tools[ident][2], 'annotations', None)
+        return bool(annotations and getattr(annotations, 'readOnlyHint', False) is True and getattr(annotations, 'destructiveHint', None) is not True)
+
     def is_discovery(self,ident):
         tool=self.tools[ident][2]
         annotations=getattr(tool,'annotations',None)

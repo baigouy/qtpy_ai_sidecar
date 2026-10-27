@@ -140,7 +140,7 @@ class ModelClient:
                 message['tool_calls'] = [calls[i] for i in sorted(calls)]
             return message, usage
         started = time.monotonic()
-        timeout = min(self.config.generation_timeout_seconds, 30) if final_only else self.config.generation_timeout_seconds
+        timeout = min(self.config.generation_timeout_seconds, getattr(self.config, "response_timeout_s", 30)) if final_only else self.config.generation_timeout_seconds
         task = asyncio.create_task(generate())
         try:
             while not task.done():
@@ -148,6 +148,7 @@ class ModelClient:
                     emit('generation_timeout', {
                         **progress, 'final_only': bool(final_only),
                         'configured_timeout_seconds': self.config.generation_timeout_seconds,
+                        'response_timeout_s': getattr(self.config, 'response_timeout_s', 30),
                         'effective_timeout_seconds': timeout,
                         'elapsed_seconds_before_cleanup': time.monotonic() - started,
                         'advertised_tools': len(tools),

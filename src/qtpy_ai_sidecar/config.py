@@ -23,12 +23,15 @@ class Config:
     thinking_budget: int = -1
     provider: str = 'local'
     generation_timeout_seconds: int = 120
+    response_timeout_s: int = 30  # Final-only recovery cap, owned by this model profile.
 
     def __post_init__(self):
         if not 512 <= self.output_tokens < self.context_tokens:
             raise ValueError('output_tokens must be >=512 and smaller than context_tokens')
         if not 10 <= self.generation_timeout_seconds <= 3600:
             raise ValueError('generation_timeout_seconds must be 10-3600')
+        if isinstance(self.response_timeout_s, bool) or not isinstance(self.response_timeout_s, int) or not 10 <= self.response_timeout_s <= 3600:
+            raise ValueError('response_timeout_s must be an integer from 10 to 3600')
         if not 1 <= self.max_steps <= 50:
             raise ValueError('max_steps must be between 1 and 50')
         if not self.base_url.startswith(('http://', 'https://')):

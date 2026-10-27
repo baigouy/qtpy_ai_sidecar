@@ -36,7 +36,7 @@ def font_server(monkeypatch):
     monkeypatch.syspath_prepend(str(prototype))
     spec=importlib.util.spec_from_file_location('swap_fonts_categories',prototype/'categorized_mcp.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-    monkeypatch.setitem(sys.modules,'original_registry',SimpleNamespace(registry=lambda:{'list_fonts':None}))
+    monkeypatch.setitem(sys.modules,'original_registry',SimpleNamespace(registry=lambda:{'list_fonts':None,'list_luts':None}))
     monkeypatch.setitem(sys.modules,'source_help',SimpleNamespace(explain_feature=lambda topic:None))
     monkeypatch.setitem(sys.modules,'manual_help',SimpleNamespace(explain=lambda topic:{'status':'not_found'}))
     full=FastMCP('font contracts')
@@ -46,6 +46,11 @@ def font_server(monkeypatch):
         """Read-only fonts typeface inventory: Helvetica, Arial, available and installed."""
         calls.append(query)
         return {'count':1,'installed_families':['Arial']}
+    @full.tool(annotations=ToolAnnotations(readOnlyHint=True,destructiveHint=False))
+    def list_luts(query:str|None=None)->dict:
+        """List the colour look-up tables (LUTs) that set_lut accepts."""
+        calls.append(query)
+        return {'count':1,'luts':['GREEN']}
     server=module.build_server(full,lambda *a,**kw:{})
     return server,calls,module
 
@@ -59,12 +64,31 @@ def test_font_discovery_is_lettering_readonly_and_does_not_execute(font_server,q
     assert calls==[]
     assert 'font_check' in server.instructions
 
+@pytest.mark.parametrize('query',['which LUTs are available','list the LUTs','is there a magenta hot LUT'])
+def test_lut_questions_find_list_luts_not_list_fonts(font_server,query):
+    server,calls,module=font_server
+    found=server._tool_manager._tools['find_pyfigures_tools'].fn(query=query)
+    assert found['tools'][0]['name']=='list_luts' and calls==[]
+    assert 'list_luts' in server.instructions
+
+def test_ambiguous_help_still_returns_the_candidate_guides(font_server,monkeypatch):
+    # "scale bar calibration pixel size" ties guides: their steps, not nothing
+    server,calls,module=font_server
+    def explain(topic):
+        if topic in ('add_scale_bars','set_pixel_size'):
+            return {'status':'explained','guide':topic,'steps':['Choose '+topic]}
+        return {'status':'ambiguous','candidates':['add_scale_bars','set_pixel_size']}
+    monkeypatch.setitem(sys.modules,'manual_help',SimpleNamespace(explain=explain))
+    found=server._tool_manager._tools['find_pyfigures_tools'].fn(query='scale bar calibration pixel size')
+    guides=found['manual_guides']
+    assert guides['status']=='ambiguous' and [g['guide'] for g in guides['guides']]==['add_scale_bars','set_pixel_size']
+
 def test_registry_advertises_readonly_font_tool_without_changing_native_registration():
     tree=ast.parse((prototype/'original_registry.py').read_text(encoding='utf-8'))
     calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='add_tool']
     annotation=next(k.value for k in calls[0].keywords if k.arg=='annotations')
     assert isinstance(annotation,ast.IfExp)
-    assert ast.unparse(annotation.test)=="name == 'list_fonts'"
+    assert ast.unparse(annotation.test)=="name in ('list_fonts', 'list_luts')"
     values={k.arg:ast.literal_eval(k.value) for k in annotation.body.keywords}
     assert values=={'readOnlyHint':True,'destructiveHint':False}
     assert 'font_check' in PyFiguresAdapter('unused').context_instructions({})

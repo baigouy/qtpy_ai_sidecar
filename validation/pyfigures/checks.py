@@ -167,6 +167,11 @@ def verify(expect, before, after, events, allowed):
                 check(all(abs(x-y)<1e-4 for x,y in zip(a.get('geometry',[]),spec['geometry'])) and len(a.get('geometry',[]))==4,'Wrong ROI geometry')
             for key,wanted in spec.get('style',{}).items():
                 check(styles_equal(a.get('style',{}).get(key),key,wanted),'Wrong annotation text '+key)
+    for spec in expect.get('image_field_changed',[]):
+        pid=by_ref(after,spec['ref'])
+        check(pid is not None and images.get(pid,{}).get(spec['field'])!=old_images.get(pid,{}).get(spec['field']),'Unchanged image '+spec['field']+' on '+spec['ref'])
+    for wanted in expect.get('document_contains',[]):
+        check(any(wanted.casefold() in s.casefold() for s in after.get('document_strings',[])),'Text missing from document: '+wanted)
     if expect.get('preserve_other_image_properties'):
         targets={by_ref(before,r) for r in expect['preserve_other_image_properties']}
         for pid,old in old_images.items():
