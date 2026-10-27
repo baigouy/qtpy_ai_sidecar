@@ -63,6 +63,14 @@ def test_common_contracts_off_by_default_and_scoped_when_on(monkeypatch):
     assert 'call them through use_pyfigures_tool' in text and 'callable directly' not in text
     assert 'except the common operations' in s.instructions
 
+def test_live_pyf_path_is_dropped_for_live_only_operations(monkeypatch):
+    import asyncio
+    s,_=server(monkeypatch)
+    use=s._tool_manager._tools['use_pyfigures_tool'].fn
+    asyncio.run(use(tool_name='get_annotations',arguments={'pyf_path':'live'}))   # the open figure: accepted
+    with pytest.raises(ValueError,match='pyf_path'):
+        asyncio.run(use(tool_name='get_annotations',arguments={'pyf_path':'other.pyf'}))
+
 def test_compact_discovery_can_be_switched_off(monkeypatch):
     monkeypatch.setenv('PYFIGURES_COMPACT_DISCOVERY','0')
     s,full=server(monkeypatch)

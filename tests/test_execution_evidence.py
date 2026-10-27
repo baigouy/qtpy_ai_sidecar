@@ -61,6 +61,34 @@ def test_unchanged_discovery_is_bounded_without_mutations(tmp_path):
     assert hub.calls==3 and model.calls==4
     assert 'discovery_loop_stopped' in engine.journal.path.read_text()
 
+def test_the_same_refused_call_stops_after_three(tmp_path):
+    class Hub:
+        instructions=[]
+        def __init__(self,*a):
+            self.calls=0
+            self.tools={'id':('demo',None,SimpleNamespace(name='remove_scale_bar_all',annotations=SimpleNamespace(readOnlyHint=False)))}
+        async def __aenter__(self):return self
+        async def __aexit__(self,*a):pass
+        def model_tools(self):return []
+        def direct_ids(self):return {'remove_scale_bar_all':'id'}
+        def is_discovery(self,ident):return False
+        async def execute(self,*a):
+            self.calls+=1
+            return {'is_error':True,'error':'Unknown argument(s): pyf_path.'}
+    class Model:
+        calls=0
+        async def complete(self,messages,tools,cancel,emit,final_only=False):
+            self.calls+=1
+            if final_only:return {'role':'assistant','content':'The removal was refused; nothing changed.'},{}
+            return {'role':'assistant','content':'','tool_calls':[{'id':str(self.calls),'type':'function','function':{'name':'remove_scale_bar_all','arguments':'{"pyf_path": "x.pyf"}'}}]},{}
+    model=Model();hub=Hub()
+    engine=Engine(Config(state_dir=str(tmp_path)),backend=model,hub_factory=lambda *a:hub)
+    events=[]
+    asyncio.run(engine.turn('Remove all scale bars',lambda *a:events.append(a)))
+    assert hub.calls==3 and model.calls==4
+    assert 'rejected_call_loop_stopped' in engine.journal.path.read_text()
+    assert any(k=='assistant' and 'refused' in v for k,v in events)
+
 def test_step_budget_is_bounded_user_controlled_and_persistent(tmp_path):
     assert Config().max_steps==32
     assert Config(max_steps=12).max_steps==12

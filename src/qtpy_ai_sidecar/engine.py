@@ -115,6 +115,7 @@ class Engine:
                 # Explicit Compress retires older traces when the user chooses.
                 discovered = set()
                 discovery_results={}
+                rejected_results={}   # the same refused call, unchanged: Muse repeated one 31 times
                 verification_repairs=0
                 read_cache=TurnReadCache()
                 tool_steps=0
@@ -181,6 +182,7 @@ class Engine:
                         interrupted = False
                         return
                     discovery_stalled=False
+                    rejected_loop=False
                     step_consumed=False
                     # Preserve protocol pairing even if stopped/error mid-call list.
                     for index, call in enumerate(calls):
@@ -272,6 +274,10 @@ class Engine:
                             discovery_results[signature]=discovery_results.get(signature,0)+1
                             discovery_stalled=discovery_stalled or discovery_results[signature]>=3
                         discovery_stalled=discovery_stalled or read_cache.repeated(cache_key)
+                        if result.get('is_error'):
+                            signature=json.dumps([name,args,str(result.get('error'))[:500]],sort_keys=True,default=str)
+                            rejected_results[signature]=rejected_results.get(signature,0)+1
+                            rejected_loop=rejected_loop or rejected_results[signature]>=3
                         serialized = json.dumps(result, ensure_ascii=False)
                         self.journal.record('tool_result', result)
                         if len(serialized) > 24000:
@@ -289,6 +295,15 @@ class Engine:
                                 interrupted = False
                                 return
                     if step_consumed:tool_steps+=1
+                    if rejected_loop:
+                        emit('status','The same call was refused three times; answering without further tools')
+                        self.journal.record('rejected_call_loop_stopped',{'identical_refusals':3,'tools_enabled':False})
+                        prompt=self._outgoing()+[{'role':'system','content':'The same tool call was refused three times with the same error. Tools are now disabled. Explain briefly what could not be done and why, from the error text, or ask the user what to change. Do not claim the refused operation ran.'}]
+                        summary,_=await self.backend.complete(prompt,[],self.cancel,emit,final_only=True)
+                        if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Repeated refused call stopped; no valid text summary returned')
+                        summary=await self._finalize_reply(text,summary,state,preview,emit)
+                        self.messages.append(summary);self.record('assistant',summary['content'],emit)
+                        return
                     if discovery_stalled:
                         emit('status','Read-only request repeated; answering from earlier results without further tools')
                         self.journal.record('discovery_loop_stopped',{'identical_results':3,'tools_enabled':False})
