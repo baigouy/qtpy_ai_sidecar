@@ -74,6 +74,24 @@ def test_swap_never_substitutes_a_missing_reference():
     for first,second,request in (('a','c','Swap a with c.'),('c','a','Swap a and c'),('0/0','c','Swap a with c.'),('a','0/0','Swap a with panel 0/0.')):
         adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='swap_live_panels',arguments={'first':first,'second':second}),SWAP_STATE,request)
 
+def test_an_impossible_layout_never_turns_into_a_deletion():
+    adapter=PyFiguresAdapter('unused')
+    with pytest.raises(ValueError,match='REMOVAL_NOT_REQUESTED'):
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='delete_last_rows',arguments={'count':2}),{},'Put 0 pictures per row.')
+    for request in ('Delete the last two rows.','Keep only the first four rows.','Remove the final row','Get rid of the bottom row'):
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='delete_last_rows',arguments={'count':2}),{},request)
+
+def test_a_missing_named_panel_is_never_retargeted():
+    adapter=PyFiguresAdapter('unused')
+    for call in (('select_live_objects',{'panel_ids':['0/0']}),('edit_panel_letters',{'action':'style','scope':'selection','color':'#0000ff'})):
+        with pytest.raises(NeedsClarification,match="no panel 'aa'"):
+            adapter.validate_tool_call(call[0] if call[0]=='select_live_objects' else 'use_pyfigures_tool',
+                                       call[1] if call[0]=='select_live_objects' else dict(tool_name=call[0],arguments=call[1]),
+                                       SWAP_STATE,'Select image aa, then make its letter blue.')
+    adapter.validate_tool_call('select_live_objects',{'panel_ids':['0/0']},SWAP_STATE,'Select image a, then make its letter blue.')
+    adapter.validate_tool_call('select_live_objects',{'panel_ids':['0/0']},SWAP_STATE,'Select panel 0/0 and move the image to the right.')
+    adapter.validate_tool_call('inspect_figure',{},SWAP_STATE,'Is there an image aa?')
+
 def test_caption_after_a_colon_keeps_its_final_period():
     adapter=PyFiguresAdapter('unused')
     request='Use this caption and italicize the species name: Cells of Drosophila melanogaster.'

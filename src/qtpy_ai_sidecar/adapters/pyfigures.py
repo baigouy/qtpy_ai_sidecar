@@ -287,8 +287,25 @@ class PyFiguresAdapter:
                                                           'edit_', 'apply_', 'arrange_', 'restyle_', 'reorder_', 'move_', 'crop_', 'rotate_', 'split_', 'merge_')):
             raise ValueError('HOW_TO_NO_EDIT: the user asked HOW to do this, not to do it. Answer with the human GUI steps '
                              '(explain_how / explain_live_interaction), then offer to do it. Nothing was changed or written.')
+        if operation in ('delete_last_rows', 'remove_group', 'remove_image', 'ungroup_all_images', 'remove_label_row') and not re.search(
+                r'\b(?:delet\w*|remov\w*|drop|eras\w*|discard|get\s+rid|take\s+out|clear|cut|trim|lose|eliminat\w*|fewer|ungroup\w*|undo|keep\s+only|only\s+keep|just\s+keep)\b', text, re.I):
+            # 'Put 0 pictures per row.' -> columns=0 refused, then delete_last_rows was accepted (24 -> 16 images)
+            raise ValueError('REMOVAL_NOT_REQUESTED: the request does not ask to delete or remove anything. Never remove panels or rows as a '
+                             'workaround for a refused or impossible edit; explain the problem and ask. Nothing was removed.')
+        if not read_only and state.get('panel_references'):
+            known = {str(p.get('panel_id', '')).casefold() for p in state['panel_references']}
+            for p in state['panel_references']:
+                known.update(str(v).casefold() for v in p.get('letters', []))
+            stop = {'to', 'in', 'on', 'at', 'of', 'by', 'is', 'it', 'as', 'up', 'an', 'or', 'so', 'no', 'me', 'my', 'be', 'do', 'go', 'if', 'we', 'us'}
+            for named in re.finditer(r'\b(?:image|panel|picture|photo|select|pick)\s+([a-z]{1,2}|\d+/\d+)(?![\w/])', text, re.I):
+                ref = named[1].casefold()
+                if ref not in known and ref not in stop:
+                    # 'Select image aa, then make its letter blue.' once selected 0/0 and styled it
+                    from ..errors import NeedsClarification
+                    raise NeedsClarification(f'There is no panel {named[1]!r} in this figure. Which panel do you mean? '
+                                             'Nothing was selected or changed.')
         if operation == 'swap_live_panels':
-            spoken = re.search(r'\bswap\s+(?:panels?\s+|pictures?\s+|images?\s+)?([a-z]{1,2}|\d+/\d+)\s+(?:with|and)\s+(?:panel\s+)?([a-z]{1,2}|\d+/\d+)\b', text, re.I)
+            spoken =re.search(r'\bswap\s+(?:panels?\s+|pictures?\s+|images?\s+)?([a-z]{1,2}|\d+/\d+)\s+(?:with|and)\s+(?:panel\s+)?([a-z]{1,2}|\d+/\d+)\b', text, re.I)
             if spoken:
                 refs = {p['panel_id']: p['panel_id'] for p in state.get('panel_references', [])}
                 for p in state.get('panel_references', []):

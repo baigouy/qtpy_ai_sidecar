@@ -32,8 +32,9 @@ class Engine:
         self.journal.record(kind, value)
         emit(kind, value)
 
-    def context(self, emit):
-        emit('context', {'estimated_tokens': size_estimate(self.messages), 'context_tokens': self.config.context_tokens,
+    def context(self, emit, messages=None):
+        # the meter counts what is really sent (the MCP guidance included), as the guard does
+        emit('context', {'estimated_tokens': size_estimate(self.messages if messages is None else messages), 'context_tokens': self.config.context_tokens,
                          'output_tokens': self.config.output_tokens})
 
     async def _finalize_reply(self,text,answer,state,preview,emit):
@@ -97,9 +98,9 @@ class Engine:
                     step=tool_steps
                     if self.cancel.is_set():
                         raise InterruptedError('Stopped before further tool submission')
-                    self.context(emit)
-                    emit('status', f'Thinking — step {step + 1}/{self.config.max_steps}')
                     messages = self.messages + [{'role': 'system', 'content': 'Connected application MCP guidance:\n' + json.dumps(hub.instructions)}]
+                    self.context(emit, messages)
+                    emit('status', f'Thinking — step {step + 1}/{self.config.max_steps}')
                     if size_estimate(messages) + self.config.output_tokens > self.config.context_tokens:
                         raise ValueError('Estimated context budget reached; no further tool submitted. Use Compress.')
                     try:
