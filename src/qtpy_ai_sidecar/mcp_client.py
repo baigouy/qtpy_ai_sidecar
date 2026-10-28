@@ -19,6 +19,8 @@ DISCOVERY = [
 
 
 class MCPHub:
+    full_schemas = 2    # search hits returned with their whole argument schema
+
     def __init__(self, servers):
         self.servers = servers
         self.tools = {}
@@ -72,13 +74,24 @@ class MCPHub:
         for ident, (server, _, tool) in self.tools.items():
             title = tool.name.replace('_', ' ').lower()
             score = sum(10 * (w in title) + (w in (tool.description or '').lower()) for w in words)
+            if query.strip().lower() == tool.name.lower():
+                score += 1000    # an exact name always comes first, with its schema
             if not words or score:
                 ranked.append((score, ident, server, tool))
         ranked.sort(key=lambda item: (-item[0], item[3].name))
+        entries = []
+        for rank, (_, ident, server, tool) in enumerate(ranked[offset:offset + 6]):
+            entry = {'tool_id': ident, 'server': server, 'name': tool.name}
+            if rank < self.full_schemas:
+                entry.update(description=tool.description, arguments_schema=tool.inputSchema)
+            else:
+                # Large schemas for every hit flood small contexts; the best
+                # matches come whole, the others on an exact-name search.
+                summary = re.split(r'(?<=[.!?])\s', (tool.description or '').strip(), maxsplit=1)[0]
+                entry.update(summary=summary[:200], schema='search ' + json.dumps(tool.name) + ' for its exact schema')
+            entries.append(entry)
         return {'total': len(ranked), 'next_offset': offset + 6 if offset + 6 < len(ranked) else None,
-                'tools': [{'tool_id': ident, 'server': server, 'name': tool.name,
-                           'description': tool.description, 'arguments_schema': tool.inputSchema}
-                          for _, ident, server, tool in ranked[offset:offset + 6]]}
+                'tools': entries}
 
     def direct_ids(self):
         if len(self.tools)>12: return {}

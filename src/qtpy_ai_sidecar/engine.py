@@ -211,12 +211,15 @@ class Engine:
                                     step_consumed=True
                                     result=hub.find(**args)
                                 else:cache_hit=True
-                                discovered.update(t['tool_id'] for t in result['tools'])
+                                # Summary-only hits are not callable until their schema was seen.
+                                discovered.update(t['tool_id'] for t in result['tools'] if 'arguments_schema' in t)
                             elif name == 'execute_application_tool' or name in direct_ids:
                                 if name in direct_ids:
                                     args={'tool_id':direct_ids[name],'arguments':args}
                                 elif args['tool_id'] not in discovered:
-                                    raise ValueError('Discover this tool schema before execution')
+                                    known=hub.tools.get(args['tool_id'])
+                                    raise ValueError('Discover this tool schema before execution'+
+                                        (': call find_application_tools with query '+json.dumps(known[2].name) if known else ''))
                                 schema=getattr(hub.tools[args['tool_id']][2],'inputSchema',None) or {}
                                 if (tight and getattr(self.config,'compact_history',True) and 'compact' in schema.get('properties',{})
                                         and 'compact' not in args['arguments']):
