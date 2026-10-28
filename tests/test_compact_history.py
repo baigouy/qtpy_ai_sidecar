@@ -10,7 +10,7 @@ def add(e, ident, size, discovery):
     e._tool_meta[ident]=(e._turn,discovery)
 
 def test_nothing_is_shortened_while_the_context_has_room(tmp_path):
-    e=engine(tmp_path,context_tokens=65536)
+    e=engine(tmp_path,context_tokens=65536,compact_from=0.5)
     e._turn=1
     add(e,'old_edit',5000,False)
     e._turn=2

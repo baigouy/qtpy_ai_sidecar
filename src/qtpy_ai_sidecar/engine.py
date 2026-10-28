@@ -36,11 +36,11 @@ class Engine:
     OLD_RESULT_CHARS = 1500
     KEEP_RECENT_DISCOVERY = 2
 
-    # Compacting always made Qwen 9B slower (more searches), so it starts only once the
-    # context is filling: full results while there is room, short ones when it is tight.
+    # Optionally compact only once the context is filling (config compact_from); the default 0
+    # compacts always, which tested best overall.
     def _tight(self, extra=()):
         estimate = size_estimate(self.messages + list(extra)) + self.config.output_tokens
-        return estimate > getattr(self.config, 'compact_from', 0.5) * self.config.context_tokens
+        return estimate > getattr(self.config, 'compact_from', 0.0) * self.config.context_tokens
 
     def _outgoing(self, extra=()):
         if not getattr(self.config, 'compact_history', True) or not self._tight(extra):
