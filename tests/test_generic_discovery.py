@@ -147,6 +147,19 @@ def test_text_only_recovery_survives_an_invalid_final_reply():
     assert not summary.get('tool_calls')
 
 
+def test_flat_arguments_are_nested_under_a_lone_params_object():
+    schema = {'$defs': {'In': {'properties': {'path': {}, 'start': {}}}},
+              'properties': {'params': {'$ref': '#/$defs/In'}}, 'required': ['params']}
+    tool = SimpleNamespace(inputSchema=schema)
+    wrap = MCPHub._wrapped
+    assert wrap(tool, {'path': 'live', 'start': 1}) == {'params': {'path': 'live', 'start': 1}}
+    assert wrap(tool, {'params': {'path': 'x'}}) == {'params': {'path': 'x'}}
+    assert wrap(tool, {'path': 'live', 'bogus': 1}) == {'path': 'live', 'bogus': 1}
+    assert wrap(tool, {}) == {}
+    other = SimpleNamespace(inputSchema={'properties': {'a': {}}, 'required': ['a']})
+    assert wrap(other, {'a': 1}) == {'a': 1}
+
+
 def test_later_pages_are_compact_too():
     page = hub().find('digest', offset=6)
     assert [('arguments_schema' in t) for t in page['tools']][:3] == [True, True, False]

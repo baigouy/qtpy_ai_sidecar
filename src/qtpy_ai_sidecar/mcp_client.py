@@ -151,11 +151,31 @@ class MCPHub:
             return result
         return DISCOVERY
 
+    @staticmethod
+    def _wrapped(tool, arguments):
+        """Nest flat arguments under a lone required `params` object.
+
+        Servers built on a single Pydantic `params` argument reject the flat call
+        that models often write; when every key belongs to that object, the intent
+        is unambiguous.
+        """
+        schema = getattr(tool, 'inputSchema', None) or {}
+        if schema.get('required') != ['params'] or not isinstance(arguments, dict) or 'params' in arguments or not arguments:
+            return arguments
+        target = (schema.get('properties') or {}).get('params') or {}
+        ref = target.get('$ref')
+        if ref:
+            target = (schema.get('$defs') or {}).get(ref.rsplit('/', 1)[-1], {})
+        fields = target.get('properties')
+        if fields and set(arguments) <= set(fields):
+            return {'params': arguments}
+        return arguments
+
     async def execute(self, ident, arguments, emit):
         if ident not in self.tools:
             raise ValueError('Unknown tool_id; discover tools for this connection first')
         _, session, tool = self.tools[ident]
-        result = await session.call_tool(tool.name, arguments)
+        result = await session.call_tool(tool.name, self._wrapped(tool, arguments))
         texts = []
         for block in result.content:
             if block.type == 'text':
