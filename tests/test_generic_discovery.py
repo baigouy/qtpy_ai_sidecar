@@ -71,8 +71,48 @@ def test_summary_only_hit_is_not_callable_until_its_schema_was_found(tmp_path):
                     hub_factory=lambda servers: hubs.append(Hub(servers)) or hubs[-1])
     asyncio.run(engine.turn('digest it', lambda *args: None))
     refused = seen[2][-1]['content']
-    assert 'Discover this tool schema' in refused and 'app_tool_03' in refused
+    assert 'not been described' in refused and 'app_tool_03' in refused and 'integer' in refused    # the schema comes back
     assert hubs[0].calls == ['t03']      # executed once, after its schema was found
+
+
+def test_refused_undescribed_tool_can_be_repeated_without_another_search(tmp_path):
+    import asyncio
+    import json
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.engine import Engine
+
+    class Hub(MCPHub):
+        def __init__(self, servers):
+            super().__init__(servers)
+            self.tools = hub().tools
+            self.calls = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def execute(self, ident, arguments, emit):
+            self.calls.append(ident)
+            return {'is_error': False, 'content': '{"done": true}', 'structured': None}
+
+    steps = []
+
+    class Model:
+        async def complete(self, messages, tools, cancel, emit, max_tokens=None, final_only=False):
+            steps.append(1)
+            if len(steps) <= 2:
+                return {'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'c%d' % len(steps), 'type': 'function',
+                        'function': {'name': 'execute_application_tool',
+                                     'arguments': json.dumps({'tool_id': 't05', 'arguments': {'x': 1}})}}]}, {}
+            return {'role': 'assistant', 'content': 'Done.'}, {}
+
+    hubs = []
+    engine = Engine(Config(state_dir=str(tmp_path)), backend=Model(),
+                    hub_factory=lambda servers: hubs.append(Hub(servers)) or hubs[-1])
+    asyncio.run(engine.turn('go', lambda *args: None))
+    assert hubs[0].calls == ['t05']
 
 
 def test_action_enum_phrases_are_searchable():

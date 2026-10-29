@@ -229,8 +229,13 @@ class Engine:
                                     args={'tool_id':direct_ids[name],'arguments':args}
                                 elif args['tool_id'] not in discovered:
                                     known=hub.tools.get(args['tool_id'])
-                                    raise ValueError('Discover this tool schema before execution'+
-                                        (': call find_application_tools with query '+json.dumps(known[2].name) if known else ''))
+                                    if not known:
+                                        raise ValueError('Unknown tool_id; call find_application_tools to discover tools')
+                                    # Hand over the schema instead of making the model search again.
+                                    discovered.add(args['tool_id'])
+                                    raise ValueError('This tool had not been described to you yet, so nothing ran. '
+                                        'Repeat the call with arguments matching its schema. Schema of '+
+                                        json.dumps(known[2].name)+': '+json.dumps(getattr(known[2],'inputSchema',None) or {}))
                                 schema=getattr(hub.tools[args['tool_id']][2],'inputSchema',None) or {}
                                 if (tight and getattr(self.config,'compact_history',True) and 'compact' in schema.get('properties',{})
                                         and 'compact' not in args['arguments']):
