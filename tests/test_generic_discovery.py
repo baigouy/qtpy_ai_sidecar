@@ -75,6 +75,38 @@ def test_summary_only_hit_is_not_callable_until_its_schema_was_found(tmp_path):
     assert hubs[0].calls == ['t03']      # executed once, after its schema was found
 
 
+def test_action_enum_phrases_are_searchable():
+    h = hub()
+    gui = SimpleNamespace(name='app_gui', description='Control a window.', inputSchema={
+        'type': 'object', 'properties': {'params': {'type': 'object', 'properties': {
+            'action': {'type': 'string', 'enum': ['add_feature', 'edit_sequence']}}}}})
+    h.tools['gui'] = ('app', None, gui)
+    h.tools['db'] = ('app', None, SimpleNamespace(
+        name='app_feature_db_add', description='Add a feature to the feature database.',
+        inputSchema={'type': 'object', 'properties': {}}))
+    found = h.find('add feature to the plasmid')
+    assert [t['name'] for t in found['tools'][:2]] == ['app_gui', 'app_feature_db_add']
+    assert h.find('edit_sequence')['tools'][0]['name'] == 'app_gui'
+    assert h.find('digest')['total'] == 20      # a query without enum vocabulary is unchanged
+
+
+def test_text_only_recovery_survives_an_invalid_final_reply():
+    import asyncio
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.engine import Engine
+    from qtpy_ai_sidecar.qwen_protocol import ReplyProtocolError
+
+    class Model:
+        async def complete(self, *args, **kwargs):
+            raise ReplyProtocolError('Unknown function in model reply; no tool submitted: find_application_tools')
+
+    events = []
+    engine = Engine(Config(state_dir='.'), backend=Model(), hub_factory=lambda servers: hub())
+    summary = asyncio.run(engine._stopped_text_summary([], lambda *args: events.append(args)))
+    assert summary['role'] == 'assistant' and 'could not complete' in summary['content']
+    assert not summary.get('tool_calls')
+
+
 def test_later_pages_are_compact_too():
     page = hub().find('digest', offset=6)
     assert [('arguments_schema' in t) for t in page['tools']][:3] == [True, True, False]

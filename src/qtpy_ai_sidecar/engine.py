@@ -82,6 +82,17 @@ class Engine:
                 return {**answer,'content':verified['content']}
         return answer
 
+    async def _stopped_text_summary(self,prompt,emit):
+        try:
+            summary,_=await self.backend.complete(prompt,[],self.cancel,emit,final_only=True)
+            return summary
+        except ReplyProtocolError as exc:
+            self.record('text_only_protocol_refusal',{'error':str(exc),'tools_submitted':False},emit)
+            return {'role':'assistant','content':
+                    "I could not complete the request. Tool discovery or repeated refusals were stopped, "
+                    "and the text-only reply was invalid. No further tool was submitted. "
+                    "Earlier completed edits remain; inspect the current document before retrying."}
+
     async def turn(self, text, emit, preview=False):
         self.record('user', text, emit)
         self.record('request_settings', {key: getattr(self.config, key) for key in (
@@ -314,7 +325,7 @@ class Engine:
                         emit('status','The same call was refused three times; answering without further tools')
                         self.journal.record('rejected_call_loop_stopped',{'identical_refusals':3,'tools_enabled':False})
                         prompt=self._outgoing()+[{'role':'system','content':'The same tool call was refused three times with the same error. Tools are now disabled. Explain briefly what could not be done and why, from the error text, or ask the user what to change. Do not claim the refused operation ran.'}]
-                        summary,_=await self.backend.complete(prompt,[],self.cancel,emit,final_only=True)
+                        summary=await self._stopped_text_summary(prompt,emit)
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Repeated refused call stopped; no valid text summary returned')
                         summary=await self._finalize_reply(text,summary,state,preview,emit)
                         self.messages.append(summary);self.record('assistant',summary['content'],emit)
@@ -323,7 +334,7 @@ class Engine:
                         emit('status','Read-only request repeated; answering from earlier results without further tools')
                         self.journal.record('discovery_loop_stopped',{'identical_results':3,'tools_enabled':False})
                         prompt=self._outgoing()+[{'role':'system','content':'A read-only request repeated data already returned in this turn. Tools are now disabled. Give a concise answer from verified facts already available, or explain what remains unresolved. Do not claim an edit was done without verified evidence. No completed operation is being replayed.'}]
-                        summary,_=await self.backend.complete(prompt,[],self.cancel,emit,final_only=True)
+                        summary=await self._stopped_text_summary(prompt,emit)
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Discovery loop stopped; no valid text summary returned')
                         summary=await self._finalize_reply(text,summary,state,preview,emit)
                         self.messages.append(summary);self.record('assistant',summary['content'],emit)

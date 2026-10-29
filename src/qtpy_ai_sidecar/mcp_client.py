@@ -66,14 +66,35 @@ class MCPHub:
     async def __aexit__(self, *args):
         return await self.stack.__aexit__(*args)
 
+    @staticmethod
+    def _operation_phrases(schema):
+        phrases=set()
+        def visit(node):
+            if isinstance(node,dict):
+                for name,field in node.get('properties',{}).items():
+                    if name in ('action','operation') and isinstance(field,dict):
+                        for value in field.get('enum',[]):
+                            if isinstance(value,str):
+                                phrases.add(' '.join(re.findall(r'\w+',value.lower().replace('_',' ').replace('-',' '))))
+                for child in node.values():visit(child)
+            elif isinstance(node,list):
+                for child in node:visit(child)
+        visit(schema)
+        return phrases
+
     def find(self, query='', offset=0):
         if offset < 0:
             raise ValueError('offset must be nonnegative')
         words = re.findall(r'\w+', query.lower())
         ranked = []
+        normalized = ' '.join(re.findall(r'\w+', query.lower().replace('_', ' ').replace('-', ' ')))
         for ident, (server, _, tool) in self.tools.items():
             title = tool.name.replace('_', ' ').lower()
             score = sum(10 * (w in title) + (w in (tool.description or '').lower()) for w in words)
+            # Generic categorized-operation vocabulary (an action/operation enum), not application aliases.
+            if normalized and any(re.search(r'(?:^|\s)' + re.escape(p) + r'(?:$|\s)', normalized)
+                                  for p in self._operation_phrases(tool.inputSchema) if p):
+                score += 30
             if query.strip().lower() == tool.name.lower():
                 score += 1000    # an exact name always comes first, with its schema
             if not words or score:
