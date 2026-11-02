@@ -15,6 +15,18 @@ def test_selection_clause_cannot_be_replaced_by_style():
     adapter.request=lambda *a:{'selection':{'selected_panels':[{'panel_id':'1/3','letters':['h']}]}}
     assert adapter.finalize_response('Select h and make only its letter yellow.','Done.',{}) is None
 
+def test_readiness_without_a_known_target_asks_which_journal():
+    """'Is it ready?' with no journal named and none stored: a question, not an
+    'ERROR: specify a target width' (PyFigures Figure 3 chat trials, 2026-11-02)."""
+    adapter=PyFiguresAdapter('unused')
+    def request(op,*a):
+        if op=='submission_review':raise ValueError('NO_TARGET: no journal or figure width is known')
+        return {'selection':{'selected_panels':[]}}
+    adapter.request=request
+    result=adapter.finalize_response('is the figure ready for submission?','Yes.',{})
+    assert result['evidence']['status']=='needs_target'
+    assert result['content'].startswith('Which journal')
+
 def test_selection_verifier_checks_all_explicit_targets():
     adapter=PyFiguresAdapter('unused')
     adapter.request=lambda *a:{'selection':{'selected_panels':[{'panel_id':'0/0','letters':['a']},{'panel_id':'0/1','letters':['b']}]}}

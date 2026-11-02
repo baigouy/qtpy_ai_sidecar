@@ -636,6 +636,10 @@ class PyFiguresAdapter:
         try:
             evidence=self.request('submission_review',{})
         except Exception as exc:
+            if str(exc).startswith('NO_TARGET'):
+                return {'content':'Which journal and column (or which figure width) should I check it against? '
+                                  'No target is known for this figure yet, and readiness depends on it.',
+                        'evidence':{'status':'needs_target','error':str(exc)}}
             return {'content':'Technical readiness could not be verified: '+str(exc),
                     'evidence':{'status':'incomplete','error':str(exc)}}
         title='Draft' if preview else 'Current figure'
