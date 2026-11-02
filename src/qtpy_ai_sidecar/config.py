@@ -33,6 +33,9 @@ class Config:
     compact_from: float = 0.0
     # the line always shown under the chat; empty = DEFAULT_NOTICE
     notice: str = ''
+    # images returned by tools (figure previews) sent to the model: 'auto' when
+    # the server reports a vision model, 'on', or 'off' (shown to the human only)
+    vision: str = 'auto'
 
     def __post_init__(self):
         if not 512 <= self.output_tokens < self.context_tokens:
@@ -41,6 +44,8 @@ class Config:
             raise ValueError('generation_timeout_seconds must be 10-3600')
         if isinstance(self.response_timeout_s, bool) or not isinstance(self.response_timeout_s, int) or not 10 <= self.response_timeout_s <= 3600:
             raise ValueError('response_timeout_s must be an integer from 10 to 3600')
+        if self.vision not in ('auto', 'on', 'off'):
+            raise ValueError("vision must be 'auto', 'on' or 'off'")
         if not 1 <= self.max_steps <= 50:
             raise ValueError('max_steps must be between 1 and 50')
         if not self.base_url.startswith(('http://', 'https://')):
@@ -71,7 +76,7 @@ class Config:
         preferences = config.storage() / 'performance.json'
         if preferences.exists():
             saved = json.loads(preferences.read_text(encoding='utf-8'))
-            for key in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps'):
+            for key in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps', 'vision'):
                 if key in saved:
                     setattr(config, key, saved[key])
             if config.runtime:
@@ -111,7 +116,7 @@ class Config:
         (self.storage() / 'connection.json').write_text(json.dumps(value, indent=2), encoding='utf-8')
 
     def save_performance(self):
-        value = {k: getattr(self, k) for k in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps')}
+        value = {k: getattr(self, k) for k in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps', 'vision')}
         value.update({k: self.runtime[k] for k in ('gpu_layers', 'threads', 'force_cpu') if k in self.runtime})
         self.storage().mkdir(parents=True, exist_ok=True)
         (self.storage() / 'performance.json').write_text(json.dumps(value, indent=2), encoding='utf-8')

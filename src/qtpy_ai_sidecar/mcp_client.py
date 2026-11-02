@@ -8,6 +8,7 @@ import re
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+from .vision import TEXT_ONLY
 
 DISCOVERY = [
     {'type': 'function', 'function': {'name': 'find_application_tools',
@@ -177,13 +178,18 @@ class MCPHub:
         _, session, tool = self.tools[ident]
         result = await session.call_tool(tool.name, self._wrapped(tool, arguments))
         texts = []
+        images = []
         for block in result.content:
             if block.type == 'text':
                 texts.append(block.text)
             elif block.type == 'image':
                 emit('image', {'data': block.data, 'mime': block.mimeType})
-                texts.append('[Image shown to the human. This text-only model cannot inspect its pixels.]')
+                images.append({'data': block.data, 'mime': block.mimeType})
+                texts.append(TEXT_ONLY)       # the engine says "attached" when the model sees it
             else:
                 texts.append('[Non-text tool content omitted; use a structured inspection tool.]')
-        return {'is_error': bool(result.isError), 'content': '\n'.join(texts),
-                'structured': result.structuredContent}
+        out = {'is_error': bool(result.isError), 'content': '\n'.join(texts),
+               'structured': result.structuredContent}
+        if images:
+            out['images'] = images
+        return out

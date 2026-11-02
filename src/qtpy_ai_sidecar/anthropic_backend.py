@@ -6,6 +6,16 @@ import httpx
 from .credentials import get_key
 
 
+def _anthropic_part(part):
+    """An OpenAI-style content part (text, or image_url with a data URL) as a
+    Claude Messages block."""
+    if part.get('type') == 'image_url':
+        header, data = part['image_url']['url'].split(',', 1)
+        mime = header[len('data:'):].split(';', 1)[0]
+        return {'type': 'image', 'source': {'type': 'base64', 'media_type': mime, 'data': data}}
+    return {'type': 'text', 'text': part.get('text', '')}
+
+
 def convert_messages(messages):
     system = '\n\n'.join(m['content'] for m in messages if m['role'] == 'system')
     converted = []
@@ -17,6 +27,8 @@ def convert_messages(messages):
             role, content = 'user', [{'type': 'tool_result', 'tool_use_id': message['tool_call_id'], 'content': message['content']}]
         elif role == 'assistant' and message.get('_anthropic_blocks'):
             content = message['_anthropic_blocks']
+        elif isinstance(message.get('content'), list):
+            content = [_anthropic_part(p) for p in message['content']]     # an attached image
         else:
             content = [{'type': 'text', 'text': message['content']}] if message.get('content') else []
             for call in message.get('tool_calls', []):

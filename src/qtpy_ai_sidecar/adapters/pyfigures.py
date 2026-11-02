@@ -111,7 +111,7 @@ class PyFiguresAdapter:
                 'A named target or explicit all/group request overrides implicit selection. Selected rows/columns are groups; image2d, scripted and vector panels are valid targets. '
                 'For selected annotations use their owner_panel_id only when the request concerns the owner. '
                 'If selection is missing, stale or ambiguous ask for clarification. '
-                'Follow-up it/them keeps this focus; color-only corrections must not change font, placement, background or numbering. A preview is displayed only to the human: this model cannot inspect image pixels. Property readback does not prove contrast/readability; never claim a color ensures visibility without a real check. Current focus: ' + str({'kind': selection.get('selection_kind'), 'panels': [p.get('panel_id') for p in selection.get('selected_panels', [])],
+                'Follow-up it/them keeps this focus; color-only corrections must not change font, placement, background or numbering. ' + ('Previews are attached for you to inspect: look at the latest one before saying a visual edit is done. ' if getattr(self, 'vision', False) else 'A preview is displayed only to the human: this model cannot inspect image pixels. ') + 'Property readback does not prove contrast/readability; never claim a color ensures visibility without a real check. Current focus: ' + str({'kind': selection.get('selection_kind'), 'panels': [p.get('panel_id') for p in selection.get('selected_panels', [])],
                                         'groups': selection.get('selected_group_paths', [])}))
 
 

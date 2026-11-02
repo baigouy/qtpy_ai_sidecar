@@ -128,7 +128,7 @@ class AssistantDock(QDockWidget):
         export.clicked.connect(self.export)
         top.addWidget(export)
         self.settings_button = QPushButton(qta.icon('fa5s.cog'), '')
-        self.settings_button.setToolTip('Model performance and thinking settings')
+        self.settings_button.setToolTip('Model performance, thinking and preview settings')
         self.settings_button.clicked.connect(self.settings)
         top.addWidget(self.settings_button)
         self.connection_button = QPushButton(qta.icon('fa5s.plug'), '')
@@ -555,6 +555,13 @@ class AssistantDock(QDockWidget):
         steps.setValue(config.max_steps)
         steps.setToolTip('Bounded tool/reasoning steps per message; discovery and verification count too.')
         form.addRow('Maximum tool steps per message',steps)
+        sees = QComboBox()
+        for label, value in (('Automatic (vision models)', 'auto'), ('Always', 'on'), ('Never', 'off')):
+            sees.addItem(label, value)
+        sees.setCurrentIndex(max(0, sees.findData(getattr(config, 'vision', 'auto'))))
+        sees.setToolTip('Send previews returned by tools to the model, so a vision model can check '
+                        'what it did. Automatic: when the local server reports a vision model.')
+        form.addRow('Show previews to the model', sees)
         supported = config.thinking_backend != 'unsupported'
         note = QLabel('Thinking controls are unavailable for this backend.' if not supported else
             'Thinking strength is a template hint; some models ignore it. A token budget gives a firmer limit on compatible owned llama.cpp runtimes.')
@@ -604,6 +611,9 @@ class AssistantDock(QDockWidget):
             config.thinking_budget = budget.value()
             config.generation_timeout_seconds = response_time.value()
             config.max_steps=steps.value()
+            if sees.currentData() != getattr(config, 'vision', 'auto'):
+                config.vision = sees.currentData()
+                self.engine._sees_images = None          # asked again at the next message
             if config.runtime:
                 config.runtime.update(gpu_layers=gpu.value(), threads=threads.value(), force_cpu=force_cpu.isChecked())
                 close = getattr(self.engine.backend, 'close', None)
