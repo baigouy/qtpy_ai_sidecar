@@ -53,3 +53,16 @@ def test_long_choices_stay_in_message_and_do_not_expand_host(tmp_path):
     assert dock.maximumWidth() <= 440
     dock.shutdown()
     host.close()
+
+
+def test_connection_dialog_groq_preset(tmp_path):
+    """Choosing Groq fills its endpoint, Qwen3.8-27B and reasoning_effort."""
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.connection import ConnectionDialog
+    app = QApplication.instance() or QApplication([])
+    dialog = ConnectionDialog(Config(state_dir=str(tmp_path), provider='compatible', model='qwen3.5-9b'))
+    dialog.provider.setCurrentIndex(dialog.provider.findData('groq'))
+    candidate = dialog.candidate()
+    assert candidate.provider == 'groq' and candidate.base_url == 'https://api.groq.com/openai/v1'
+    assert candidate.model == 'qwen/qwen3.8-27b' and candidate.thinking_backend == 'reasoning_effort'
+    dialog.close()

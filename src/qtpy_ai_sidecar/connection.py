@@ -6,7 +6,9 @@ from .credentials import set_key, delete_key
 
 PRESETS = {'local': 'http://127.0.0.1:1234/v1', 'openai': 'https://api.openai.com/v1',
            'anthropic': 'https://api.anthropic.com/v1', 'openrouter': 'https://openrouter.ai/api/v1',
-           'compatible': 'https://your-provider.example/v1'}
+           'groq': 'https://api.groq.com/openai/v1', 'compatible': 'https://your-provider.example/v1'}
+# the model filled in when a provider is chosen and the model field is empty
+DEFAULT_MODELS = {'groq': 'qwen/qwen3.8-27b'}
 
 
 class ConnectionDialog(QDialog):
@@ -17,7 +19,8 @@ class ConnectionDialog(QDialog):
         form = QFormLayout(self)
         self.provider = QComboBox()
         for key, label in [('local', 'Local model (preferred)'), ('openai', 'OpenAI API'), ('anthropic', 'Claude / Anthropic API'),
-                           ('openrouter', 'OpenRouter'), ('compatible', 'Custom OpenAI-compatible API')]:
+                           ('openrouter', 'OpenRouter'), ('groq', 'Groq (cloud, e.g. Qwen3.8-27B)'),
+                           ('compatible', 'Custom OpenAI-compatible API')]:
             self.provider.addItem(label, key)
         self.provider.setCurrentIndex(self.provider.findData(config.provider))
         form.addRow('Provider', self.provider)
@@ -57,7 +60,11 @@ class ConnectionDialog(QDialog):
     def changed(self):
         provider = self.provider.currentData()
         self.url.setText(PRESETS[provider])
-        self.capability.setCurrentText({'local': 'llama_cpp', 'openai': 'reasoning_effort', 'anthropic': 'anthropic_adaptive'}.get(provider, 'unsupported'))
+        self.capability.setCurrentText({'local': 'llama_cpp', 'openai': 'reasoning_effort', 'groq': 'reasoning_effort',
+                                        'anthropic': 'anthropic_adaptive'}.get(provider, 'unsupported'))
+        if provider in DEFAULT_MODELS and (not self.model.text().strip() or self.model.text().strip() in DEFAULT_MODELS.values()
+                                           or provider != self.config.provider):
+            self.model.setText(DEFAULT_MODELS[provider])
         self.key.clear()
         self.update_note()
 

@@ -14,6 +14,23 @@ class EmptyModelReply(RuntimeError):
     pass
 
 
+RATE_LIMIT_RETRIES = 3
+
+
+def rate_limit_wait(headers, attempt):
+    """Seconds to wait after an HTTP 429: the provider's Retry-After (or
+    Groq's x-ratelimit-reset-tokens such as '7.66s'), else 2, 4, 8 s; at most 30."""
+    for name in ('retry-after', 'x-ratelimit-reset-tokens', 'x-ratelimit-reset-requests'):
+        value = str(headers.get(name) or '').strip()
+        try:
+            if value.endswith('ms'):
+                return min(30.0, max(0.5, float(value[:-2]) / 1000))
+            return min(30.0, max(0.5, float(value.rstrip('s'))))
+        except ValueError:
+            continue
+    return min(30.0, 2.0 * 2 ** attempt)
+
+
 def apply_reasoning_strength(transport, config, final_only, emit):
     """Strength-only templates ignore enable_thinking and reasoning_effort; they read a system
     line instead. 'Off' cannot be honoured there, so it becomes the lowest strength."""
@@ -69,6 +86,13 @@ class ModelClient:
         elif self.config.provider == 'openrouter':
             headers['X-Title'] = 'QtPy AI Sidecar'
             payload.pop('temperature')
+        elif self.config.provider == 'groq':
+            # reasoning stays out of the reply text (Qwen would otherwise put <think> in it);
+            # gpt-oss models take include_reasoning instead
+            if self.config.model.startswith('openai/gpt-oss'):
+                payload['include_reasoning'] = False
+            else:
+                payload['reasoning_format'] = 'hidden'
         if tools:
             payload['tools'] = tools
             payload['parallel_tool_calls'] = False
@@ -96,8 +120,16 @@ class ModelClient:
             text, reasoning, calls, finish, usage = '', '', {}, None, {}
             timeout = httpx.Timeout(connect=15, read=180, write=30, pool=15)
             async with httpx.AsyncClient(timeout=timeout) as client:
+              for attempt in range(RATE_LIMIT_RETRIES + 1):
                 async with client.stream('POST', base_url.rstrip('/') + '/chat/completions',
                                          json=payload, headers=headers) as response:
+                    if response.status_code == 429 and attempt < RATE_LIMIT_RETRIES:
+                        # a cloud rate limit (tokens per minute): wait as told, then retry
+                        wait = rate_limit_wait(response.headers, attempt)
+                        await response.aread()
+                        emit('status', f'Rate limited by the provider; retrying in {wait:.0f} s')
+                        await asyncio.sleep(wait)
+                        continue
                     if response.status_code >= 400:
                         detail = (await response.aread()).decode(errors='replace')[:1500]
                         raise RuntimeError(f'Model HTTP {response.status_code}: {detail}')
@@ -129,6 +161,7 @@ class ModelClient:
                         progress.update(content_characters=len(text), reasoning_characters=len(reasoning),
                                         tool_argument_characters=sum(len(c['function']['arguments']) for c in calls.values()))
                         emit('generation', {'characters': len(text) + len(reasoning), 'usage': usage})
+                break
             if finish is None:
                 raise RuntimeError('Incomplete model stream; no partial tool call executed')
             if finish == 'length':

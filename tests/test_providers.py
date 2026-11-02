@@ -28,6 +28,49 @@ def test_openrouter_transport(endpoint,monkeypatch):
     assert answer['content']=='Hello' and 'max_tokens' in received[0]
 
 
+def test_groq_transport_vision_and_rate_limit(monkeypatch):
+    """Groq (cloud Qwen3.8-27B): reasoning kept out of the text, previews sent
+    by 'auto', and an HTTP 429 waited out and retried."""
+    from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+    from qtpy_ai_sidecar import backend,vision
+    received=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_POST(self):
+            received.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            if len(received)==1:
+                self.send_response(429)
+                self.send_header('retry-after','0.5')
+                self.end_headers()
+                self.wfile.write(b'{"error":"rate limit"}')
+                return
+            self.send_response(200)
+            self.send_header('Content-Type','text/event-stream')
+            self.end_headers()
+            self.wfile.write(('data: '+json.dumps({'choices':[{'delta':{'content':'Hello'},'finish_reason':'stop'}]})+'\n\n').encode())
+            self.wfile.write(b'data: [DONE]\n\n')
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    threading.Thread(target=server.serve_forever,daemon=True).start()
+    try:
+        monkeypatch.setenv('SIDECAR_TEST_KEY','test-not-a-real-api-key')
+        config=Config(provider='groq',base_url=f'http://127.0.0.1:{server.server_port}/v1',model='qwen/qwen3.8-27b',
+                      api_key_env='SIDECAR_TEST_KEY',thinking_backend='reasoning_effort',thinking='disabled')
+        events=[]
+        answer,_=asyncio.run(ModelClient(config).complete([{'role':'user','content':'Hi'}],[],threading.Event(),lambda *a:events.append(a)))
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert answer['content']=='Hello' and len(received)==2
+    assert received[1]['reasoning_format']=='hidden' and received[1]['reasoning_effort']=='none'
+    assert any(kind=='status' and 'Rate limited' in text for kind,text in events)
+    remote=Config(provider='groq',base_url='https://api.groq.com/openai/v1',model='qwen/qwen3.8-27b')
+    assert vision.detect(remote) is True
+    remote.model='llama-3.3-70b-versatile'
+    assert vision.detect(remote) is False
+    assert backend.rate_limit_wait({'x-ratelimit-reset-tokens':'7.66s'},0)==7.66
+    assert backend.rate_limit_wait({},1)==4.0
+
+
 def test_claude_signed_thinking_and_streamed_tool(endpoint,monkeypatch):
     url,received,chunks=endpoint
     monkeypatch.setenv('SIDECAR_TEST_KEY','test-not-a-real-api-key')

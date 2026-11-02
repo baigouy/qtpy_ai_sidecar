@@ -16,7 +16,7 @@ If your host already uses PySide6/PyQt, install without the `qt` extra and use i
 In the standalone window:
 
 - **Download icon:** search Hugging Face, list GGUF sizes, download a chosen single-file quantization, choose existing files, check official llama.cpp builds and optionally install one.
-- **Plug icon:** choose sidecar-managed local inference, OpenAI, Claude, OpenRouter, or a custom compatible API. An LM Studio endpoint belongs in the custom API mode; the sidecar does not control its hardware.
+- **Plug icon:** choose sidecar-managed local inference, OpenAI, Claude, OpenRouter, Groq, or a custom compatible API. An LM Studio endpoint belongs in the custom API mode; the sidecar does not control its hardware. **Groq** runs open models such as Qwen3.8-27B (`qwen/qwen3.8-27b`, filled in by default) in the cloud, so the full model runs without your GPU: paste a Groq API key (console.groq.com) once; it is kept in the OS vault. Previews are sent to that model (it reads images), the reasoning text stays out of the replies, and a rate limit (HTTP 429, free tier) is waited out and retried up to three times. Groq serves this model with a 131k-token context.
 - **Tools icon:** import an application's MCP JSON configuration. Credential fields must use environment references rather than secret literals.
 - **Gear icon:** context and output limits, supported thinking settings, CPU threads, GPU layers and **Force CPU**. Hardware settings apply only to the managed local runtime.
 - **Compress:** summarize older dialogue while retaining the latest ten dialogue messages exactly. The complete local log remains. `/compact` works too.

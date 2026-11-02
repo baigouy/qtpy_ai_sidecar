@@ -58,7 +58,7 @@ class Config:
             raise ValueError('Unknown thinking strength')
         if self.thinking_backend == 'unsupported' and (self.thinking != 'default' or self.thinking_strength != 'default'):
             raise ValueError('Configure a supported thinking backend before overriding thinking')
-        if self.provider not in ('local', 'openai', 'anthropic', 'openrouter', 'compatible'):
+        if self.provider not in ('local', 'openai', 'anthropic', 'openrouter', 'groq', 'compatible'):
             raise ValueError('Unknown model provider')
         if self.runtime and self.provider != 'local':
             raise ValueError('Owned runtimes are available only in local mode')
