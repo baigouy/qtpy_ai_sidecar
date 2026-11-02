@@ -69,6 +69,12 @@ def test_groq_transport_vision_and_rate_limit(monkeypatch):
     assert vision.detect(remote) is False
     assert backend.rate_limit_wait({'x-ratelimit-reset-tokens':'7.66s'},0)==7.66
     assert backend.rate_limit_wait({},1)==4.0
+    # the real Groq free-tier refusal (2026-11-02): explained, not dumped as JSON
+    detail=('{"error":{"message":"Request too large for model `qwen/qwen3.8-27b` in organization `org_x` service tier '
+            '`on_demand` on input tokens per minute (ITPM): Limit 7000, Requested 7490, please reduce your message size"}}')
+    text=backend.per_minute_limit_message(detail)
+    assert '7490' in text and '7000' in text and 'paid tier' in text
+    assert backend.per_minute_limit_message('{"error":"other"}') is None
 
 
 def test_claude_signed_thinking_and_streamed_tool(endpoint,monkeypatch):

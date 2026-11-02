@@ -17,6 +17,20 @@ class EmptyModelReply(RuntimeError):
 RATE_LIMIT_RETRIES = 3
 
 
+def per_minute_limit_message(detail):
+    """Plain words for a request larger than the account's tokens-per-minute
+    quota (Groq free tier: 7,000 input tokens per minute for Qwen3.8-27B, less
+    than one turn with an application's tools): waiting does not help."""
+    import re
+    found = re.search(r'tokens per minute[^:]*:\s*Limit\s*(\d+),\s*Requested\s*(\d+)', detail, re.I)
+    if not found:
+        return None
+    limit, requested = found.groups()
+    return (f'This message needs {requested} input tokens, but your plan with this provider allows only {limit} '
+            f'per minute, so it cannot be sent (waiting does not help). This is a limit of the account, not of '
+            f'the model or of the context setting: use a paid tier with this provider, another provider, or a local model.')
+
+
 def rate_limit_wait(headers, attempt):
     """Seconds to wait after an HTTP 429: the provider's Retry-After (or
     Groq's x-ratelimit-reset-tokens such as '7.66s'), else 2, 4, 8 s; at most 30."""
@@ -132,7 +146,7 @@ class ModelClient:
                         continue
                     if response.status_code >= 400:
                         detail = (await response.aread()).decode(errors='replace')[:1500]
-                        raise RuntimeError(f'Model HTTP {response.status_code}: {detail}')
+                        raise RuntimeError(per_minute_limit_message(detail) or f'Model HTTP {response.status_code}: {detail}')
                     async for line in response.aiter_lines():
                         if not line.startswith('data:'):
                             continue
