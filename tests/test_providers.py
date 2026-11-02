@@ -88,12 +88,11 @@ def test_openrouter_free_model_vision_is_read_from_its_model_list(monkeypatch):
     from qtpy_ai_sidecar import vision
     listing={'data':[{'id':'thinkingmachines/inkling:free','architecture':{'input_modalities':['text','image','audio']}},
                      {'id':'some/text-only:free','architecture':{'input_modalities':['text']}}]}
+    import httpx
     class Reply:
-        def __enter__(self):return self
-        def __exit__(self,*a):pass
-        def read(self):return json.dumps(listing).encode()
+        def json(self):return listing
     seen=[]
-    monkeypatch.setattr(vision.urllib.request,'urlopen',lambda url,timeout=0:seen.append(url) or Reply())
+    monkeypatch.setattr(httpx,'get',lambda url,timeout=0:seen.append(url) or Reply())
     config=Config(provider='openrouter',base_url='https://openrouter.ai/api/v1',model='thinkingmachines/inkling:free')
     assert vision.detect(config) is True and seen==['https://openrouter.ai/api/v1/models']
     config.model='some/text-only:free'

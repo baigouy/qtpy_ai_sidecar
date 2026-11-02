@@ -58,10 +58,12 @@ def detect(config):
 
 def _openrouter_reports_vision(base_url, model, timeout=5):
     """OpenRouter's public model list gives each model's input modalities;
-    None when it cannot tell (no network, or the model is not listed)."""
+    None when it cannot tell (no network, or the model is not listed). httpx,
+    as for the model calls: urllib's HTTPS failed here (SSL ASN1 error, conda
+    Python, 2026-11-02), so previews never went to an OpenRouter model."""
+    import httpx
     try:
-        with urllib.request.urlopen(base_url.rstrip('/') + '/models', timeout=timeout) as r:
-            models = json.loads(r.read().decode('utf-8')).get('data', [])
+        models = httpx.get(base_url.rstrip('/') + '/models', timeout=timeout).json().get('data', [])
     except Exception:
         return None
     for m in models:
