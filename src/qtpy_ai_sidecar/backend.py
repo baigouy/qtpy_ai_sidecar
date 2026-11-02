@@ -23,6 +23,10 @@ def per_minute_limit_message(detail):
     allowed 7,000 input tokens per minute, less than one turn with an
     application's tools), or the free models' daily request quota."""
     import re
+    if re.search(r'only available on agentic harnesses|Gate Free Endpoints', detail, re.I):
+        return ('This free model is reserved by the provider for the apps on its approved list, which this chat '
+                'is not on. Choose another free model in the connection settings (plug icon), such as '
+                'nvidia/nemotron-3.5-super-vl:free.')
     if re.search(r'free-models-per-day|per[- ]day', detail, re.I) and re.search(r'rate limit', detail, re.I):
         return ('The free daily request quota of this provider is used up, so nothing can be sent until it resets. '
                 'Each chat message makes several requests (one per tool step). Add credit with this provider for '

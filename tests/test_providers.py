@@ -77,6 +77,9 @@ def test_groq_transport_vision_and_rate_limit(monkeypatch):
     assert backend.per_minute_limit_message('{"error":"other"}') is None
     daily='{"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429}}'
     assert 'daily request quota' in backend.per_minute_limit_message(daily)
+    gated=('{"error":{"message":"thinkingmachines/inkling:free is only available on agentic harnesses.","code":403,'
+           '"metadata":{"failed_routing_step":"Gate Free Endpoints by Agentic Harness"}}}')
+    assert 'approved list' in backend.per_minute_limit_message(gated)
 
 
 def test_openrouter_free_model_vision_is_read_from_its_model_list(monkeypatch):

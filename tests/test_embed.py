@@ -67,5 +67,5 @@ def test_connection_dialog_groq_preset(tmp_path):
     assert candidate.model == 'qwen/qwen3.8-27b' and candidate.thinking_backend == 'reasoning_effort'
     dialog.provider.setCurrentIndex(dialog.provider.findData('openrouter'))   # free, 1M context, reads images
     candidate = dialog.candidate()
-    assert candidate.base_url == 'https://openrouter.ai/api/v1' and candidate.model == 'thinkingmachines/inkling:free'
+    assert candidate.base_url == 'https://openrouter.ai/api/v1' and candidate.model == 'nvidia/nemotron-3.5-super-vl:free'
     dialog.close()

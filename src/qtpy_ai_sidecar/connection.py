@@ -9,9 +9,10 @@ PRESETS = {'local': 'http://127.0.0.1:1234/v1', 'openai': 'https://api.openai.co
            'groq': 'https://api.groq.com/openai/v1', 'compatible': 'https://your-provider.example/v1'}
 # the model filled in when a provider is chosen: on OpenRouter a free model
 # that reads images, calls tools and has a 1M-token context (checked
-# 2026-11-02); Groq's free tier (7,000 input tokens/min) is too small for a
-# turn with an application's tools, its paid tier is not
-DEFAULT_MODELS = {'openrouter': 'thinkingmachines/inkling:free', 'groq': 'qwen/qwen3.8-27b'}
+# 2026-11-02; thinkingmachines/inkling:free is refused to apps not on
+# OpenRouter's approved list); Groq's free tier (7,000 input tokens/min) is too
+# small for a turn with an application's tools, its paid tier is not
+DEFAULT_MODELS = {'openrouter': 'nvidia/nemotron-3.5-super-vl:free', 'groq': 'qwen/qwen3.8-27b'}
 
 
 class ConnectionDialog(QDialog):
