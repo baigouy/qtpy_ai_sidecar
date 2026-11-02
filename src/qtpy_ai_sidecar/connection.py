@@ -7,8 +7,11 @@ from .credentials import set_key, delete_key
 PRESETS = {'local': 'http://127.0.0.1:1234/v1', 'openai': 'https://api.openai.com/v1',
            'anthropic': 'https://api.anthropic.com/v1', 'openrouter': 'https://openrouter.ai/api/v1',
            'groq': 'https://api.groq.com/openai/v1', 'compatible': 'https://your-provider.example/v1'}
-# the model filled in when a provider is chosen and the model field is empty
-DEFAULT_MODELS = {'groq': 'qwen/qwen3.8-27b'}
+# the model filled in when a provider is chosen: on OpenRouter a free model
+# that reads images, calls tools and has a 1M-token context (checked
+# 2026-11-02); Groq's free tier (7,000 input tokens/min) is too small for a
+# turn with an application's tools, its paid tier is not
+DEFAULT_MODELS = {'openrouter': 'thinkingmachines/inkling:free', 'groq': 'qwen/qwen3.8-27b'}
 
 
 class ConnectionDialog(QDialog):
@@ -19,7 +22,7 @@ class ConnectionDialog(QDialog):
         form = QFormLayout(self)
         self.provider = QComboBox()
         for key, label in [('local', 'Local model (preferred)'), ('openai', 'OpenAI API'), ('anthropic', 'Claude / Anthropic API'),
-                           ('openrouter', 'OpenRouter'), ('groq', 'Groq (cloud, e.g. Qwen3.8-27B)'),
+                           ('openrouter', 'OpenRouter (free models available)'), ('groq', 'Groq (paid tier)'),
                            ('compatible', 'Custom OpenAI-compatible API')]:
             self.provider.addItem(label, key)
         self.provider.setCurrentIndex(self.provider.findData(config.provider))

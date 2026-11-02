@@ -51,7 +51,23 @@ def detect(config):
         return bool(_lm_studio_reports_vision(config.base_url, config.model))
     if getattr(config, 'provider', '') == 'groq':
         return config.model in GROQ_VISION_MODELS
+    if getattr(config, 'provider', '') == 'openrouter':
+        return bool(_openrouter_reports_vision(config.base_url, config.model))
     return False
+
+
+def _openrouter_reports_vision(base_url, model, timeout=5):
+    """OpenRouter's public model list gives each model's input modalities;
+    None when it cannot tell (no network, or the model is not listed)."""
+    try:
+        with urllib.request.urlopen(base_url.rstrip('/') + '/models', timeout=timeout) as r:
+            models = json.loads(r.read().decode('utf-8')).get('data', [])
+    except Exception:
+        return None
+    for m in models:
+        if m.get('id') == model:
+            return 'image' in (m.get('architecture') or {}).get('input_modalities', [])
+    return None
 
 
 def shrink(data, mime):

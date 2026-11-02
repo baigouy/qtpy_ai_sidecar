@@ -18,10 +18,15 @@ RATE_LIMIT_RETRIES = 3
 
 
 def per_minute_limit_message(detail):
-    """Plain words for a request larger than the account's tokens-per-minute
-    quota (Groq free tier: 7,000 input tokens per minute for Qwen3.8-27B, less
-    than one turn with an application's tools): waiting does not help."""
+    """Plain words for an account quota that waiting a few seconds does not
+    lift: a request larger than the tokens-per-minute quota (a free tier
+    allowed 7,000 input tokens per minute, less than one turn with an
+    application's tools), or the free models' daily request quota."""
     import re
+    if re.search(r'free-models-per-day|per[- ]day', detail, re.I) and re.search(r'rate limit', detail, re.I):
+        return ('The free daily request quota of this provider is used up, so nothing can be sent until it resets. '
+                'Each chat message makes several requests (one per tool step). Add credit with this provider for '
+                'a larger quota, or use another provider or a local model.')
     found = re.search(r'tokens per minute[^:]*:\s*Limit\s*(\d+),\s*Requested\s*(\d+)', detail, re.I)
     if not found:
         return None
@@ -32,8 +37,8 @@ def per_minute_limit_message(detail):
 
 
 def rate_limit_wait(headers, attempt):
-    """Seconds to wait after an HTTP 429: the provider's Retry-After (or
-    Groq's x-ratelimit-reset-tokens such as '7.66s'), else 2, 4, 8 s; at most 30."""
+    """Seconds to wait after an HTTP 429: the provider's Retry-After (or an
+    x-ratelimit-reset-tokens such as '7.66s'), else 2, 4, 8 s; at most 30."""
     for name in ('retry-after', 'x-ratelimit-reset-tokens', 'x-ratelimit-reset-requests'):
         value = str(headers.get(name) or '').strip()
         try:
@@ -140,7 +145,9 @@ class ModelClient:
                     if response.status_code == 429 and attempt < RATE_LIMIT_RETRIES:
                         # a cloud rate limit (tokens per minute): wait as told, then retry
                         wait = rate_limit_wait(response.headers, attempt)
-                        await response.aread()
+                        detail = (await response.aread()).decode(errors='replace')[:1500]
+                        if per_minute_limit_message(detail):      # an account quota: retrying is useless
+                            raise RuntimeError(per_minute_limit_message(detail))
                         emit('status', f'Rate limited by the provider; retrying in {wait:.0f} s')
                         await asyncio.sleep(wait)
                         continue

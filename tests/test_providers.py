@@ -75,6 +75,28 @@ def test_groq_transport_vision_and_rate_limit(monkeypatch):
     text=backend.per_minute_limit_message(detail)
     assert '7490' in text and '7000' in text and 'paid tier' in text
     assert backend.per_minute_limit_message('{"error":"other"}') is None
+    daily='{"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429}}'
+    assert 'daily request quota' in backend.per_minute_limit_message(daily)
+
+
+def test_openrouter_free_model_vision_is_read_from_its_model_list(monkeypatch):
+    """'auto' sends previews to an OpenRouter model whose listed input
+    modalities include images (thinkingmachines/inkling:free)."""
+    from qtpy_ai_sidecar import vision
+    listing={'data':[{'id':'thinkingmachines/inkling:free','architecture':{'input_modalities':['text','image','audio']}},
+                     {'id':'some/text-only:free','architecture':{'input_modalities':['text']}}]}
+    class Reply:
+        def __enter__(self):return self
+        def __exit__(self,*a):pass
+        def read(self):return json.dumps(listing).encode()
+    seen=[]
+    monkeypatch.setattr(vision.urllib.request,'urlopen',lambda url,timeout=0:seen.append(url) or Reply())
+    config=Config(provider='openrouter',base_url='https://openrouter.ai/api/v1',model='thinkingmachines/inkling:free')
+    assert vision.detect(config) is True and seen==['https://openrouter.ai/api/v1/models']
+    config.model='some/text-only:free'
+    assert vision.detect(config) is False
+    config.model='not/listed'
+    assert vision.detect(config) is False
 
 
 def test_claude_signed_thinking_and_streamed_tool(endpoint,monkeypatch):
