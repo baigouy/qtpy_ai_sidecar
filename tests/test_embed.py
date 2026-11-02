@@ -16,6 +16,19 @@ def test_packaged_sidecar_embeds_in_host(tmp_path):
     dock.shutdown()
     host.close()
 
+
+def test_the_model_notice_is_always_shown_and_hosts_can_word_it(tmp_path):
+    from qtpy_ai_sidecar.config import DEFAULT_NOTICE
+    app = QApplication.instance() or QApplication([])
+    for given, shown in (('', DEFAULT_NOTICE), ('Check every scale bar.', 'Check every scale bar.')):
+        host = QMainWindow()
+        dock = attach_to_window(host, Config(state_dir=str(tmp_path), notice=given), tmp_path / 'bridge.json')
+        host.show()
+        app.processEvents()
+        assert dock.notice.isVisible() and dock.notice.text().endswith(shown)
+        dock.shutdown()
+        host.close()
+
 def test_long_choices_stay_in_message_and_do_not_expand_host(tmp_path):
     from qtpy.QtWidgets import QWidget
     app = QApplication.instance() or QApplication([])

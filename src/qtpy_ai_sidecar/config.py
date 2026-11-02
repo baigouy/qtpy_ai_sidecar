@@ -2,6 +2,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import json
 
+# true of every model and every host: hosts may word it for their own risks
+DEFAULT_NOTICE = 'Models can make mistakes. Check what they do.'
+
 
 @dataclass
 class Config:
@@ -28,6 +31,8 @@ class Config:
     # Compact history and searches once the payload fills this share of the context; 0 = always (default).
     # 0.5 was tried on 2026-10-27: Qwen 9B never crossed it yet was no faster, and Qwen3.5-4B did worse.
     compact_from: float = 0.0
+    # the line always shown under the chat; empty = DEFAULT_NOTICE
+    notice: str = ''
 
     def __post_init__(self):
         if not 512 <= self.output_tokens < self.context_tokens:

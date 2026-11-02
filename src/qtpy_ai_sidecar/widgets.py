@@ -14,6 +14,7 @@ from qtpy.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QScr
     QFileDialog, QCheckBox, QSizePolicy, QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QSlider)
 import qtawesome as qta
 from .engine import Engine
+from .config import DEFAULT_NOTICE
 from .adapters import NullAdapter
 
 
@@ -246,7 +247,13 @@ class AssistantDock(QDockWidget):
         self.context = QLabel(f'Context: estimated usage shown after a request · capacity {config.context_tokens:,}')
         self.context.setWordWrap(True)
         root.addWidget(self.context)
-        body.setStyleSheet('''QWidget#sidecarBody {background:#fbf7f1;color:#493c32;}
+        # always shown: the host may word it for its own risks (config.notice)
+        self.notice = QLabel('⚠ ' + (config.notice.strip() or DEFAULT_NOTICE))
+        self.notice.setObjectName('modelNotice')
+        self.notice.setWordWrap(True)
+        root.addWidget(self.notice)
+        body.setStyleSheet('''QLabel#modelNotice {color:#a15c00;}
+            ''' + '''QWidget#sidecarBody {background:#fbf7f1;color:#493c32;}
             QFrame#composerFrame {background:#fffdf9;border:1px solid #d8bea9;border-radius:18px;}
             QPlainTextEdit#composerInput {background:transparent;border:0;border-radius:0;padding:5px;}
             QPlainTextEdit#composerInput:disabled {background:transparent;color:#81756a;}
