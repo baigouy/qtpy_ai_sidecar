@@ -114,6 +114,20 @@ def test_a_changed_channel_still_needs_a_named_lut():
         adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_lut',arguments={'panel_ref':'e','luts':['PURPLE','GREEN','BLUE']}),
                                    LUT_STATE,'Set panel e to use a blorple LUT.')
 
+@pytest.mark.parametrize('lut,request_text',[
+    ('MATPLOTLIB_viridis_r','Invert the colors (use the reversed viridis LUT, so dark-light swap)'),
+    ('GRAY_INVERTED','make panel e inverted gray'),
+    ('MATPLOTLIB_viridis','use viridis on panel e')])
+def test_an_inverted_or_matplotlib_lut_counts_as_named(lut,request_text):
+    """'reversed viridis' named MATPLOTLIB_viridis_r but was refused (2026-11-03)."""
+    PyFiguresAdapter('unused').validate_tool_call('use_pyfigures_tool',dict(tool_name='set_lut',arguments={'panel_ref':'e','luts':[lut,None,None]}),
+                                                  LUT_STATE,request_text)
+
+def test_an_inverted_lut_needs_an_inverting_word():
+    with pytest.raises(NeedsClarification,match='GRAY_INVERTED'):
+        PyFiguresAdapter('unused').validate_tool_call('use_pyfigures_tool',dict(tool_name='set_lut',arguments={'panel_ref':'e','luts':['GRAY_INVERTED',None,None]}),
+                                                      LUT_STATE,'make panel e gray')
+
 def test_an_answer_to_the_models_question_keeps_the_original_request(tmp_path):
     """'use magenta and green' -> 'Which one do you mean?' -> 'the merge panel (d)':
     the colours were named one message earlier (Mistral Large 4, 2026-11-03)."""

@@ -379,8 +379,14 @@ class PyFiguresAdapter:
             # After "blorple" was refused the model chose PURPLE itself: a colour table
             # must be one the user named.
             spoken=text.lower().replace('grey','gray')
+            inverted_words=re.search(r'\b(?:invert\w*|inverse|revers\w*|negative)\b',spoken)
             def stem(name):
-                return re.sub(r'[^a-z ]','',name.lower().replace('grey','gray')).strip().rstrip('s')   # Grays -> gray
+                # "reversed viridis" names MATPLOTLIB_viridis_r, "inverted gray" GRAY_INVERTED
+                # (the first was refused, 2026-11-03)
+                name=re.sub(r'^matplotlib_','',name.lower().replace('grey','gray'))
+                if inverted_words:
+                    name=re.sub(r'(?:_inverted|_r)$','',name)
+                return re.sub(r'[^a-z ]','',name).strip().rstrip('s')   # Grays -> gray
             # a channel keeping its current table ("leave the other channels alone") needs no name
             ref=str(args.get('panel_ref') or '')
             current=next((p.get('luts') or [] for p in state.get('panel_references',[])

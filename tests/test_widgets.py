@@ -280,3 +280,34 @@ def test_composer_integrates_editor_thinking_and_send(tmp_path):
     assert dock.thinking_slider.mapTo(dock.composer_frame, dock.thinking_slider.rect().topLeft()).y() > dock.thinking_mode.mapTo(dock.composer_frame, dock.thinking_mode.rect().topLeft()).y()
     dock.shutdown()
     dock.close()
+
+
+def test_provider_button_and_mcp_export(tmp_path, monkeypatch):
+    """The provider in use is a button that opens the provider dialog (it was
+    hidden behind the plug icon), and the MCP configuration can be exported
+    as well as imported (2026-11-03)."""
+    import json
+    from qtpy_ai_sidecar import widgets
+    app = QApplication.instance() or QApplication([])
+    config = Config(application='Demo', state_dir=str(tmp_path), provider='mistral',
+                    base_url='https://api.mistral.ai/v1', model='mistral-large-4',
+                    servers={'demo': {'command': 'python', 'args': ['demo.py'], 'env': {'TOKEN': '${DEMO_TOKEN}'}}})
+    dock = AssistantDock(config)
+    assert dock.connection_label.text().startswith('Provider: Mistral') and 'mistral-large-4' in dock.connection_label.text()
+    opened = []
+    monkeypatch.setattr(AssistantDock, 'connection_settings', lambda self: opened.append(True))
+    dock.connection_label.clicked.disconnect()
+    dock.connection_label.clicked.connect(dock.connection_settings)
+    dock.connection_label.click()
+    assert opened
+    labels = [a.text() for a in dock.tools_button.menu().actions()]
+    assert labels == ['Import MCP configuration…', 'Export MCP configuration…']
+    out = tmp_path / 'out.json'
+    monkeypatch.setattr(widgets.QFileDialog, 'getSaveFileName', staticmethod(lambda *a, **k: (str(out), '')))
+    dock.export_servers()
+    saved = json.loads(out.read_text())
+    assert saved == {'mcpServers': config.servers}
+    # and it imports back
+    Config(application='Demo', state_dir=str(tmp_path / 'other')).import_servers(out)
+    dock.shutdown()
+    dock.close()

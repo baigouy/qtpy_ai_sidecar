@@ -111,6 +111,14 @@ class Config:
         (self.storage() / 'servers.json').write_text(json.dumps(servers, indent=2), encoding='utf-8')
         self.servers = servers
 
+    def export_servers(self, path):
+        """Write the MCP servers in use as a standard {"mcpServers": …} file,
+        for another MCP client or another computer. Credentials stay environment
+        references (import refuses secret literals), so the file holds none."""
+        if not self.servers:
+            raise ValueError('No MCP server is configured')
+        Path(path).write_text(json.dumps({'mcpServers': self.servers}, indent=2), encoding='utf-8')
+
     def save_connection(self):
         value = {k: getattr(self, k) for k in ('provider', 'model', 'base_url', 'api_key_env', 'thinking_backend', 'runtime')}
         self.storage().mkdir(parents=True, exist_ok=True)

@@ -11,7 +11,7 @@ from qtpy.QtCore import Qt, Signal, QTimer, QSize, QRect, QPoint
 from qtpy.QtGui import QImage, QPixmap, QFont, QIcon, QIconEngine, QPainter
 from qtpy.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QFrame, QLabel, QTextBrowser, QPlainTextEdit, QPushButton, QProgressBar,
-    QFileDialog, QToolButton, QCheckBox, QSizePolicy, QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QSlider)
+    QFileDialog, QToolButton, QMenu, QCheckBox, QSizePolicy, QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QSlider)
 import qtawesome as qta
 from .engine import Engine
 from .config import DEFAULT_NOTICE
@@ -333,12 +333,23 @@ class AssistantDock(QDockWidget):
         self.library_button.clicked.connect(self.library)
         top.addWidget(self.library_button)
         self.tools_button = QPushButton(qta.icon('fa5s.tools'), '')
-        self.tools_button.setToolTip('Import application MCP server configuration')
-        self.tools_button.clicked.connect(self.import_servers)
+        self.tools_button.setToolTip('MCP server configuration: import or export')
+        tools_menu = QMenu(self.tools_button)
+        tools_menu.addAction('Import MCP configuration…', self.import_servers)
+        tools_menu.addAction('Export MCP configuration…', self.export_servers)
+        self.tools_button.setMenu(tools_menu)
         top.addWidget(self.tools_button)
         root.addLayout(top)
-        self.connection_label = QLabel()
-        self.connection_label.setWordWrap(True)
+        # the provider and model in use, as a button: where to change them was
+        # not obvious behind the plug icon alone (2026-11-03)
+        self.connection_label = QPushButton()
+        self.connection_label.setFlat(True)
+        self.connection_label.setIcon(qta.icon('fa5s.plug'))
+        self.connection_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.connection_label.setStyleSheet('QPushButton { text-align: left; padding: 2px 4px; }')
+        self.connection_label.setToolTip('Change the provider, address, model or API key')
+        self.connection_label.setAccessibleName('Provider')
+        self.connection_label.clicked.connect(self.connection_settings)
         root.addWidget(self.connection_label)
         self.update_connection_label()
         self.scroll = QScrollArea()
@@ -837,9 +848,12 @@ class AssistantDock(QDockWidget):
     def update_connection_label(self):
         from . import providers
         config = self.engine.config
-        name = (providers.find(config.provider) or {}).get('label') or config.provider    # a user's provider by its name
-        self.connection_label.setText(('Local model' if config.provider == 'local' else 'Remote API · ' + name)
-                                      + ' · ' + config.model)
+        from .connection import ConnectionDialog
+        # a user's provider by its name, a built-in one as the plug dialog lists it
+        name = ((providers.find(config.provider) or {}).get('label')
+                or dict(ConnectionDialog.BUILTIN_LABELS).get(config.provider) or config.provider)
+        self.connection_label.setText(('Local model' if config.provider == 'local' else 'Provider: ' + name)
+                                      + ' · ' + config.model + '   — change…')
 
     def show_context(self):
         """Estimated use (characters / 3) of the Context tokens setting, and the
@@ -911,6 +925,17 @@ class AssistantDock(QDockWidget):
                 self.replace_engine(self.engine.config)
             except Exception as exc:
                 self.add_message('assistant', 'MCP configuration was not imported: ' + str(exc))
+
+    def export_servers(self):
+        path, _ = QFileDialog.getSaveFileName(self, 'Export MCP configuration',
+                                              self.engine.config.application.lower().replace(' ', '_') + '_mcp.json',
+                                              'JSON (*.json)')
+        if path:
+            try:
+                self.engine.config.export_servers(path)
+                self.status.setText('MCP configuration saved: ' + path)
+            except Exception as exc:
+                self.add_message('assistant', 'MCP configuration was not exported: ' + str(exc))
 
     def library(self):
         if self.busy:
