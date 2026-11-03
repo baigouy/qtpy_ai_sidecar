@@ -78,6 +78,64 @@ def test_connection_dialog_groq_preset(tmp_path):
     dialog.close()
 
 
+def test_user_providers_can_be_added_edited_used_and_removed(tmp_path, monkeypatch):
+    """Providers of the user's own (any OpenAI-compatible API) in the connection
+    dialog: added once, offered next time, edited, with their key prefix, removed."""
+    from qtpy.QtWidgets import QDialog
+    from qtpy_ai_sidecar import connection, providers
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.connection import ConnectionDialog, ProviderDialog
+    from qtpy_ai_sidecar.credentials import key_state
+    app = QApplication.instance() or QApplication([])
+    stored = []
+    monkeypatch.setattr(connection, 'set_key', lambda config, key: stored.append((config.provider, key)))
+    dialog = ConnectionDialog(Config(state_dir=str(tmp_path), provider='compatible', model='x'))
+    assert not dialog.edit_provider_button.isEnabled()                 # built-ins are not editable
+
+    def fill(form):
+        form.label.setText('Z.ai direct')
+        form.url.setText('https://api.z.ai/api/paas/v4/')
+        form.model.setText('glm-5.3')
+        form.thinking.setCurrentText('reasoning_effort')
+        form.prefix.setText('zk-')
+        form.save()
+        return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(ProviderDialog, 'exec', fill)
+    dialog.add_provider.click()
+    assert dialog.provider.currentData() == 'custom_z_ai_direct' and dialog.provider.currentText() == 'Z.ai direct  (yours)'
+    assert (dialog.url.text(), dialog.model.text(), dialog.capability.currentText()) == \
+        ('https://api.z.ai/api/paas/v4', 'glm-5.3', 'reasoning_effort')
+    assert dialog.edit_provider_button.isEnabled()
+    dialog.key.setText('test-not-a-real-key')                           # not zk-: refused
+    dialog.save()
+    assert stored == [] and 'zk-' in dialog.error.text()
+    dialog.key.setText('zk-test-not-a-real-key')
+    dialog.save()
+    assert stored == [('custom_z_ai_direct', 'zk-test-not-a-real-key')]
+    assert dialog.result_config.provider == 'custom_z_ai_direct'
+    # offered again next time, and the saved connection loads
+    again = ConnectionDialog(dialog.result_config)
+    assert again.provider.currentData() == 'custom_z_ai_direct'
+    Config(state_dir=str(tmp_path), provider='custom_z_ai_direct', base_url='http://127.0.0.1:9000/v1', model='m')
+    assert key_state(Config(state_dir=str(tmp_path), provider='custom_z_ai_direct',
+                            base_url='http://127.0.0.1:9000/v1', model='m')) is None   # a local server needs no key
+    # edit, then remove
+    def rename(form):
+        form.url.setText('https://api.z.ai/v2')
+        form.save()
+        return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(ProviderDialog, 'exec', rename)
+    again.edit_provider_button.click()
+    assert again.url.text() == 'https://api.z.ai/v2' and len(providers.load()) == 1
+    again.remove_provider_button.click()
+    assert providers.load() == [] and again.provider.currentData() == 'compatible'
+    import pytest
+    with pytest.raises(ValueError, match='Unknown model provider'):
+        Config(state_dir=str(tmp_path), provider='custom_z_ai_direct', base_url='https://api.z.ai/v2', model='m')
+    dialog.close()
+    again.close()
+
+
 def test_each_providers_last_model_is_remembered(tmp_path):
     """Switching OpenRouter -> Mistral refilled Mistral's default model; the
     model last used with each provider now comes back."""

@@ -32,7 +32,9 @@ def key_state(config):
     """True when a key is available for this connection, False when one is
     needed and missing, None when none is needed (local models and servers).
     The key itself is not returned."""
-    if config.provider == 'local' or (config.provider == 'compatible' and not config.api_key_env
+    from .providers import BUILTIN
+    custom_or_compatible = config.provider == 'compatible' or config.provider not in BUILTIN
+    if config.provider == 'local' or (custom_or_compatible and not config.api_key_env
                                       and urlsplit(config.base_url).hostname in ('127.0.0.1', 'localhost', '::1')):
         return None
     try:
@@ -63,7 +65,9 @@ def get_key(config):
         return value
     if config.provider == 'local':
         return None
-    if config.provider == 'compatible' and urlsplit(config.base_url).hostname in ('127.0.0.1', 'localhost', '::1'):
+    from .providers import BUILTIN
+    if (config.provider == 'compatible' or config.provider not in BUILTIN) \
+            and urlsplit(config.base_url).hostname in ('127.0.0.1', 'localhost', '::1'):
         try:
             return secure_backend().get_password(SERVICE, identity(config))
         except RuntimeError:

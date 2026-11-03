@@ -10,6 +10,13 @@ def qt_application_lifetime():
     app.processEvents()
 
 
+@pytest.fixture(autouse=True)
+def private_provider_list(tmp_path,monkeypatch):
+    """Tests never read or write the user's own providers.json."""
+    from qtpy_ai_sidecar import providers
+    monkeypatch.setattr(providers,'path',lambda:tmp_path/'providers.json')
+
+
 def pytest_sessionstart(session):
     from pathlib import Path
     marker=Path(__file__).resolve().parents[1]/'validation/pyfigures/CLAUDE_ACTIVE_RUN.json'

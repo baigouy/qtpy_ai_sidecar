@@ -89,13 +89,22 @@ class ConnectionDialog(QDialog):
         self.setWindowTitle('Model connection and secure credentials')
         form = QFormLayout(self)
         self.provider = QComboBox()
-        for key, label in [('local', 'Local model (preferred)'), ('openai', 'OpenAI API'), ('anthropic', 'Claude / Anthropic API'),
-                           ('openrouter', 'OpenRouter (free router, recommended)'), ('groq', 'Groq (paid tier)'),
-                           ('iteracompute', 'IteraCompute (free Qwen3.8-27B, slow)'), ('nvidia', 'NVIDIA NIM (free)'),
-                           ('mistral', 'Mistral AI API'), ('compatible', 'Custom OpenAI-compatible API')]:
-            self.provider.addItem(label, key)
-        self.provider.setCurrentIndex(self.provider.findData(config.provider))
+        self.fill_providers(config.provider)
         form.addRow('Provider', self.provider)
+        # the user's own providers (any OpenAI-compatible API): add, edit, remove
+        from qtpy.QtWidgets import QHBoxLayout
+        manage = QHBoxLayout()
+        self.add_provider = QPushButton('Add provider…')
+        self.add_provider.setToolTip('Add another OpenAI-compatible API (its name, address and model), kept for next time')
+        self.add_provider.clicked.connect(lambda: self.edit_provider(None))
+        self.edit_provider_button = QPushButton('Edit…')
+        self.edit_provider_button.clicked.connect(lambda: self.edit_provider(self.provider.currentData()))
+        self.remove_provider_button = QPushButton('Remove')
+        self.remove_provider_button.clicked.connect(self.remove_provider)
+        for button in (self.add_provider, self.edit_provider_button, self.remove_provider_button):
+            manage.addWidget(button)
+        form.addRow('', manage)
+        self.sync_provider_buttons()
         self.url = QLineEdit(config.base_url)
         form.addRow('API base URL', self.url)
         self.model = QLineEdit(config.model)
@@ -129,18 +138,64 @@ class ConnectionDialog(QDialog):
         self.provider.currentIndexChanged.connect(self.changed)
         self.update_note()
 
+    BUILTIN_LABELS = [('local', 'Local model (preferred)'), ('openai', 'OpenAI API'), ('anthropic', 'Claude / Anthropic API'),
+                      ('openrouter', 'OpenRouter (free router, recommended)'), ('groq', 'Groq (paid tier)'),
+                      ('iteracompute', 'IteraCompute (free Qwen3.8-27B, slow)'), ('nvidia', 'NVIDIA NIM (free)'),
+                      ('mistral', 'Mistral AI API'), ('compatible', 'Custom OpenAI-compatible API')]
+
+    def fill_providers(self, current):
+        from . import providers
+        self.provider.blockSignals(True)
+        self.provider.clear()
+        for key, label in self.BUILTIN_LABELS:
+            self.provider.addItem(label, key)
+        for entry in providers.load():
+            self.provider.addItem(entry['label'] + '  (yours)', entry['key'])
+        self.provider.setCurrentIndex(max(0, self.provider.findData(current)))
+        self.provider.blockSignals(False)
+        self.sync_provider_buttons()
+
+    def sync_provider_buttons(self):
+        from . import providers
+        custom = self.provider.currentData() not in providers.BUILTIN
+        if hasattr(self, 'edit_provider_button'):
+            self.edit_provider_button.setEnabled(custom)
+            self.remove_provider_button.setEnabled(custom)
+
+    def edit_provider(self, key):
+        """Add a provider (key None) or edit one of the user's; it is then selected."""
+        from . import providers
+        dialog = ProviderDialog(providers.find(key) if key else None, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.fill_providers(dialog.saved_key)
+            self.changed()
+
+    def remove_provider(self):
+        from . import providers
+        key = self.provider.currentData()
+        if key in providers.BUILTIN:
+            return
+        providers.remove(key)
+        self.fill_providers('compatible')
+        self.changed()
+        self.error.setText('Provider removed. Its stored key, if any, stays in the OS vault until deleted.')
+
     def update_note(self):
         local = self.provider.currentData() == 'local'
         self.note.setText('Local mode uses the sidecar-managed runtime. Configure a model and runtime in Model Library. For LM Studio or another separately managed server, use Custom OpenAI-compatible API; this sidecar cannot control its hardware.' if local else
             'API mode sends conversation and application tool results to this endpoint. Paid providers may charge; a compatible local server may be free. ChatGPT/Claude subscriptions do not supply API credits. Keys are saved only in the OS credential vault. Switching connections starts a fresh working conversation.')
 
     def changed(self):
+        from . import providers
         provider = self.provider.currentData()
-        self.url.setText(PRESETS[provider])
-        self.capability.setCurrentText({'local': 'llama_cpp', 'openai': 'reasoning_effort', 'groq': 'reasoning_effort',
+        self.sync_provider_buttons()
+        custom = providers.find(provider)
+        self.url.setText(custom['base_url'] if custom else PRESETS[provider])
+        self.capability.setCurrentText(custom['thinking_backend'] if custom else
+                                       {'local': 'llama_cpp', 'openai': 'reasoning_effort', 'groq': 'reasoning_effort',
                                         'iteracompute': 'reasoning_effort', 'mistral': 'reasoning_effort',
                                         'anthropic': 'anthropic_adaptive'}.get(provider, 'unsupported'))
-        remembered = self.config.saved_models().get(provider)
+        remembered = self.config.saved_models().get(provider) or (custom or {}).get('model')
         if provider == self.config.provider and self.config.model not in ('', 'unknown'):
             remembered = self.config.model
         if remembered and provider != 'local':
@@ -198,7 +253,8 @@ class ConnectionDialog(QDialog):
     def save(self):
         try:
             candidate = self.candidate()
-            prefix = KEY_PREFIXES.get(candidate.provider)
+            from . import providers
+            prefix = KEY_PREFIXES.get(candidate.provider) or (providers.find(candidate.provider) or {}).get('key_prefix')
             if self.key.text().strip() and prefix and not self.key.text().strip().startswith(prefix):
                 raise ValueError(f'This is not a key for {self.provider.currentText()} (its keys begin with '
                                  f'"{prefix}"). Choose the provider the key belongs to; nothing was saved.')
@@ -215,3 +271,52 @@ class ConnectionDialog(QDialog):
     def done(self, result):
         self.key.clear()
         super().done(result)
+
+
+class ProviderDialog(QDialog):
+    """Name, address, model, thinking capability and key prefix of a provider
+    the user adds; its key is entered afterwards in the connection dialog."""
+    def __init__(self, entry=None, parent=None):
+        super().__init__(parent)
+        from .providers import THINKING
+        entry = entry or {}
+        self.key, self.saved_key = entry.get('key'), None
+        self.setWindowTitle('Edit provider' if entry else 'Add a provider')
+        self.setMinimumWidth(520)              # room for a full API address
+        form = QFormLayout(self)
+        self.label = QLineEdit(entry.get('label', ''))
+        self.label.setPlaceholderText('e.g. Z.ai, DeepSeek, my lab server')
+        form.addRow('Name', self.label)
+        self.url = QLineEdit(entry.get('base_url', ''))
+        self.url.setPlaceholderText('https://api.example.com/v1 (OpenAI-compatible)')
+        form.addRow('API base URL', self.url)
+        self.model = QLineEdit(entry.get('model', ''))
+        self.model.setPlaceholderText('filled in when this provider is chosen (List models… can pick one later)')
+        form.addRow('Model', self.model)
+        self.thinking = QComboBox()
+        self.thinking.addItems(THINKING)
+        self.thinking.setCurrentText(entry.get('thinking_backend', 'unsupported'))
+        form.addRow('Thinking capability', self.thinking)
+        self.prefix = QLineEdit(entry.get('key_prefix', ''))
+        self.prefix.setPlaceholderText('optional, e.g. sk-: a key not starting with it is refused')
+        form.addRow('Keys begin with', self.prefix)
+        note = QLabel('The API key is entered in the connection dialog and kept in the OS vault, never in this list.')
+        note.setWordWrap(True)
+        form.addRow(note)
+        self.error = QLabel()
+        self.error.setWordWrap(True)
+        form.addRow(self.error)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.save)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def save(self):
+        from . import providers
+        try:
+            self.saved_key = providers.save({'key': self.key, 'label': self.label.text(), 'base_url': self.url.text(),
+                                             'model': self.model.text(), 'thinking_backend': self.thinking.currentText(),
+                                             'key_prefix': self.prefix.text()})
+            self.accept()
+        except Exception as exc:
+            self.error.setText(str(exc))

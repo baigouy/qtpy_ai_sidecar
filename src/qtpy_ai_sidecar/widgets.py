@@ -802,8 +802,10 @@ class AssistantDock(QDockWidget):
         dialog.exec()
 
     def update_connection_label(self):
+        from . import providers
         config = self.engine.config
-        self.connection_label.setText(('Local model' if config.provider == 'local' else 'Remote API · ' + config.provider)
+        name = (providers.find(config.provider) or {}).get('label') or config.provider    # a user's provider by its name
+        self.connection_label.setText(('Local model' if config.provider == 'local' else 'Remote API · ' + name)
                                       + ' · ' + config.model)
 
     def show_context(self):
