@@ -14,7 +14,7 @@ runtime/
 chats/
 
 # local development notes and validation runs; only the two oracles the tests import are kept
-CLAUDE_HANDOFF.md
+CLAUDE_*.md
 validation/*
 !validation/pyfigures/
 validation/pyfigures/*
