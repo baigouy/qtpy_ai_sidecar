@@ -62,7 +62,7 @@ class PyFiguresAdapter:
               'inspect_panel_letters','get_annotations','get_figure_caption',
               'get_figure_properties','list_how_to_guides','explain_how',
               'explain_live_interaction','find_pyfigures_tools',
-              'list_pyfigures_categories','list_fonts'}
+              'list_pyfigures_categories','list_fonts','preview_panel','preview_luts'}
         if tool_name=='use_pyfigures_tool':
             return arguments.get('tool_name') in pure
         if tool_name in pure:return True
@@ -287,7 +287,7 @@ class PyFiguresAdapter:
             named = re.search(r'\bpanel\s+([a-z]|[0-9]+(?:/[0-9]+)*)(?!\w)', text, re.I)
             target = 'panel ' + named[1] if named else 'this panel'
             raise NeedsClarification(f'What would you like to add to {target}?\n- Tell me the annotation you want for {target}\n- Open the annotation editor for {target}\nNo annotation was added.')
-        read_only = operation and (operation.startswith(('inspect_', 'get_', 'list_', 'check_', 'describe_', 'audit_', 'explain_')) or operation in ('preview_figure', 'find_pyfigures_tools', 'readability'))
+        read_only = operation and (operation.startswith(('inspect_', 'get_', 'list_', 'check_', 'describe_', 'audit_', 'explain_')) or operation in ('preview_figure', 'preview_panel', 'preview_luts', 'find_pyfigures_tools', 'readability'))
         args = arguments.get('arguments', {}) if tool_name == 'use_pyfigures_tool' else arguments
         # "How do I export the source data?" asks for steps; a local model ran export_source_data
         # or consolidate_figure instead. Teaching is not permission to edit or write files.
