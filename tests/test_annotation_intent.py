@@ -114,6 +114,24 @@ def test_a_changed_channel_still_needs_a_named_lut():
         adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_lut',arguments={'panel_ref':'e','luts':['PURPLE','GREEN','BLUE']}),
                                    LUT_STATE,'Set panel e to use a blorple LUT.')
 
+def test_an_answer_to_the_models_question_keeps_the_original_request(tmp_path):
+    """'use magenta and green' -> 'Which one do you mean?' -> 'the merge panel (d)':
+    the colours were named one message earlier (Mistral Large 4, 2026-11-03)."""
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.engine import Engine
+    engine=Engine(Config(state_dir=str(tmp_path)),backend=object())
+    engine.messages+=[{'role':'user','content':'use magenta and green'},
+                      {'role':'assistant','content':'Which of these should become magenta and green: the channels, the labels or the ROI?'}]
+    text=engine._guard_text('the merge panel (d)')
+    assert text=='use magenta and green\nthe merge panel (d)'
+    adapter=PyFiguresAdapter('unused')
+    adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_lut',arguments={'panel_ref':'e','luts':['MAGENTA','GREEN',None]}),
+                               LUT_STATE,text)
+    # a new request after a finished reply (no question) is checked on its own
+    engine.messages.append({'role':'assistant','content':'Done: panel e uses magenta and green.'})
+    assert engine._guard_text('make panel e purple')=='make panel e purple'
+
+
 @pytest.mark.parametrize('call',[('remove_group',{'group_path':[5]}),('delete_last_rows',{'count':1})])
 def test_one_picture_never_removes_a_row(call):
     adapter=PyFiguresAdapter('unused')

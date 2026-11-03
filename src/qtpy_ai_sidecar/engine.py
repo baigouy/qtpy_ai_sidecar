@@ -110,7 +110,22 @@ class Engine:
                     "and the text-only reply was invalid. No further tool was submitted. "
                     "Earlier completed edits remain; inspect the current document before retrying."}
 
+    def _guard_text(self, text):
+        """The words the application's guards check a tool call against: this
+        request, plus the previous one when the model's last reply was a question
+        this request answers. ("use magenta and green" → "Which panel?" → "the
+        merge panel (d)": set_lut was refused because MAGENTA was not named in
+        the answer alone, Mistral Large 4, 2026-11-03.)"""
+        last_reply = next((m for m in reversed(self.messages) if m.get('role') == 'assistant'
+                           and isinstance(m.get('content'), str) and m['content'].strip()), None)
+        if last_reply is None or '?' not in last_reply['content'].strip()[-300:]:
+            return text
+        earlier = next((m['content'] for m in reversed(self.messages) if m.get('role') == 'user'
+                        and isinstance(m.get('content'), str) and not m['content'].startswith(('[', '{'))), None)
+        return earlier + '\n' + text if earlier else text
+
     async def turn(self, text, emit, preview=False):
+        guard_text = self._guard_text(text)
         self.record('user', text, emit)
         self.record('request_settings', {key: getattr(self.config, key) for key in (
             'provider', 'model', 'thinking_backend', 'thinking', 'thinking_strength',
@@ -292,7 +307,7 @@ class Engine:
                                     step_consumed=True
                                     emit('status',f'Running application tool - step {step + 1}')
                                     validator=getattr(self.adapter,'validate_tool_call',None)
-                                    if validator:validator(completion_tool,args['arguments'],state,text)
+                                    if validator:validator(completion_tool,args['arguments'],state,guard_text)
                                     if not discovery_call:
                                         discovery_results.clear();discovery_stalled=False
                                     self.journal.record('operation_intent',args)
