@@ -59,7 +59,7 @@ class Config:
         if self.thinking_backend == 'unsupported' and (self.thinking != 'default' or self.thinking_strength != 'default'):
             raise ValueError('Configure a supported thinking backend before overriding thinking')
         if self.provider not in ('local', 'openai', 'anthropic', 'openrouter', 'groq', 'iteracompute',
-                                 'nvidia', 'compatible'):
+                                 'nvidia', 'mistral', 'compatible'):
             raise ValueError('Unknown model provider')
         if self.runtime and self.provider != 'local':
             raise ValueError('Owned runtimes are available only in local mode')

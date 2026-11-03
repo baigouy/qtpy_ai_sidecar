@@ -116,6 +116,9 @@ class ModelClient:
                 payload['include_reasoning'] = False
             else:
                 payload['reasoning_format'] = 'hidden'
+        elif self.config.provider == 'mistral':
+            # stream_options is not among the request fields Mistral documents (2026-11-03)
+            payload.pop('stream_options')
         if tools:
             payload['tools'] = tools
             payload['parallel_tool_calls'] = False

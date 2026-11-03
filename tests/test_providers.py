@@ -28,6 +28,34 @@ def test_openrouter_transport(endpoint,monkeypatch):
     assert answer['content']=='Hello' and 'max_tokens' in received[0]
 
 
+def test_mistral_transport_and_vision(endpoint,monkeypatch):
+    """Mistral: no stream_options (not a documented field); vision read from
+    its keyed model list, where mistral-large-latest is an alias."""
+    import httpx
+    from qtpy_ai_sidecar import vision
+    url,received,chunks=endpoint
+    monkeypatch.setenv('SIDECAR_TEST_KEY','test-not-a-real-api-key')
+    chunks.append({'choices':[{'delta':{'content':'Hello'},'finish_reason':'stop'}]})
+    config=Config(provider='mistral',base_url=url,model='mistral-large-latest',api_key_env='SIDECAR_TEST_KEY')
+    answer,_=asyncio.run(ModelClient(config).complete([{'role':'user','content':'Hi'}],[],threading.Event(),lambda *args:None))
+    assert answer['content']=='Hello'
+    assert 'stream_options' not in received[0] and received[0]['model']=='mistral-large-latest'
+    seen=[]
+    class Reply:
+        def __init__(self,models):self.models=models
+        def json(self):return {'data':self.models}
+    models=[{'id':'mistral-large-2610','aliases':['mistral-large-latest'],'capabilities':{'vision':True}},
+            {'id':'codestral-latest','capabilities':{'vision':False}}]
+    monkeypatch.setattr(httpx,'get',lambda u,timeout=0,headers=None:seen.append((u,headers)) or Reply(models))
+    remote=Config(provider='mistral',base_url='https://api.mistral.ai/v1',model='mistral-large-latest',api_key_env='SIDECAR_TEST_KEY')
+    assert vision.detect(remote) is True
+    assert seen[0]==('https://api.mistral.ai/v1/models',{'Authorization':'Bearer test-not-a-real-api-key'})
+    remote.model='codestral-latest'
+    assert vision.detect(remote) is False
+    remote.model='unlisted'
+    assert vision.detect(remote) is False
+
+
 def test_groq_transport_vision_and_rate_limit(monkeypatch):
     """Groq (cloud Qwen3.8-27B): reasoning kept out of the text, previews sent
     by 'auto', and an HTTP 429 waited out and retried."""

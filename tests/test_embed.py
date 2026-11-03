@@ -69,11 +69,12 @@ def test_connection_dialog_groq_preset(tmp_path):
     candidate = dialog.candidate()
     assert candidate.base_url == 'https://openrouter.ai/api/v1' and candidate.model == 'openrouter/free'
     for provider, url, model in (('iteracompute', 'https://api.iteracompute.com/v1', 'qwen/qwen3.8-27b'),
-                                 ('nvidia', 'https://integrate.api.nvidia.com/v1', 'nvidia/nemotron-3.5-super-vl-120b-a12b')):
+                                 ('nvidia', 'https://integrate.api.nvidia.com/v1', 'nvidia/nemotron-3.5-super-vl-120b-a12b'),
+                                 ('mistral', 'https://api.mistral.ai/v1', 'mistral-large-latest')):
         dialog.provider.setCurrentIndex(dialog.provider.findData(provider))
         candidate = dialog.candidate()
         assert (candidate.provider, candidate.base_url, candidate.model) == (provider, url, model)
-        assert candidate.thinking_backend == ('reasoning_effort' if provider == 'iteracompute' else 'unsupported')
+        assert candidate.thinking_backend == ('unsupported' if provider == 'nvidia' else 'reasoning_effort')
     dialog.close()
 
 

@@ -55,7 +55,26 @@ def detect(config):
         return config.model in KNOWN_VISION_MODELS[config.provider]
     if getattr(config, 'provider', '') == 'openrouter':
         return bool(_openrouter_reports_vision(config.base_url, config.model))
+    if getattr(config, 'provider', '') == 'mistral':
+        return bool(_mistral_reports_vision(config))
     return False
+
+
+def _mistral_reports_vision(config, timeout=5):
+    """Mistral's model list (it needs the key) gives capabilities.vision per
+    model, aliases such as mistral-large-latest included; None when it cannot tell."""
+    import httpx
+    from .credentials import get_key
+    try:
+        reply = httpx.get(config.base_url.rstrip('/') + '/models', timeout=timeout,
+                          headers={'Authorization': 'Bearer ' + get_key(config)})
+        models = reply.json().get('data', [])
+    except Exception:
+        return None
+    for m in models:
+        if m.get('id') == config.model or config.model in (m.get('aliases') or []):
+            return bool((m.get('capabilities') or {}).get('vision'))
+    return None
 
 
 def _openrouter_reports_vision(base_url, model, timeout=5):

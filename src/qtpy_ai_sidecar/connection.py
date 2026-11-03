@@ -8,7 +8,7 @@ PRESETS = {'local': 'http://127.0.0.1:1234/v1', 'openai': 'https://api.openai.co
            'anthropic': 'https://api.anthropic.com/v1', 'openrouter': 'https://openrouter.ai/api/v1',
            'groq': 'https://api.groq.com/openai/v1',
            'iteracompute': 'https://api.iteracompute.com/v1', 'nvidia': 'https://integrate.api.nvidia.com/v1',
-           'compatible': 'https://your-provider.example/v1'}
+           'mistral': 'https://api.mistral.ai/v1', 'compatible': 'https://your-provider.example/v1'}
 # the model filled in when a provider is chosen: on OpenRouter a free model
 # that reads images, calls tools and has a 1M-token context (checked
 # 2026-11-02; thinkingmachines/inkling:free is refused to apps not on
@@ -16,9 +16,11 @@ PRESETS = {'local': 'http://127.0.0.1:1234/v1', 'openai': 'https://api.openai.co
 # small for a turn with an application's tools, its paid tier is not
 # Free tiers listed at github.com/nejib1/Free-LLM (2026-11-03): IteraCompute's
 # model list marks qwen/qwen3.8-27b free; NVIDIA NIM lists the Nemotron VL id
-# (Hetzner's inference API, listed there too, turned out not to be free)
+# (Hetzner's inference API, listed there too, turned out not to be free);
+# Mistral's alias for its current Large model (docs.mistral.ai, 2026-11-03)
 DEFAULT_MODELS = {'openrouter': 'openrouter/free', 'groq': 'qwen/qwen3.8-27b',
-                  'iteracompute': 'qwen/qwen3.8-27b', 'nvidia': 'nvidia/nemotron-3.5-super-vl-120b-a12b'}
+                  'iteracompute': 'qwen/qwen3.8-27b', 'nvidia': 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+                  'mistral': 'mistral-large-latest'}
 
 
 class ConnectionDialog(QDialog):
@@ -31,7 +33,7 @@ class ConnectionDialog(QDialog):
         for key, label in [('local', 'Local model (preferred)'), ('openai', 'OpenAI API'), ('anthropic', 'Claude / Anthropic API'),
                            ('openrouter', 'OpenRouter (free router, recommended)'), ('groq', 'Groq (paid tier)'),
                            ('iteracompute', 'IteraCompute (free Qwen3.8-27B, slow)'), ('nvidia', 'NVIDIA NIM (free)'),
-                           ('compatible', 'Custom OpenAI-compatible API')]:
+                           ('mistral', 'Mistral AI API'), ('compatible', 'Custom OpenAI-compatible API')]:
             self.provider.addItem(label, key)
         self.provider.setCurrentIndex(self.provider.findData(config.provider))
         form.addRow('Provider', self.provider)
@@ -77,7 +79,7 @@ class ConnectionDialog(QDialog):
         provider = self.provider.currentData()
         self.url.setText(PRESETS[provider])
         self.capability.setCurrentText({'local': 'llama_cpp', 'openai': 'reasoning_effort', 'groq': 'reasoning_effort',
-                                        'iteracompute': 'reasoning_effort',
+                                        'iteracompute': 'reasoning_effort', 'mistral': 'reasoning_effort',
                                         'anthropic': 'anthropic_adaptive'}.get(provider, 'unsupported'))
         if provider in DEFAULT_MODELS and (not self.model.text().strip() or self.model.text().strip() in DEFAULT_MODELS.values()
                                            or provider != self.config.provider):
