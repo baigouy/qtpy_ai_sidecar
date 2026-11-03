@@ -40,6 +40,13 @@ def test_mistral_transport_and_vision(endpoint,monkeypatch):
     answer,_=asyncio.run(ModelClient(config).complete([{'role':'user','content':'Hi'}],[],threading.Event(),lambda *args:None))
     assert answer['content']=='Hello'
     assert 'stream_options' not in received[0] and received[0]['model']=='mistral-large-latest'
+    # Mistral Large 4 streams content as typed chunks: thinking kept out of the reply
+    chunks.clear()
+    chunks.append({'choices':[{'delta':{'content':[{'type':'thinking','thinking':[{'type':'text','text':'Hmm.'}]}]},'finish_reason':None}]})
+    chunks.append({'choices':[{'delta':{'content':[{'type':'text','text':'Hel'}]},'finish_reason':None}]})
+    chunks.append({'choices':[{'delta':{'content':'lo'},'finish_reason':'stop'}]})
+    answer,_=asyncio.run(ModelClient(config).complete([{'role':'user','content':'Hi'}],[],threading.Event(),lambda *args:None))
+    assert answer['content']=='Hello' and 'Hmm.' not in answer['content']
     seen=[]
     class Reply:
         def __init__(self,models):self.models=models

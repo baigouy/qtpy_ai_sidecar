@@ -54,6 +54,24 @@ def rate_limit_wait(headers, attempt):
     return min(30.0, 2.0 * 2 ** attempt)
 
 
+def content_parts(content):
+    """(text, thinking) of a streamed delta's content: a string for most
+    servers; Mistral sends a list of typed chunks instead, such as
+    {'type': 'text', 'text': …} and {'type': 'thinking', 'thinking': [chunks]}
+    (mistral-large-4, 2026-11-03)."""
+    if not isinstance(content, list):
+        return content or '', ''
+    text, thinking = '', ''
+    for part in content:
+        if not isinstance(part, dict):
+            text += str(part)
+        elif part.get('type') == 'thinking':
+            thinking += content_parts(part.get('thinking'))[0]
+        elif part.get('type') == 'text':
+            text += part.get('text') or ''
+    return text, thinking
+
+
 def apply_reasoning_strength(transport, config, final_only, emit):
     """Strength-only templates ignore enable_thinking and reasoning_effort; they read a system
     line instead. 'Off' cannot be honoured there, so it becomes the lowest strength."""
@@ -182,9 +200,9 @@ class ModelClient:
                             choice = choices[0]
                             finish = choice.get('finish_reason') or finish
                             delta = choice.get('delta') or {}
-                            addition = delta.get('content') or ''
+                            addition, thought = content_parts(delta.get('content'))
                             text += addition
-                            reasoning += delta.get('reasoning_content') or ''
+                            reasoning += (delta.get('reasoning_content') or '') + thought
                             for part in delta.get('tool_calls') or []:
                                 item = calls.setdefault(part['index'], {'id': '', 'type': 'function',
                                     'function': {'name': '', 'arguments': ''}})
