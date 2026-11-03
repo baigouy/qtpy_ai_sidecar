@@ -29,9 +29,37 @@ READS_IMAGES = '  (reads images)'
 KEY_PREFIXES = {'openrouter': 'sk-or-', 'anthropic': 'sk-ant-', 'groq': 'gsk_', 'nvidia': 'nvapi-'}
 
 
+def one_name_per_model(models, current=''):
+    """Mistral lists every alias as a model of its own (mistral-medium had eight
+    names): keep one entry per model, named by the current model when it is one
+    of them, else its '-latest' alias, else its shortest name."""
+    kept, seen = [], set()
+    for m in models:
+        names = {n for n in [m.get('id'), *(m.get('aliases') or [])] if n}
+        if not names or names & seen:
+            continue
+        seen |= names
+        latest = sorted((n for n in names if n.endswith('-latest')), key=len)
+        name = current if current in names else (latest or sorted(names, key=lambda n: (len(n), n)))[0]
+        kept.append(dict(m, id=name))
+    return kept
+
+
+def model_info(m):
+    """What a provider's model list says of one model: reads images, thinks,
+    context window (None when it does not say). Mistral: capabilities.vision /
+    .reasoning and max_context_length; OpenRouter: architecture.input_modalities,
+    supported_parameters and context_length."""
+    caps = m.get('capabilities') or {}
+    params = m.get('supported_parameters') or []
+    return {'vision': bool(caps.get('vision') or 'image' in (m.get('architecture') or {}).get('input_modalities', [])),
+            'reasoning': bool(caps.get('reasoning') or 'reasoning' in params or 'include_reasoning' in params),
+            'context': m.get('max_context_length') or m.get('context_length') or m.get('context_window')}
+
+
 def list_models(config, key=''):
-    """(model ids, ids that read images) from the provider's /models for this
-    key (else the stored one); free ones first when the provider marks them.
+    """(model ids, {id: model_info}) from the provider's /models for this key
+    (else the stored one); free ones first when the provider marks them.
     Raises with the provider's answer. Used by 'List models…' and the
     composer's model picker."""
     import httpx
@@ -47,9 +75,10 @@ def list_models(config, key=''):
     # embedding, OCR or speech models) and note which read images
     models = [m for m in models if 'capabilities' not in m
               or (m['capabilities'].get('completion_chat') and m['capabilities'].get('function_calling'))]
-    vision = {m['id'] for m in models if (m.get('capabilities') or {}).get('vision')}
+    models = one_name_per_model(models, config.model)
+    info = {m['id']: model_info(m) for m in models}
     free = [m['id'] for m in models if m.get('is_free') or str(m.get('id', '')).endswith(':free')]
-    return free + sorted(m['id'] for m in models if m.get('id') and m['id'] not in free), vision
+    return free + sorted(m['id'] for m in models if m.get('id') and m['id'] not in free), info
 
 
 class ConnectionDialog(QDialog):
@@ -132,7 +161,8 @@ class ConnectionDialog(QDialog):
     def available_models(self):
         """Model ids the provider's /models lists for this key (free ones first
         when the provider marks them), or raises with the provider's answer."""
-        models, self.vision_models = list_models(self.candidate(require_model=False), self.key.text().strip())
+        models, info = list_models(self.candidate(require_model=False), self.key.text().strip())
+        self.vision_models = {m for m, i in info.items() if i['vision']}
         return models
 
     def choose_model(self):

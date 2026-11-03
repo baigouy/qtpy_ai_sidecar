@@ -83,27 +83,60 @@ def test_model_picker_in_composer_lists_switches_and_shows_key_state(tmp_path, m
     assert picker.isVisible() and picker.itemText(0) == 'mistral-large-4' + picker.NO_KEY
     assert 'No API key' in picker.toolTip()
     asked = []
+    info = {'mistral-large-4': {'vision': True, 'reasoning': True, 'context': 1048576},
+            'zai-glm-latest': {'vision': False, 'reasoning': True, 'context': 131072}}
     monkeypatch.setattr(connection, 'list_models', lambda c: asked.append(c.model) or
-                        (['mistral-large-4', 'zai-glm-latest'], {'mistral-large-4'}))
+                        (['mistral-large-4', 'zai-glm-latest'], info))
     monkeypatch.setattr(QComboBox, 'showPopup', lambda self: None)  # no real popup offscreen
     from qtpy_ai_sidecar.widgets import ModelPicker
     ModelPicker.showPopup(picker)
     assert asked == [] and 'No API key' in dock.status.text()       # nothing asked without a key
     stored['mistral'] = 'test-not-a-real-key'
-    dock.replace_engine(config)
-    assert picker.itemText(0) == 'mistral-large-4' and 'stored' in picker.toolTip()
+    dock.replace_engine(config)                                      # the list comes in the background
+    assert 'stored' in picker.toolTip()
+    for _ in range(200):
+        app.processEvents()
+        if picker.loaded_for:
+            break
+        time.sleep(.01)
+    assert asked == ['mistral-large-4']
     dock.add_message('user', 'Earlier message')
     before = len(dock.engine.messages)
     ModelPicker.showPopup(picker)
-    assert asked == ['mistral-large-4']
-    assert [picker.itemText(i) for i in range(picker.count())] == ['mistral-large-4  (reads images)', 'zai-glm-latest']
+    assert asked == ['mistral-large-4']                              # not asked again
+    assert [picker.itemText(i) for i in range(picker.count())] == ['mistral-large-4', 'zai-glm-latest']
+    tips = [picker.itemData(i, Qt.ItemDataRole.ToolTipRole) for i in range(2)]
+    assert tips == ['mistral-large-4: reads images, thinks before answering, context window 1,048,576 tokens',
+                    'zai-glm-latest: text only, thinks before answering, context window 131,072 tokens']
+    assert 'model window 1,048,576' in dock.context.text() and 'smaller' not in dock.context.text()
+    assert picker.view().minimumWidth() > picker.view().fontMetrics().horizontalAdvance('mistral-large-4')
+    assert picker.view().textElideMode() == Qt.TextElideMode.ElideMiddle      # the name's end stays visible
+    assert 'stored' in picker.key_label.toolTip()
     picker.activated.emit(1)
     assert dock.engine.config.model == 'zai-glm-latest' and 'zai-glm-latest' in dock.connection_label.text()
     assert len(dock.engine.messages) == before                     # conversation kept
+    dock.engine.config.context_tokens = 200000
+    dock.show_context()
+    assert 'model window 131,072 — smaller than the setting' in dock.context.text()
     import json
     assert json.loads((tmp_path / 'connection.json').read_text(encoding='utf-8'))['model'] == 'zai-glm-latest'
     dock.shutdown()
     dock.close()
+
+
+def test_model_aliases_are_listed_once():
+    """Mistral lists each alias as its own model: one entry per model, named
+    by the current model, else its -latest alias, else the shortest name."""
+    from qtpy_ai_sidecar.connection import one_name_per_model
+    models = [{'id': 'mistral-medium-latest', 'aliases': ['mistral-medium', 'mistral-medium-2604']},
+              {'id': 'mistral-medium', 'aliases': ['mistral-medium-latest', 'mistral-medium-2604']},
+              {'id': 'mistral-large-4', 'aliases': ['mistral-large-4-0']},
+              {'id': 'mistral-large-4-0', 'aliases': ['mistral-large-4']},
+              {'id': 'zai-glm-5-3', 'aliases': ['zai-glm-5', 'zai-glm-latest']},
+              {'id': 'zai-glm-5-3-flash', 'aliases': []}]
+    names = [m['id'] for m in one_name_per_model(models)]
+    assert names == ['mistral-medium-latest', 'mistral-large-4', 'zai-glm-latest', 'zai-glm-5-3-flash']
+    assert [m['id'] for m in one_name_per_model(models, 'zai-glm-5')][2] == 'zai-glm-5'
 
 
 def test_completion_summary_is_not_choices():

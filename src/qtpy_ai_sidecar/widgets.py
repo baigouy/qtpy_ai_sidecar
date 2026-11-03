@@ -7,8 +7,8 @@ import re
 import threading
 import time
 import sys
-from qtpy.QtCore import Qt, Signal, QTimer
-from qtpy.QtGui import QImage, QPixmap, QFont
+from qtpy.QtCore import Qt, Signal, QTimer, QSize
+from qtpy.QtGui import QImage, QPixmap, QFont, QIcon, QPainter
 from qtpy.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QFrame, QLabel, QTextBrowser, QPlainTextEdit, QPushButton, QProgressBar,
     QFileDialog, QCheckBox, QSizePolicy, QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QSlider)
@@ -42,17 +42,43 @@ def choices(text):
     return result if 2 <= len(result) <= 8 else []
 
 
+def badges(details):
+    """An eye (reads images) and a brain (thinks) side by side, in fixed slots
+    so the names line up."""
+    pixmap = QPixmap(34, 16)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    if details.get('vision'):
+        painter.drawPixmap(0, 0, qta.icon('fa5s.eye', color='#72533e').pixmap(16, 16))
+    if details.get('reasoning'):
+        painter.drawPixmap(18, 0, qta.icon('fa5s.brain', color='#9a6fb0').pixmap(16, 16))
+    painter.end()
+    return QIcon(pixmap)
+
+
 class ModelPicker(QComboBox):
     """The model of the current connection, chosen in the composer. The
-    provider's model list is asked for when the list is first opened (not at
-    start-up: it needs the network and the key)."""
+    provider's model list is asked for in the background once the key is known
+    (or when the list is opened before it came): it marks the models that read
+    images or think, and gives the model's context window."""
+    listed = Signal(object, object, object, object)     # (provider, url), ids, info, error
+
     def __init__(self, dock):
         super().__init__()
         self.dock = dock
         self.loaded_for = None
+        self.has_key = None
+        self.info = {}
+        self.setIconSize(QSize(34, 16))
+        self.listed.connect(self.received)
         self.setAccessibleName('Model')
-        self.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        self.setMinimumContentsLength(8)
+        # the closed picker fits the current name (set in fit()), not the longest one listed
+        self.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        # the list fits its longest name; a name too long for the screen loses its middle,
+        # never its end (the version: -4, -flash, -2512…)
+        self.view().setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.key_label = QLabel()                 # the API key state, beside the picker
+        self.key_label.setAccessibleName('API key state')
         self.activated.connect(self.chosen)
 
     NO_KEY = '  (no API key)'
@@ -68,46 +94,100 @@ class ModelPicker(QComboBox):
         self.addItem(config.model + (self.NO_KEY if self.has_key is False else ''), config.model)
         self.blockSignals(False)
         self.loaded_for = None
-        self.setVisible(config.provider != 'local')     # local models: Model Library
+        self.info = {}
+        visible = config.provider != 'local'     # local models: Model Library
+        self.setVisible(visible)
+        self.key_label.setVisible(visible)
         self.show_key_state()
+        if visible and self.has_key is not False:
+            self.load_in_background()
+
+    def connection(self):
+        config = self.dock.engine.config
+        return config.provider, config.base_url
+
+    def load_in_background(self):
+        import copy
+        config, picker = copy.copy(self.dock.engine.config), self
+
+        def work():
+            from .connection import list_models
+            try:
+                models, info, error = *list_models(config), None
+            except Exception as exc:
+                models, info, error = None, None, str(exc)
+            try:
+                picker.listed.emit((config.provider, config.base_url), models, info, error)
+            except RuntimeError:
+                pass                       # the dock was closed meanwhile
+        threading.Thread(target=work, daemon=True).start()
+
+    def received(self, connection, models, info, error):
+        if connection != self.connection() or self.loaded_for == connection:
+            return                         # an older connection's answer, or already filled
+        if error is None:
+            self.fill(models, info)
+            self.dock.show_context()
+
+    def fill(self, models, info):
+        config = self.dock.engine.config
+        models = list(models)
+        if config.model not in models:
+            models.insert(0, config.model)
+        self.info = info
+        self.blockSignals(True)
+        self.clear()
+        for model in models:
+            details = info.get(model, {})
+            tip = ['reads images' if details.get('vision') else 'text only']
+            if details.get('reasoning'):
+                tip.append('thinks before answering')
+            if details.get('context'):
+                tip.append(f"context window {details['context']:,} tokens")
+            self.addItem(badges(details), model, model)
+            self.setItemData(self.count() - 1, model + ': ' + ', '.join(tip), Qt.ItemDataRole.ToolTipRole)
+        self.setCurrentIndex(models.index(config.model))
+        self.blockSignals(False)
+        self.show_key_state()
+        self.loaded_for = self.connection()
+
+    def fit(self):
+        self.setMinimumContentsLength(min(30, max(8, len(self.currentText()))))
+        self.adjustSize()
 
     def show_key_state(self):
         model = self.dock.engine.config.model
         if self.has_key is None:
-            self.setItemIcon(self.currentIndex(), qta.icon('fa5s.server', color='#72533e'))
-            self.setToolTip(f'Model · {model}\nLocal server: no API key needed')
+            icon, tip = qta.icon('fa5s.server', color='#72533e'), 'Local server: no API key needed'
         elif self.has_key:
-            self.setItemIcon(self.currentIndex(), qta.icon('fa5s.key', color='#3d8b40'))
-            self.setToolTip(f'Model · {model}\nAPI key stored in the OS vault')
+            icon, tip = qta.icon('fa5s.key', color='#3d8b40'), 'API key stored in the OS vault'
         else:
-            self.setItemIcon(self.currentIndex(), qta.icon('fa5s.key', color='#c0392b'))
-            self.setToolTip(f'Model · {model}\nNo API key stored: add it with the plug button above')
+            icon, tip = qta.icon('fa5s.key', color='#c0392b'), 'No API key stored: add it with the plug button above'
+        self.key_label.setPixmap(icon.pixmap(16, 16))
+        self.key_label.setToolTip(tip)
+        self.setToolTip(f'Model · {model}\n{tip}')
+        self.fit()
 
     def showPopup(self):
         config = self.dock.engine.config
         if self.has_key is False:
             self.dock.status.setText('No API key stored for this connection: add it with the plug button above.')
-        elif self.loaded_for != (config.provider, config.base_url):
+        elif self.loaded_for != self.connection():      # opened before the background answer
             from qtpy.QtGui import QGuiApplication
-            from .connection import list_models, READS_IMAGES
+            from .connection import list_models
             QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
-                models, vision = list_models(config)
+                self.fill(*list_models(config))
+                self.dock.show_context()
             except Exception as exc:
-                models, vision = [], set()
                 self.dock.status.setText('Could not list models: ' + str(exc)[:300])
             finally:
                 QGuiApplication.restoreOverrideCursor()
-            if config.model not in models:
-                models.insert(0, config.model)
-            self.blockSignals(True)
-            self.clear()
-            for model in models:
-                self.addItem(model + READS_IMAGES if model in vision else model, model)
-            self.setCurrentIndex(models.index(config.model))
-            self.blockSignals(False)
-            self.show_key_state()
-            self.loaded_for = (config.provider, config.base_url)
+        # wide enough for the longest name (+ icon and scroll bar), within the screen
+        metrics = self.view().fontMetrics()
+        widest = max((metrics.horizontalAdvance(self.itemText(i)) for i in range(self.count())), default=0)
+        screen = self.screen().availableGeometry().width() if self.screen() else 1600
+        self.view().setMinimumWidth(min(widest + self.iconSize().width() + 48, screen - 40))
         super().showPopup()
 
     def chosen(self, index):
@@ -308,6 +388,7 @@ class AssistantDock(QDockWidget):
         controls.addStretch()
         self.model_picker = ModelPicker(self)
         self.model_picker.sync()
+        controls.addWidget(self.model_picker.key_label)
         controls.addWidget(self.model_picker)
         controls.addWidget(self.thinking_controls)
         self.send_button = QPushButton(qta.icon('fa5s.arrow-up', color='#fffdf9'), '')
@@ -327,9 +408,10 @@ class AssistantDock(QDockWidget):
         self.progress.setMaximumHeight(6)
         self.progress.hide()
         root.addWidget(self.progress)
-        self.context = QLabel(f'Context: estimated usage shown after a request · capacity {config.context_tokens:,}')
+        self.context = QLabel()
         self.context.setWordWrap(True)
         root.addWidget(self.context)
+        self.show_context()
         # always shown: the host may word it for its own risks (config.notice)
         self.notice = QLabel('⚠ ' + (config.notice.strip() or DEFAULT_NOTICE))
         self.notice.setObjectName('modelNotice')
@@ -441,7 +523,8 @@ class AssistantDock(QDockWidget):
             self.activity_text = f"Generating · {value['characters']:,} characters"
             self.tick()
         elif kind == 'context':
-            self.context.setText(f"Context ≈ {value['estimated_tokens']:,} / {value['context_tokens']:,} tokens · output limit {value['output_tokens']:,}")
+            self.context_estimate = value['estimated_tokens']
+            self.show_context()
         elif kind == 'usage':
             self.context.setText('Server usage: ' + json.dumps(value))
         elif kind == 'compression':
@@ -696,6 +779,7 @@ class AssistantDock(QDockWidget):
                 error.setText('Thinking budget must not exceed the total output limit.')
                 return
             config.context_tokens, config.output_tokens = context.value(), output.value()
+            self.show_context()
             config.thinking_budget = budget.value()
             config.generation_timeout_seconds = response_time.value()
             config.max_steps=steps.value()
@@ -719,6 +803,21 @@ class AssistantDock(QDockWidget):
         self.connection_label.setText(('Local model' if config.provider == 'local' else 'Remote API · ' + config.provider)
                                       + ' · ' + config.model)
 
+    def show_context(self):
+        """Estimated use (characters / 3) of the Context tokens setting, and the
+        model's own window when its provider says it (it is not the setting)."""
+        config = self.engine.config
+        estimate = getattr(self, 'context_estimate', None)
+        text = (f'Context ≈ {estimate:,} / {config.context_tokens:,} tokens' if estimate is not None
+                else f'Context: estimated usage shown after a request · setting {config.context_tokens:,} tokens')
+        text += f' · output limit {config.output_tokens:,}'
+        window = self.model_picker.info.get(config.model, {}).get('context') if hasattr(self, 'model_picker') else None
+        if window:
+            text += f' · model window {window:,}'
+            if window < config.context_tokens:
+                text += ' — smaller than the setting: lower Context tokens (gear button)'
+        self.context.setText(text)
+
     def change_model(self, model):
         """Another model of the same connection (same address and key): the
         conversation goes on; whether it reads images is asked again."""
@@ -731,6 +830,7 @@ class AssistantDock(QDockWidget):
         self.engine._sees_images = None
         self.update_connection_label()
         self.model_picker.show_key_state()
+        self.show_context()
         self.status.setText('Model: ' + model)
 
     def replace_engine(self, config):
@@ -740,7 +840,9 @@ class AssistantDock(QDockWidget):
             close()
         self.engine = Engine(config, adapter)
         self.sync_thinking_controls()
+        self.context_estimate = None
         self.model_picker.sync()
+        self.show_context()
         self.last_assistant = ''
         self.clear_choices()
         self.update_connection_label()
