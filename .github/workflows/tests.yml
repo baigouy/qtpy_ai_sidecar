@@ -5,11 +5,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        # macOS runs only when started by hand (Actions > Run workflow): its runner
+        # was never assigned here, and a cancelled job marks every commit as failed.
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["windows-latest","macos-latest","ubuntu-latest"]' || '["windows-latest","ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
-    # macOS runners are metered and may never be assigned (job cancelled with no
-    # steps): report macOS, but do not let it turn the whole run red.
     continue-on-error: ${{ matrix.os == 'macos-latest' }}
     env:
       QT_QPA_PLATFORM: offscreen
