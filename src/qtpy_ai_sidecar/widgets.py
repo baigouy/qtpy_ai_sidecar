@@ -42,6 +42,78 @@ def choices(text):
     return result if 2 <= len(result) <= 8 else []
 
 
+class ModelPicker(QComboBox):
+    """The model of the current connection, chosen in the composer. The
+    provider's model list is asked for when the list is first opened (not at
+    start-up: it needs the network and the key)."""
+    def __init__(self, dock):
+        super().__init__()
+        self.dock = dock
+        self.loaded_for = None
+        self.setAccessibleName('Model')
+        self.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.setMinimumContentsLength(8)
+        self.activated.connect(self.chosen)
+
+    NO_KEY = '  (no API key)'
+
+    def sync(self):
+        """Show the current model only, until the list is opened again, and
+        whether the connection's API key is stored."""
+        from .credentials import key_state
+        config = self.dock.engine.config
+        self.has_key = key_state(config)
+        self.blockSignals(True)
+        self.clear()
+        self.addItem(config.model + (self.NO_KEY if self.has_key is False else ''), config.model)
+        self.blockSignals(False)
+        self.loaded_for = None
+        self.setVisible(config.provider != 'local')     # local models: Model Library
+        self.show_key_state()
+
+    def show_key_state(self):
+        model = self.dock.engine.config.model
+        if self.has_key is None:
+            self.setItemIcon(self.currentIndex(), qta.icon('fa5s.server', color='#72533e'))
+            self.setToolTip(f'Model · {model}\nLocal server: no API key needed')
+        elif self.has_key:
+            self.setItemIcon(self.currentIndex(), qta.icon('fa5s.key', color='#3d8b40'))
+            self.setToolTip(f'Model · {model}\nAPI key stored in the OS vault')
+        else:
+            self.setItemIcon(self.currentIndex(), qta.icon('fa5s.key', color='#c0392b'))
+            self.setToolTip(f'Model · {model}\nNo API key stored: add it with the plug button above')
+
+    def showPopup(self):
+        config = self.dock.engine.config
+        if self.has_key is False:
+            self.dock.status.setText('No API key stored for this connection: add it with the plug button above.')
+        elif self.loaded_for != (config.provider, config.base_url):
+            from qtpy.QtGui import QGuiApplication
+            from .connection import list_models, READS_IMAGES
+            QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                models, vision = list_models(config)
+            except Exception as exc:
+                models, vision = [], set()
+                self.dock.status.setText('Could not list models: ' + str(exc)[:300])
+            finally:
+                QGuiApplication.restoreOverrideCursor()
+            if config.model not in models:
+                models.insert(0, config.model)
+            self.blockSignals(True)
+            self.clear()
+            for model in models:
+                self.addItem(model + READS_IMAGES if model in vision else model, model)
+            self.setCurrentIndex(models.index(config.model))
+            self.blockSignals(False)
+            self.show_key_state()
+            self.loaded_for = (config.provider, config.base_url)
+        super().showPopup()
+
+    def chosen(self, index):
+        self.dock.change_model(self.itemData(index))
+
+
 def markdown_to_plain(text):
     """The text of one line of Markdown, without its formatting marks."""
     from qtpy.QtGui import QTextDocument
@@ -234,6 +306,9 @@ class AssistantDock(QDockWidget):
         self.inspect_ack.hide()
         root.addWidget(self.inspect_ack)
         controls.addStretch()
+        self.model_picker = ModelPicker(self)
+        self.model_picker.sync()
+        controls.addWidget(self.model_picker)
         controls.addWidget(self.thinking_controls)
         self.send_button = QPushButton(qta.icon('fa5s.arrow-up', color='#fffdf9'), '')
         self.send_button.setObjectName('composerSend')
@@ -488,6 +563,8 @@ class AssistantDock(QDockWidget):
         self.thinking_value.setText(config.thinking_strength.capitalize())
         supported = config.thinking_backend != 'unsupported'
         self.thinking_mode.setEnabled(supported and not self.busy)
+        if hasattr(self, 'model_picker'):
+            self.model_picker.setEnabled(not self.busy)
         self.thinking_slider.setEnabled(supported and not self.busy and config.thinking != 'disabled')
         tip = 'Default means backend default, not Low. Strength is a model-dependent hint; some models ignore it.' if supported else 'This backend does not expose thinking controls.'
         # A strength-only template (e.g. Muse-Glimmer) always reasons: 'Off' would be a false promise.
@@ -642,6 +719,20 @@ class AssistantDock(QDockWidget):
         self.connection_label.setText(('Local model' if config.provider == 'local' else 'Remote API · ' + config.provider)
                                       + ' · ' + config.model)
 
+    def change_model(self, model):
+        """Another model of the same connection (same address and key): the
+        conversation goes on; whether it reads images is asked again."""
+        config = self.engine.config
+        if self.busy or not model or model == config.model:
+            self.model_picker.setCurrentIndex(max(0, self.model_picker.findData(config.model)))
+            return
+        config.model = model
+        config.save_connection()
+        self.engine._sees_images = None
+        self.update_connection_label()
+        self.model_picker.show_key_state()
+        self.status.setText('Model: ' + model)
+
     def replace_engine(self, config):
         adapter = self.engine.adapter
         close = getattr(self.engine.backend, 'close', None)
@@ -649,6 +740,7 @@ class AssistantDock(QDockWidget):
             close()
         self.engine = Engine(config, adapter)
         self.sync_thinking_controls()
+        self.model_picker.sync()
         self.last_assistant = ''
         self.clear_choices()
         self.update_connection_label()

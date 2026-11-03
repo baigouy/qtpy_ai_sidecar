@@ -28,6 +28,19 @@ def identity(config):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def key_state(config):
+    """True when a key is available for this connection, False when one is
+    needed and missing, None when none is needed (local models and servers).
+    The key itself is not returned."""
+    if config.provider == 'local' or (config.provider == 'compatible' and not config.api_key_env
+                                      and urlsplit(config.base_url).hostname in ('127.0.0.1', 'localhost', '::1')):
+        return None
+    try:
+        return bool(get_key(config))
+    except (ValueError, RuntimeError):
+        return False
+
+
 def set_key(config, value):
     validate_endpoint(config.base_url)
     if not value.strip():

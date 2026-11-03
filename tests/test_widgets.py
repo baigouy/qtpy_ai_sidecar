@@ -1,5 +1,5 @@
 import time
-from qtpy.QtWidgets import QApplication
+from qtpy.QtWidgets import QApplication, QComboBox
 from qtpy.QtCore import Qt
 from qtpy.QtTest import QTest
 from qtpy_ai_sidecar.config import Config
@@ -60,6 +60,48 @@ def test_markdown_in_choices_is_formatted_and_sent_as_plain_text(tmp_path):
     assert dock.choice_buttons[0].toolTip() == 'Add images — give me the paths'
     dock.choice_buttons[1].click()
     assert dock.input.toPlainText() == 'Lay out a grid first — placeholder panels'
+    dock.shutdown()
+    dock.close()
+
+
+def test_model_picker_in_composer_lists_switches_and_shows_key_state(tmp_path, monkeypatch):
+    """The composer's model picker: hidden for local models; says whether the
+    API key is stored; lists the provider's models when opened; switching keeps
+    the conversation and is saved."""
+    from qtpy_ai_sidecar import connection, credentials
+    app = QApplication.instance() or QApplication([])
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
+    dock.show()
+    assert dock.model_picker.isHidden()                       # local: Model Library chooses
+    stored = {}
+    monkeypatch.setattr(credentials, 'get_key', lambda config: stored.get(config.provider) or
+                        (_ for _ in ()).throw(ValueError('No API key stored')))
+    config = Config(application='Demo', state_dir=str(tmp_path), provider='mistral',
+                    base_url='https://api.mistral.ai/v1', model='mistral-large-4')
+    dock.replace_engine(config)
+    picker = dock.model_picker
+    assert picker.isVisible() and picker.itemText(0) == 'mistral-large-4' + picker.NO_KEY
+    assert 'No API key' in picker.toolTip()
+    asked = []
+    monkeypatch.setattr(connection, 'list_models', lambda c: asked.append(c.model) or
+                        (['mistral-large-4', 'zai-glm-latest'], {'mistral-large-4'}))
+    monkeypatch.setattr(QComboBox, 'showPopup', lambda self: None)  # no real popup offscreen
+    from qtpy_ai_sidecar.widgets import ModelPicker
+    ModelPicker.showPopup(picker)
+    assert asked == [] and 'No API key' in dock.status.text()       # nothing asked without a key
+    stored['mistral'] = 'test-not-a-real-key'
+    dock.replace_engine(config)
+    assert picker.itemText(0) == 'mistral-large-4' and 'stored' in picker.toolTip()
+    dock.add_message('user', 'Earlier message')
+    before = len(dock.engine.messages)
+    ModelPicker.showPopup(picker)
+    assert asked == ['mistral-large-4']
+    assert [picker.itemText(i) for i in range(picker.count())] == ['mistral-large-4  (reads images)', 'zai-glm-latest']
+    picker.activated.emit(1)
+    assert dock.engine.config.model == 'zai-glm-latest' and 'zai-glm-latest' in dock.connection_label.text()
+    assert len(dock.engine.messages) == before                     # conversation kept
+    import json
+    assert json.loads((tmp_path / 'connection.json').read_text(encoding='utf-8'))['model'] == 'zai-glm-latest'
     dock.shutdown()
     dock.close()
 

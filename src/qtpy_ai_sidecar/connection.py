@@ -29,6 +29,29 @@ READS_IMAGES = '  (reads images)'
 KEY_PREFIXES = {'openrouter': 'sk-or-', 'anthropic': 'sk-ant-', 'groq': 'gsk_', 'nvidia': 'nvapi-'}
 
 
+def list_models(config, key=''):
+    """(model ids, ids that read images) from the provider's /models for this
+    key (else the stored one); free ones first when the provider marks them.
+    Raises with the provider's answer. Used by 'List models…' and the
+    composer's model picker."""
+    import httpx
+    if not key and config.provider != 'local':
+        from .credentials import get_key
+        key = get_key(config) or ''
+    reply = httpx.get(config.base_url.rstrip('/') + '/models', timeout=20,
+                      headers={'Authorization': 'Bearer ' + key} if key else {})
+    if reply.status_code >= 400:
+        raise ValueError(f'The provider answered HTTP {reply.status_code}: {reply.text[:300]}')
+    models = reply.json().get('data', [])
+    # Mistral gives capabilities: keep the chat models that call tools (no
+    # embedding, OCR or speech models) and note which read images
+    models = [m for m in models if 'capabilities' not in m
+              or (m['capabilities'].get('completion_chat') and m['capabilities'].get('function_calling'))]
+    vision = {m['id'] for m in models if (m.get('capabilities') or {}).get('vision')}
+    free = [m['id'] for m in models if m.get('is_free') or str(m.get('id', '')).endswith(':free')]
+    return free + sorted(m['id'] for m in models if m.get('id') and m['id'] not in free), vision
+
+
 class ConnectionDialog(QDialog):
     def __init__(self, config, parent=None):
         super().__init__(parent)
@@ -109,24 +132,8 @@ class ConnectionDialog(QDialog):
     def available_models(self):
         """Model ids the provider's /models lists for this key (free ones first
         when the provider marks them), or raises with the provider's answer."""
-        import httpx
-        candidate = self.candidate(require_model=False)
-        key = self.key.text().strip()
-        if not key and candidate.provider != 'local':
-            from .credentials import get_key
-            key = get_key(candidate) or ''
-        reply = httpx.get(candidate.base_url.rstrip('/') + '/models', timeout=20,
-                          headers={'Authorization': 'Bearer ' + key} if key else {})
-        if reply.status_code >= 400:
-            raise ValueError(f'The provider answered HTTP {reply.status_code}: {reply.text[:300]}')
-        models = reply.json().get('data', [])
-        # Mistral gives capabilities: keep the chat models that call tools (no
-        # embedding, OCR or speech models) and note which read images
-        models = [m for m in models if 'capabilities' not in m
-                  or (m['capabilities'].get('completion_chat') and m['capabilities'].get('function_calling'))]
-        self.vision_models = {m['id'] for m in models if (m.get('capabilities') or {}).get('vision')}
-        free = [m['id'] for m in models if m.get('is_free') or str(m.get('id', '')).endswith(':free')]
-        return free + sorted(m['id'] for m in models if m.get('id') and m['id'] not in free)
+        models, self.vision_models = list_models(self.candidate(require_model=False), self.key.text().strip())
+        return models
 
     def choose_model(self):
         from qtpy.QtWidgets import QInputDialog
