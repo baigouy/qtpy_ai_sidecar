@@ -140,8 +140,13 @@ class ConnectionDialog(QDialog):
         self.capability.setCurrentText({'local': 'llama_cpp', 'openai': 'reasoning_effort', 'groq': 'reasoning_effort',
                                         'iteracompute': 'reasoning_effort', 'mistral': 'reasoning_effort',
                                         'anthropic': 'anthropic_adaptive'}.get(provider, 'unsupported'))
-        if provider in DEFAULT_MODELS and (not self.model.text().strip() or self.model.text().strip() in DEFAULT_MODELS.values()
-                                           or provider != self.config.provider):
+        remembered = self.config.saved_models().get(provider)
+        if provider == self.config.provider and self.config.model not in ('', 'unknown'):
+            remembered = self.config.model
+        if remembered and provider != 'local':
+            self.model.setText(remembered)            # the model last used with this provider
+        elif provider in DEFAULT_MODELS and (not self.model.text().strip() or self.model.text().strip() in DEFAULT_MODELS.values()
+                                             or provider != self.config.provider):
             self.model.setText(DEFAULT_MODELS[provider])
         self.key.clear()
         self.update_note()

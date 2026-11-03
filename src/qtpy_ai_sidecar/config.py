@@ -115,6 +115,20 @@ class Config:
         value = {k: getattr(self, k) for k in ('provider', 'model', 'base_url', 'api_key_env', 'thinking_backend', 'runtime')}
         self.storage().mkdir(parents=True, exist_ok=True)
         (self.storage() / 'connection.json').write_text(json.dumps(value, indent=2), encoding='utf-8')
+        if self.provider != 'local' and self.model and self.model != 'unknown':
+            # the last model used with each provider, filled in again when that
+            # provider is chosen (switching OpenRouter -> Mistral refilled the default)
+            models = self.saved_models()
+            models[self.provider] = self.model
+            (self.storage() / 'models.json').write_text(json.dumps(models, indent=2), encoding='utf-8')
+
+    def saved_models(self):
+        """{provider: the model last used with it}."""
+        try:
+            value = json.loads((self.storage() / 'models.json').read_text(encoding='utf-8'))
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError):
+            return {}
 
     def save_performance(self):
         value = {k: getattr(self, k) for k in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps', 'vision')}

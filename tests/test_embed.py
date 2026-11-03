@@ -78,6 +78,28 @@ def test_connection_dialog_groq_preset(tmp_path):
     dialog.close()
 
 
+def test_each_providers_last_model_is_remembered(tmp_path):
+    """Switching OpenRouter -> Mistral refilled Mistral's default model; the
+    model last used with each provider now comes back."""
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.connection import ConnectionDialog
+    app = QApplication.instance() or QApplication([])
+    Config(state_dir=str(tmp_path), provider='mistral', base_url='https://api.mistral.ai/v1',
+           model='zai-glm-latest').save_connection()
+    current = Config(state_dir=str(tmp_path), provider='openrouter', base_url='https://openrouter.ai/api/v1',
+                     model='openrouter/free')
+    current.save_connection()
+    assert current.saved_models() == {'mistral': 'zai-glm-latest', 'openrouter': 'openrouter/free'}
+    dialog = ConnectionDialog(current)
+    dialog.provider.setCurrentIndex(dialog.provider.findData('mistral'))
+    assert dialog.model.text() == 'zai-glm-latest'
+    dialog.provider.setCurrentIndex(dialog.provider.findData('groq'))       # never used: its default
+    assert dialog.model.text() == 'qwen/qwen3.8-27b'
+    dialog.provider.setCurrentIndex(dialog.provider.findData('openrouter'))
+    assert dialog.model.text() == 'openrouter/free'
+    dialog.close()
+
+
 def test_a_key_for_another_provider_is_not_saved(tmp_path, monkeypatch):
     """A Mistral key pasted while OpenRouter is still selected must not replace
     the stored OpenRouter key."""
