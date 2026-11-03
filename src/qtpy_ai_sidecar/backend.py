@@ -26,7 +26,7 @@ def per_minute_limit_message(detail):
     if re.search(r'only available on agentic harnesses|Gate Free Endpoints', detail, re.I):
         return ('This free model is reserved by the provider for the apps on its approved list, which this chat '
                 'is not on. Choose another free model in the connection settings (plug icon), such as '
-                'nvidia/nemotron-3.5-super-vl:free.')
+                'openrouter/free.')
     if re.search(r'free-models-per-day|per[- ]day', detail, re.I) and re.search(r'rate limit', detail, re.I):
         return ('The free daily request quota of this provider is used up, so nothing can be sent until it resets. '
                 'Each chat message makes several requests (one per tool step). Add credit with this provider for '
@@ -131,6 +131,11 @@ class ModelClient:
                 payload['reasoning_effort'] = 'none'
             elif self.config.thinking_strength != 'default':
                 payload['reasoning_effort'] = self.config.thinking_strength
+            if self.config.provider == 'iteracompute' and self.config.thinking != 'disabled':
+                # its models list says Qwen3.8 thinks at 'xhigh' by default: a short chat reply then
+                # took 30-120 s (2026-11-03). It offers low/medium/xhigh, so high means xhigh.
+                payload['reasoning_effort'] = {'default': 'low', 'high': 'xhigh'}.get(
+                    self.config.thinking_strength, self.config.thinking_strength)
         if final_only and self.config.thinking_backend == 'llama_cpp':
             payload['chat_template_kwargs'] = {'enable_thinking': False}
             payload['reasoning_effort'] = 'none'

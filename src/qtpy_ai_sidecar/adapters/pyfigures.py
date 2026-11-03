@@ -76,14 +76,23 @@ class PyFiguresAdapter:
 
     def context(self):
         result = self.request('inspect')
-        context = {key: result.get(key) for key in ('selection', 'verified_letter_specification', 'panel_references', 'text_annotations', 'roi_annotations', 'last_canvas_click', 'annotation_editor_status', 'native_gui_jobs', 'native_gui_available', 'revision', 'dirty')}
+        summary = result.get('figure_summary') or {}
+        if summary.get('empty'):     # a short state lets the model answer without any tool step
+            return {'figure_summary': summary, 'native_gui_available': result.get('native_gui_available'),
+                    'revision': result.get('revision'), 'dirty': result.get('dirty')}
+        context = {key: result.get(key) for key in ('figure_summary', 'selection', 'verified_letter_specification', 'panel_references', 'text_annotations', 'roi_annotations', 'last_canvas_click', 'annotation_editor_status', 'native_gui_jobs', 'native_gui_available', 'revision', 'dirty')}
         if result.get('annotation_editor_open'):
             context['annotation_editor']=self.request('inspect_annotation_objects')
         return context
 
     def context_instructions(self, state):
         selection = state.get('selection') or {}
-        return ('When annotation_editor is present, editor_draft_objects and selected=true describe the live editor selection. Edits there affect its draft until native OK; preserve Cancel. Use edit_annotation_properties with the CURRENT editor_draft_objects token, or inspected native controls. Main-object tokens describe the unchanged figure, not the draft. After each edit use its returned next_token; never reuse the pre-edit token or silently close the dialog. '
+        if (state.get('figure_summary') or {}).get('empty'):
+            return ('The figure is empty. For questions about it, reply at once from figure_summary (answer and how_to_add_content), '
+                    'without tools. For a request to add content, discover the tool with find_pyfigures_tools.')
+        return ('This state is current: answer "what is in the figure?" from figure_summary and panel_references without calling inspect_figure again; '
+                + ('preview_figure only when asked how it looks. ' if not getattr(self, 'vision', False) else 'preview_figure when the look matters. ') +
+                'When annotation_editor is present, editor_draft_objects and selected=true describe the live editor selection. Edits there affect its draft until native OK; preserve Cancel. Use edit_annotation_properties with the CURRENT editor_draft_objects token, or inspected native controls. Main-object tokens describe the unchanged figure, not the draft. After each edit use its returned next_token; never reuse the pre-edit token or silently close the dialog. '
                 'If a capability is missing from dedicated MCP tools, discover inspect_native_gui and inspect the actual native controls instead of concluding the GUI cannot do it. Use_native_gui takes only inspected IDs and exact choices. Native context/drag menus are available via open_native_menu; keyboard, canvas gestures and file drops have native_gui tools. Prefer dedicated semantic tools for common edits. '
                 'Native GUI calls return queued jobs, not success. Inspect native_gui jobs and active modal controls, fill native fields and accept/cancel as requested, then verify actual document state. Do not claim queued or running work has completed. Teaching requests still do not authorize using edit controls. '
                 'How-to/manual/shortcut questions are teaching requests, not permission to edit. For native arrow keys and drag/drop discover explain_live_interaction; include figure focus, selection level, source/target and relevant verified shortcuts. For other topics use authored explain_how/show_me_how. Never invent modifiers or menu labels. Never provide Python unless code or recipe was explicitly requested. '

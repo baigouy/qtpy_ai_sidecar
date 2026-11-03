@@ -82,6 +82,34 @@ def test_groq_transport_vision_and_rate_limit(monkeypatch):
     assert 'approved list' in backend.per_minute_limit_message(gated)
 
 
+def test_iteracompute_thinks_low_unless_asked(monkeypatch):
+    """IteraCompute's Qwen3.8-27B thinks at 'xhigh' by default (its /models list):
+    a two-line chat reply took 30-120 s (2026-11-03). Low unless set otherwise."""
+    from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+    received=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_POST(self):
+            received.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            self.send_response(200)
+            self.send_header('Content-Type','text/event-stream')
+            self.end_headers()
+            self.wfile.write(('data: '+json.dumps({'choices':[{'delta':{'content':'Hi'},'finish_reason':'stop'}]})+'\n\n').encode())
+            self.wfile.write(b'data: [DONE]\n\n')
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    threading.Thread(target=server.serve_forever,daemon=True).start()
+    try:
+        monkeypatch.setenv('SIDECAR_TEST_KEY','test-not-a-real-api-key')
+        for strength in ('default','high','medium'):
+            config=Config(provider='iteracompute',base_url=f'http://127.0.0.1:{server.server_port}/v1',model='qwen/qwen3.8-27b',
+                          api_key_env='SIDECAR_TEST_KEY',thinking_backend='reasoning_effort',thinking_strength=strength)
+            asyncio.run(ModelClient(config).complete([{'role':'user','content':'Hi'}],[],threading.Event(),lambda *a:None))
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert [r['reasoning_effort'] for r in received]==['low','xhigh','medium']
+
+
 def test_openrouter_free_model_vision_is_read_from_its_model_list(monkeypatch):
     """'auto' sends previews to an OpenRouter model whose listed input
     modalities include images (thinkingmachines/inkling:free)."""

@@ -19,8 +19,10 @@ SYSTEM_NOTE = ('[VISION] Images returned by tools are attached for you to inspec
                'what a magnified region shows, colours and labels; fix what does not match.')
 ATTACHED = '[Image attached in the next message for you to inspect.]'
 TEXT_ONLY = '[Image shown to the human. This text-only model cannot inspect its pixels.]'
-# Groq models that take images (console.groq.com/docs/vision); 'auto' sends previews to these
-GROQ_VISION_MODELS = ('qwen/qwen3.8-27b',)
+# cloud models known to take images ('auto' sends previews to these; their
+# model lists do not say): Groq console.groq.com/docs/vision; NVIDIA NIM's VL model
+KNOWN_VISION_MODELS = {'groq': ('qwen/qwen3.8-27b',),
+                       'nvidia': ('nvidia/nemotron-3.5-super-vl-120b-a12b',)}
 
 
 def _lm_studio_reports_vision(base_url, model, timeout=1.5):
@@ -49,8 +51,8 @@ def detect(config):
         return False
     if urlsplit(config.base_url).hostname in ('127.0.0.1', 'localhost', '::1'):
         return bool(_lm_studio_reports_vision(config.base_url, config.model))
-    if getattr(config, 'provider', '') == 'groq':
-        return config.model in GROQ_VISION_MODELS
+    if getattr(config, 'provider', '') in KNOWN_VISION_MODELS:
+        return config.model in KNOWN_VISION_MODELS[config.provider]
     if getattr(config, 'provider', '') == 'openrouter':
         return bool(_openrouter_reports_vision(config.base_url, config.model))
     return False

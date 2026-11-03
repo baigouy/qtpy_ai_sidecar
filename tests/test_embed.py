@@ -67,5 +67,38 @@ def test_connection_dialog_groq_preset(tmp_path):
     assert candidate.model == 'qwen/qwen3.8-27b' and candidate.thinking_backend == 'reasoning_effort'
     dialog.provider.setCurrentIndex(dialog.provider.findData('openrouter'))   # free, 1M context, reads images
     candidate = dialog.candidate()
-    assert candidate.base_url == 'https://openrouter.ai/api/v1' and candidate.model == 'nvidia/nemotron-3.5-super-vl:free'
+    assert candidate.base_url == 'https://openrouter.ai/api/v1' and candidate.model == 'openrouter/free'
+    for provider, url, model in (('iteracompute', 'https://api.iteracompute.com/v1', 'qwen/qwen3.8-27b'),
+                                 ('nvidia', 'https://integrate.api.nvidia.com/v1', 'nvidia/nemotron-3.5-super-vl-120b-a12b')):
+        dialog.provider.setCurrentIndex(dialog.provider.findData(provider))
+        candidate = dialog.candidate()
+        assert (candidate.provider, candidate.base_url, candidate.model) == (provider, url, model)
+        assert candidate.thinking_backend == ('reasoning_effort' if provider == 'iteracompute' else 'unsupported')
+    dialog.close()
+
+
+def test_list_models_asks_the_provider_with_the_key(tmp_path, monkeypatch):
+    """'List models…' shows what the key can use, free ones first."""
+    import httpx
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.connection import ConnectionDialog
+    app = QApplication.instance() or QApplication([])
+    seen = {}
+
+    class Reply:
+        status_code = 200
+        text = ''
+        def json(self):
+            return {'data': [{'id': 'b/paid'}, {'id': 'qwen/qwen3.8-27b', 'is_free': True}, {'id': 'a/paid'}]}
+
+    def get(url, timeout=0, headers=None):
+        seen.update(url=url, headers=headers)
+        return Reply()
+    monkeypatch.setattr(httpx, 'get', get)
+    dialog = ConnectionDialog(Config(state_dir=str(tmp_path), provider='compatible', model='x'))
+    dialog.provider.setCurrentIndex(dialog.provider.findData('iteracompute'))
+    dialog.key.setText('test-not-a-real-key')
+    assert dialog.available_models() == ['qwen/qwen3.8-27b', 'a/paid', 'b/paid']
+    assert seen['url'] == 'https://api.iteracompute.com/v1/models'
+    assert seen['headers'] == {'Authorization': 'Bearer test-not-a-real-key'}
     dialog.close()

@@ -27,6 +27,22 @@ def test_readiness_without_a_known_target_asks_which_journal():
     assert result['evidence']['status']=='needs_target'
     assert result['content'].startswith('Which journal')
 
+def test_an_empty_figure_sends_a_short_state():
+    """'Tell me more about the fig' on an empty window cost a cloud model two slow
+    tool steps (2026-11-03): the state and guidance let it answer at once."""
+    adapter=PyFiguresAdapter('unused')
+    summary={'empty':True,'answer':'The figure is empty.','how_to_add_content':'add_image ...'}
+    adapter.request=lambda *a:{'figure_summary':summary,'selection':{'selected_panels':[]},'panel_references':[],
+                               'verified_letter_specification':{},'native_gui_available':True,'revision':1,'dirty':False}
+    state=adapter.context()
+    assert set(state)=={'figure_summary','native_gui_available','revision','dirty'}
+    guidance=adapter.context_instructions(state)
+    assert 'without tools' in guidance and len(guidance)<300
+    adapter.request=lambda *a:{'figure_summary':{'empty':False,'answer':'2 image panel(s)'},'panel_references':[{'panel_id':'0/0'}]}
+    state=adapter.context()
+    assert state['figure_summary']['answer']=='2 image panel(s)' and state['panel_references']
+    assert 'without calling inspect_figure again' in adapter.context_instructions(state)
+
 def test_selection_verifier_checks_all_explicit_targets():
     adapter=PyFiguresAdapter('unused')
     adapter.request=lambda *a:{'selection':{'selected_panels':[{'panel_id':'0/0','letters':['a']},{'panel_id':'0/1','letters':['b']}]}}
