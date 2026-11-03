@@ -4,6 +4,8 @@ import json
 import time
 import httpx
 from .credentials import get_key
+from .backend import (SERVER_RETRIES, SERVER_ERRORS, RATE_LIMIT_RETRIES, connect_stream,
+                      rate_limit_wait, per_minute_limit_message)
 
 
 def _anthropic_part(part):
@@ -70,7 +72,24 @@ async def complete(config, messages, tools, cancel, emit, max_tokens, secret_sin
         blocks, fragments, usage, finish, stopped, chars = {}, {}, {}, None, False, 0
         headers = {'x-api-key': key, 'anthropic-version': '2023-06-01'}
         async with httpx.AsyncClient(timeout=httpx.Timeout(180, connect=15)) as client:
-            async with client.stream('POST', config.base_url.rstrip('/') + '/messages', json=payload, headers=headers) as response:
+            for attempt in range(SERVER_RETRIES + 1):
+              # same retries as the other providers: a connection that cannot open,
+              # a server outage (5xx, Claude's 529 "overloaded") and a short rate limit
+              async with connect_stream(client, config.base_url.rstrip('/') + '/messages', payload, headers, emit) as response:
+                if response.status_code in SERVER_ERRORS + (529,) and attempt < SERVER_RETRIES:
+                    wait = min(30.0, 2.0 * 2 ** attempt)
+                    await response.aread()
+                    emit('status', f'The provider answered HTTP {response.status_code}; retrying in {wait:.0f} s')
+                    await asyncio.sleep(wait)
+                    continue
+                if response.status_code == 429 and attempt < RATE_LIMIT_RETRIES:
+                    wait = rate_limit_wait(response.headers, attempt)
+                    detail = (await response.aread()).decode(errors='replace')[:1500]
+                    if per_minute_limit_message(detail):      # an account quota: retrying is useless
+                        raise RuntimeError(per_minute_limit_message(detail))
+                    emit('status', f'Rate limited by the provider; retrying in {wait:.0f} s')
+                    await asyncio.sleep(wait)
+                    continue
                 if response.status_code >= 400:
                     detail = (await response.aread()).decode(errors='replace')[:1500]
                     raise RuntimeError(f'Claude HTTP {response.status_code}: {detail}')
@@ -106,6 +125,7 @@ async def complete(config, messages, tools, cancel, emit, max_tokens, secret_sin
                     elif kind == 'message_stop':
                         stopped = True
                         break
+              break
         if not stopped or not finish:
             raise RuntimeError('Incomplete Claude response; no partial tool call executed')
         if finish not in ('end_turn', 'tool_use', 'stop_sequence'):

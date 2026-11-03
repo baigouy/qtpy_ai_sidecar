@@ -130,6 +130,62 @@ def test_a_connection_that_cannot_open_is_retried(endpoint,monkeypatch):
     assert any(kind=='status' and 'ConnectTimeout' in text for kind,text in events)
 
 
+def test_claude_gets_the_same_retries(monkeypatch):
+    """The Mistral fixes (connection retry, 5xx retry) apply to Claude too, with
+    its 529 'overloaded' answer counted as an outage."""
+    import httpx
+    from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+    from qtpy_ai_sidecar import backend
+    real_sleep=asyncio.sleep
+    waits=[]
+    async def fast(seconds):
+        waits.append(seconds)
+        await real_sleep(0)
+    monkeypatch.setattr(backend.asyncio,'sleep',fast)
+    received=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_POST(self):
+            received.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            if len(received)<=2:
+                self.send_response(529 if len(received)==1 else 503)
+                self.end_headers()
+                self.wfile.write(b'{"type":"error","error":{"type":"overloaded_error"}}')
+                return
+            self.send_response(200)
+            self.send_header('Content-Type','text/event-stream')
+            self.end_headers()
+            for event in ({'type':'message_start','message':{'usage':{}}},
+                          {'type':'content_block_start','index':0,'content_block':{'type':'text','text':''}},
+                          {'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':'Hello'}},
+                          {'type':'content_block_stop','index':0},
+                          {'type':'message_delta','delta':{'stop_reason':'end_turn'},'usage':{}},
+                          {'type':'message_stop'}):
+                self.wfile.write(('data: '+json.dumps(event)+'\n\n').encode())
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    threading.Thread(target=server.serve_forever,daemon=True).start()
+    real_stream=httpx.AsyncClient.stream
+    failures=[]
+    def flaky(self,*args,**kwargs):
+        if not failures:
+            failures.append(1)
+            raise httpx.ConnectError('')
+        return real_stream(self,*args,**kwargs)
+    monkeypatch.setattr(httpx.AsyncClient,'stream',flaky)
+    try:
+        monkeypatch.setenv('SIDECAR_TEST_KEY','test-not-a-real-api-key')
+        config=Config(provider='anthropic',base_url=f'http://127.0.0.1:{server.server_port}/v1',api_key_env='SIDECAR_TEST_KEY')
+        events=[]
+        answer,_=asyncio.run(ModelClient(config).complete([{'role':'user','content':'Hi'}],[],threading.Event(),lambda *a:events.append(a)))
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert answer['content']=='Hello' and len(received)==3 and failures==[1]
+    assert [w for w in waits if w>=1]==[2.0,2.0,4.0]          # connection, then 529, then 503
+    texts=[text for kind,text in events if kind=='status']
+    assert any('ConnectError' in t for t in texts) and any('HTTP 529' in t for t in texts)
+
+
 def test_groq_transport_vision_and_rate_limit(monkeypatch):
     """Groq (cloud Qwen3.8-27B): reasoning kept out of the text, previews sent
     by 'auto', and an HTTP 429 waited out and retried."""

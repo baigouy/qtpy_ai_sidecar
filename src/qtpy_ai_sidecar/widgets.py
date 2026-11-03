@@ -7,11 +7,11 @@ import re
 import threading
 import time
 import sys
-from qtpy.QtCore import Qt, Signal, QTimer, QSize
-from qtpy.QtGui import QImage, QPixmap, QFont, QIcon, QPainter
+from qtpy.QtCore import Qt, Signal, QTimer, QSize, QRect, QPoint
+from qtpy.QtGui import QImage, QPixmap, QFont, QIcon, QIconEngine, QPainter
 from qtpy.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QFrame, QLabel, QTextBrowser, QPlainTextEdit, QPushButton, QProgressBar,
-    QFileDialog, QCheckBox, QSizePolicy, QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QSlider)
+    QFileDialog, QToolButton, QCheckBox, QSizePolicy, QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QSlider)
 import qtawesome as qta
 from .engine import Engine
 from .config import DEFAULT_NOTICE
@@ -42,18 +42,45 @@ def choices(text):
     return result if 2 <= len(result) <= 8 else []
 
 
+class _BadgeEngine(QIconEngine):
+    """Paints the badge glyphs as vectors at whatever size and screen scale Qt
+    asks for, so they stay sharp on high-DPI screens (a fixed 1x pixmap was
+    blown up and blurred)."""
+
+    def __init__(self, icons):
+        super().__init__()
+        self.icons = icons                        # one glyph per slot, None for an empty slot
+
+    def paint(self, painter, rect, mode, state):
+        slot = rect.height()
+        gap = max(1, slot // 8)
+        for i, icon in enumerate(self.icons):
+            if icon is not None:
+                icon.paint(painter, QRect(rect.x() + i * (slot + gap), rect.y(), slot, slot), Qt.AlignmentFlag.AlignCenter, mode, state)
+
+    def pixmap(self, size, mode, state):
+        return self.scaledPixmap(size, mode, state, 1.0)
+
+    def scaledPixmap(self, size, mode, state, scale):
+        pixmap = QPixmap(size)                    # Qt passes the size already in device pixels
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.paint(painter, QRect(QPoint(0, 0), pixmap.size()), mode, state)
+        painter.end()
+        pixmap.setDevicePixelRatio(scale)
+        return pixmap
+
+    def clone(self):
+        return _BadgeEngine(self.icons)
+
+
 def badges(details):
     """An eye (reads images) and a brain (thinks) side by side, in fixed slots
     so the names line up."""
-    pixmap = QPixmap(34, 16)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    if details.get('vision'):
-        painter.drawPixmap(0, 0, qta.icon('fa5s.eye', color='#72533e').pixmap(16, 16))
-    if details.get('reasoning'):
-        painter.drawPixmap(18, 0, qta.icon('fa5s.brain', color='#9a6fb0').pixmap(16, 16))
-    painter.end()
-    return QIcon(pixmap)
+    return QIcon(_BadgeEngine([
+        qta.icon('mdi6.eye-outline', color='#3d7ab8') if details.get('vision') else None,
+        qta.icon('mdi6.brain', color='#9a5fb8') if details.get('reasoning') else None]))
 
 
 class ModelPicker(QComboBox):
@@ -69,7 +96,7 @@ class ModelPicker(QComboBox):
         self.loaded_for = None
         self.has_key = None
         self.info = {}
-        self.setIconSize(QSize(34, 16))
+        self.setIconSize(QSize(38, 18))           # two 18 px badge slots and a 2 px gap
         self.listed.connect(self.received)
         self.setAccessibleName('Model')
         # the closed picker fits the current name (set in fit()), not the longest one listed
@@ -77,7 +104,13 @@ class ModelPicker(QComboBox):
         # the list fits its longest name; a name too long for the screen loses its middle,
         # never its end (the version: -4, -flash, -2512…)
         self.view().setTextElideMode(Qt.TextElideMode.ElideMiddle)
-        self.key_label = QLabel()                 # the API key state, beside the picker
+        # the API key state, beside the picker: an icon (not a pixmap) so it is drawn
+        # sharp at any screen scale; display only, never clicked
+        self.key_label = QToolButton()
+        self.key_label.setAutoRaise(True)
+        self.key_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.key_label.setIconSize(QSize(16, 16))
+        self.key_label.setStyleSheet('QToolButton { border: none; padding: 0; }')
         self.key_label.setAccessibleName('API key state')
         self.activated.connect(self.chosen)
 
@@ -163,7 +196,7 @@ class ModelPicker(QComboBox):
             icon, tip = qta.icon('fa5s.key', color='#3d8b40'), 'API key stored in the OS vault'
         else:
             icon, tip = qta.icon('fa5s.key', color='#c0392b'), 'No API key stored: add it with the plug button above'
-        self.key_label.setPixmap(icon.pixmap(16, 16))
+        self.key_label.setIcon(icon)
         self.key_label.setToolTip(tip)
         self.setToolTip(f'Model · {model}\n{tip}')
         self.fit()

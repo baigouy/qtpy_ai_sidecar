@@ -112,6 +112,12 @@ def test_model_picker_in_composer_lists_switches_and_shows_key_state(tmp_path, m
     assert picker.view().minimumWidth() > picker.view().fontMetrics().horizontalAdvance('mistral-large-4')
     assert picker.view().textElideMode() == Qt.TextElideMode.ElideMiddle      # the name's end stays visible
     assert 'stored' in picker.key_label.toolTip()
+    # icons, not fixed 1x pixmaps: drawn at the screen's own scale, so sharp on high-DPI screens
+    assert not picker.key_label.icon().isNull()
+    from qtpy_ai_sidecar.widgets import badges
+    from qtpy.QtCore import QSize
+    sharp = badges({'vision': True, 'reasoning': True}).pixmap(QSize(38, 18), 2.0)
+    assert (sharp.width(), sharp.height(), sharp.devicePixelRatio()) == (76, 36, 2.0)
     picker.activated.emit(1)
     assert dock.engine.config.model == 'zai-glm-latest' and 'zai-glm-latest' in dock.connection_label.text()
     assert len(dock.engine.messages) == before                     # conversation kept
