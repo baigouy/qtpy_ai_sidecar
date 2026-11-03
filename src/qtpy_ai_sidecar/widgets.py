@@ -17,6 +17,10 @@ from .engine import Engine
 from .config import DEFAULT_NOTICE
 from .adapters import NullAdapter
 
+# "Preview edits before applying" is parked (hidden, never checked) until it
+# has been tested by hand (2026-11-03); set False to offer it again.
+PREVIEW_EDITS_PARKED = True
+
 
 class Composer(QPlainTextEdit):
     submitted = Signal()
@@ -370,7 +374,8 @@ class AssistantDock(QDockWidget):
         bar.actionTriggered.connect(self._scroll_action)
         root.addWidget(self.scroll, 1)
         self.preview = QCheckBox('Preview edits before applying')
-        self.preview.setVisible(bool(getattr(self.engine.adapter, 'supports_preview', False)))
+        # parked until the author has tested it: kept unchecked and hidden
+        self.preview.setVisible(not PREVIEW_EDITS_PARKED and bool(getattr(self.engine.adapter, 'supports_preview', False)))
         root.addWidget(self.preview)
         self.composer_frame = QFrame()
         self.composer_frame.setObjectName('composerFrame')

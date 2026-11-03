@@ -6,6 +6,25 @@ from qtpy_ai_sidecar.config import Config
 from qtpy_ai_sidecar.widgets import AssistantDock, choices
 
 
+def test_preview_edits_is_parked(tmp_path, monkeypatch):
+    """'Preview edits before applying' stays hidden and unchecked, even for an
+    adapter that supports it, until it is tested (2026-11-03); the code is kept."""
+    from qtpy_ai_sidecar import widgets
+    from qtpy_ai_sidecar.adapters import NullAdapter
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(NullAdapter, 'supports_preview', True)
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
+    dock.show()
+    assert widgets.PREVIEW_EDITS_PARKED
+    assert not dock.preview.isVisible() and not dock.preview.isChecked()
+    dock.close()
+    monkeypatch.setattr(widgets, 'PREVIEW_EDITS_PARKED', False)
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
+    dock.show()
+    assert dock.preview.isVisible()
+    dock.close()
+
+
 def test_widget_keyboard_choices_busy_and_export(tmp_path):
     app = QApplication.instance() or QApplication([])
     dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
