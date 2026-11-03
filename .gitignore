@@ -11,3 +11,4 @@ runtime/
 
 .idea/
 *.local.json
+chats/
