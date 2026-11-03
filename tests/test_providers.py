@@ -63,6 +63,47 @@ def test_mistral_transport_and_vision(endpoint,monkeypatch):
     assert vision.detect(remote) is False
 
 
+def test_a_brief_provider_outage_is_retried(monkeypatch):
+    """Mistral answered HTTP 503 'upstream connect error' for ~25 s (2026-11-03),
+    which ended turns half done: 5xx answers are now sent again."""
+    from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+    from qtpy_ai_sidecar import backend
+    real_sleep=asyncio.sleep
+    waits=[]
+    async def fast(seconds):
+        waits.append(seconds)
+        await real_sleep(0)
+    monkeypatch.setattr(backend.asyncio,'sleep',fast)
+    received=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_POST(self):
+            received.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            if len(received)<=3:
+                self.send_response(503)
+                self.end_headers()
+                self.wfile.write(b'upstream connect error or disconnect/reset before headers')
+                return
+            self.send_response(200)
+            self.send_header('Content-Type','text/event-stream')
+            self.end_headers()
+            self.wfile.write(('data: '+json.dumps({'choices':[{'delta':{'content':'Hello'},'finish_reason':'stop'}]})+'\n\n').encode())
+            self.wfile.write(b'data: [DONE]\n\n')
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    threading.Thread(target=server.serve_forever,daemon=True).start()
+    try:
+        monkeypatch.setenv('SIDECAR_TEST_KEY','test-not-a-real-api-key')
+        config=Config(provider='mistral',base_url=f'http://127.0.0.1:{server.server_port}/v1',model='m',api_key_env='SIDECAR_TEST_KEY')
+        events=[]
+        answer,_=asyncio.run(ModelClient(config).complete([{'role':'user','content':'Hi'}],[],threading.Event(),lambda *a:events.append(a)))
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert answer['content']=='Hello' and len(received)==4
+    assert [w for w in waits if w>=1]==[2.0,4.0,8.0]          # (0.1 s: the cancel watcher's polling)
+    assert any(kind=='status' and 'HTTP 503' in text for kind,text in events)
+
+
 def test_groq_transport_vision_and_rate_limit(monkeypatch):
     """Groq (cloud Qwen3.8-27B): reasoning kept out of the text, previews sent
     by 'auto', and an HTTP 429 waited out and retried."""

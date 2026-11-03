@@ -15,6 +15,8 @@ class EmptyModelReply(RuntimeError):
 
 
 RATE_LIMIT_RETRIES = 3
+SERVER_RETRIES = 5                       # ~60 s in all for a provider's 5xx outage
+SERVER_ERRORS = (500, 502, 503, 504)
 
 
 def per_minute_limit_message(detail):
@@ -169,9 +171,18 @@ class ModelClient:
             text, reasoning, calls, finish, usage = '', '', {}, None, {}
             timeout = httpx.Timeout(connect=15, read=180, write=30, pool=15)
             async with httpx.AsyncClient(timeout=timeout) as client:
-              for attempt in range(RATE_LIMIT_RETRIES + 1):
+              for attempt in range(SERVER_RETRIES + 1):
                 async with client.stream('POST', base_url.rstrip('/') + '/chat/completions',
                                          json=payload, headers=headers) as response:
+                    if response.status_code in SERVER_ERRORS and attempt < SERVER_RETRIES:
+                        # the provider's server briefly unreachable (Mistral answered 503
+                        # "upstream connect error" for ~25 s, 2026-11-03): nothing ran, so
+                        # the same request is sent again after 2, 4, 8, 16, 30 s
+                        wait = min(30.0, 2.0 * 2 ** attempt)
+                        await response.aread()
+                        emit('status', f'The provider answered HTTP {response.status_code}; retrying in {wait:.0f} s')
+                        await asyncio.sleep(wait)
+                        continue
                     if response.status_code == 429 and attempt < RATE_LIMIT_RETRIES:
                         # a cloud rate limit (tokens per minute): wait as told, then retry
                         wait = rate_limit_wait(response.headers, attempt)
