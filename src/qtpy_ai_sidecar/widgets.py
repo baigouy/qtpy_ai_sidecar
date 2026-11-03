@@ -42,6 +42,14 @@ def choices(text):
     return result if 2 <= len(result) <= 8 else []
 
 
+def markdown_to_plain(text):
+    """The text of one line of Markdown, without its formatting marks."""
+    from qtpy.QtGui import QTextDocument
+    document = QTextDocument()
+    document.setMarkdown(text)
+    return document.toPlainText().strip()
+
+
 class MessageBrowser(QTextBrowser):
     """Fit to actual wrapped text; the outer conversation owns scrolling."""
     def __init__(self):
@@ -447,15 +455,18 @@ class AssistantDock(QDockWidget):
         elapsed = time.monotonic() - self.started if self.started else 0
         self.status.setText(f'Finished · {elapsed:.1f}s')
         self.clear_choices()
-        for option in choices(self.last_assistant) if self.last_assistant_layout is not None else []:
+        for markdown in choices(self.last_assistant) if self.last_assistant_layout is not None else []:
+            # models write the options in Markdown (**bold** — …): shown formatted,
+            # sent back and read aloud as plain text
+            option = markdown_to_plain(markdown)
             button = QPushButton()
             button.setAccessibleName(option)
             button.setToolTip(option)
             button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
             content = QVBoxLayout(button)
             content.setContentsMargins(8, 6, 8, 6)
-            label = QLabel(option)
-            label.setTextFormat(Qt.TextFormat.PlainText)
+            label = QLabel(markdown)
+            label.setTextFormat(Qt.TextFormat.MarkdownText)
             label.setWordWrap(True)
             label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             label.setMinimumWidth(0)

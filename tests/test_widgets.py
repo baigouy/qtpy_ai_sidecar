@@ -45,6 +45,25 @@ def test_widget_keyboard_choices_busy_and_export(tmp_path):
     dock.close()
 
 
+def test_markdown_in_choices_is_formatted_and_sent_as_plain_text(tmp_path):
+    """Models write options as '**Add images** — …': the button shows bold
+    text, not asterisks, and choosing it sends the plain words."""
+    from qtpy.QtWidgets import QLabel
+    app = QApplication.instance() or QApplication([])
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
+    dock.show()
+    dock.receive('assistant', 'How do you want to start?\n- **Add images** — give me the paths\n'
+                              '- **Lay out a grid first** — placeholder panels')
+    dock.finished()
+    labels = [b.findChild(QLabel) for b in dock.choice_buttons]
+    assert [l.textFormat() for l in labels] == [Qt.TextFormat.MarkdownText] * 2
+    assert dock.choice_buttons[0].toolTip() == 'Add images — give me the paths'
+    dock.choice_buttons[1].click()
+    assert dock.input.toPlainText() == 'Lay out a grid first — placeholder panels'
+    dock.shutdown()
+    dock.close()
+
+
 def test_completion_summary_is_not_choices():
     assert choices('Done:\n1. Color changed\n2. Layout preserved') == []
 
