@@ -12,3 +12,11 @@ runtime/
 .idea/
 *.local.json
 chats/
+
+# local development notes and validation runs; only the two oracles the tests import are kept
+CLAUDE_HANDOFF.md
+validation/*
+!validation/pyfigures/
+validation/pyfigures/*
+!validation/pyfigures/checks.py
+!validation/pyfigures/font_oracle.py
