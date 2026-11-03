@@ -7,6 +7,10 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    # macOS runners are metered and may never be assigned (job cancelled with no
+    # steps): report macOS, but do not let it turn the whole run red.
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     env:
       QT_QPA_PLATFORM: offscreen
       QT_API: pyqt6
