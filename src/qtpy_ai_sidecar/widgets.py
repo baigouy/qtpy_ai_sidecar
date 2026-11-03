@@ -526,7 +526,10 @@ class AssistantDock(QDockWidget):
             self.context_estimate = value['estimated_tokens']
             self.show_context()
         elif kind == 'usage':
-            self.context.setText('Server usage: ' + json.dumps(value))
+            # the provider's token count of the last reply, kept short in the context
+            # line (its raw JSON filled several lines, then vanished at the next update)
+            self.last_usage = value if isinstance(value, dict) else None
+            self.show_context()
         elif kind == 'compression':
             self.add_message('assistant', f"Compressed working context: ≈{value['estimated_before']:,} → ≈{value['estimated_after']:,} tokens. Full conversation retained in the local log.")
         elif kind == 'error':
@@ -816,6 +819,12 @@ class AssistantDock(QDockWidget):
             text += f' · model window {window:,}'
             if window < config.context_tokens:
                 text += ' — smaller than the setting: lower Context tokens (gear button)'
+        usage = getattr(self, 'last_usage', None) or {}
+        sent, written = usage.get('prompt_tokens'), usage.get('completion_tokens')
+        if isinstance(sent, int) and isinstance(written, int):
+            thought = (usage.get('completion_tokens_details') or {}).get('reasoning_tokens')
+            text += (f' · last reply: {sent:,} tokens sent, {written:,} written'
+                     + (f' ({thought:,} thinking)' if isinstance(thought, int) and thought else ''))
         self.context.setText(text)
 
     def change_model(self, model):
@@ -841,6 +850,7 @@ class AssistantDock(QDockWidget):
         self.engine = Engine(config, adapter)
         self.sync_thinking_controls()
         self.context_estimate = None
+        self.last_usage = None
         self.model_picker.sync()
         self.show_context()
         self.last_assistant = ''

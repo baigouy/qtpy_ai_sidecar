@@ -124,6 +124,22 @@ def test_model_picker_in_composer_lists_switches_and_shows_key_state(tmp_path, m
     dock.close()
 
 
+def test_server_usage_is_one_short_phrase_not_raw_json(tmp_path):
+    """The provider's token report filled the context line with several lines
+    of JSON, which vanished at the next update."""
+    app = QApplication.instance() or QApplication([])
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
+    dock.receive('usage', {'prompt_tokens': 8447, 'total_tokens': 8878, 'completion_tokens': 431,
+                           'prompt_tokens_details': {'cached_tokens': 0},
+                           'completion_tokens_details': {'reasoning_tokens': 409}, 'service_tier': 'standard'})
+    text = dock.context.text()
+    assert '{' not in text and 'last reply: 8,447 tokens sent, 431 written (409 thinking)' in text
+    dock.receive('context', {'estimated_tokens': 9000, 'context_tokens': 32768, 'output_tokens': 8192})
+    assert 'Context ≈ 9,000' in dock.context.text() and 'last reply' in dock.context.text()   # kept
+    dock.shutdown()
+    dock.close()
+
+
 def test_model_aliases_are_listed_once():
     """Mistral lists each alias as its own model: one entry per model, named
     by the current model, else its -latest alias, else the shortest name."""
