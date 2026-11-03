@@ -66,7 +66,8 @@ class _BadgeEngine(QIconEngine):
         return self.scaledPixmap(size, mode, state, 1.0)
 
     def scaledPixmap(self, size, mode, state, scale):
-        pixmap = QPixmap(size)                    # Qt passes the size already in device pixels
+        # Qt passes the logical size and the screen scale: the pixmap has size * scale device pixels
+        pixmap = QPixmap(QSize(round(size.width() * scale), round(size.height() * scale)))
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
