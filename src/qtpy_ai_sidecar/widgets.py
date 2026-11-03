@@ -46,6 +46,34 @@ def choices(text):
     return result if 2 <= len(result) <= 8 else []
 
 
+_DEVICE_PIXELS = None
+
+
+def _icon_size_is_device_pixels():
+    """True when this Qt hands QIconEngine.scaledPixmap the size already
+    multiplied by the scale (Qt 6.4); measured once with a probe engine."""
+    global _DEVICE_PIXELS
+    if _DEVICE_PIXELS is None:
+        seen = []
+
+        class Probe(QIconEngine):
+            def scaledPixmap(self, size, mode, state, scale):
+                seen.append(size.width())
+                return QPixmap(size)
+
+            def pixmap(self, size, mode, state):
+                return self.scaledPixmap(size, mode, state, 1.0)
+
+            def paint(self, painter, rect, mode, state):
+                pass
+
+            def clone(self):
+                return Probe()
+        QIcon(Probe()).pixmap(QSize(10, 10), 2.0)
+        _DEVICE_PIXELS = bool(seen) and seen[0] == 20
+    return _DEVICE_PIXELS
+
+
 class _BadgeEngine(QIconEngine):
     """Paints the badge glyphs as vectors at whatever size and screen scale Qt
     asks for, so they stay sharp on high-DPI screens (a fixed 1x pixmap was
@@ -66,8 +94,11 @@ class _BadgeEngine(QIconEngine):
         return self.scaledPixmap(size, mode, state, 1.0)
 
     def scaledPixmap(self, size, mode, state, scale):
-        # Qt passes the logical size and the screen scale: the pixmap has size * scale device pixels
-        pixmap = QPixmap(QSize(round(size.width() * scale), round(size.height() * scale)))
+        # Qt 6.4 passes the size already in device pixels, newer Qt (CI) the
+        # logical size: the pixmap must have logical size * scale device pixels
+        if not _icon_size_is_device_pixels():
+            size = QSize(round(size.width() * scale), round(size.height() * scale))
+        pixmap = QPixmap(size)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
