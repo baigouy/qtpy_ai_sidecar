@@ -78,6 +78,28 @@ def test_connection_dialog_groq_preset(tmp_path):
     dialog.close()
 
 
+def test_a_key_for_another_provider_is_not_saved(tmp_path, monkeypatch):
+    """A Mistral key pasted while OpenRouter is still selected must not replace
+    the stored OpenRouter key."""
+    from qtpy_ai_sidecar import connection
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.connection import ConnectionDialog
+    app = QApplication.instance() or QApplication([])
+    stored = []
+    monkeypatch.setattr(connection, 'set_key', lambda config, key: stored.append((config.provider, key)))
+    dialog = ConnectionDialog(Config(state_dir=str(tmp_path), provider='openrouter',
+                                     base_url='https://openrouter.ai/api/v1', model='openrouter/free'))
+    dialog.key.setText('test-not-a-real-mistral-key')
+    dialog.save()
+    assert stored == [] and dialog.result_config is None and 'not a key for OpenRouter' in dialog.error.text()
+    assert not (tmp_path / 'connection.json').exists()
+    dialog.provider.setCurrentIndex(dialog.provider.findData('mistral'))     # no prefix to check
+    dialog.key.setText('test-not-a-real-mistral-key')
+    dialog.save()
+    assert stored == [('mistral', 'test-not-a-real-mistral-key')] and dialog.result_config.provider == 'mistral'
+    dialog.close()
+
+
 def test_list_models_asks_the_provider_with_the_key(tmp_path, monkeypatch):
     """'List models…' shows what the key can use, free ones first."""
     import httpx

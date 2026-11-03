@@ -21,6 +21,9 @@ PRESETS = {'local': 'http://127.0.0.1:1234/v1', 'openai': 'https://api.openai.co
 DEFAULT_MODELS = {'openrouter': 'openrouter/free', 'groq': 'qwen/qwen3.8-27b',
                   'iteracompute': 'qwen/qwen3.8-27b', 'nvidia': 'nvidia/nemotron-3.5-super-vl-120b-a12b',
                   'mistral': 'mistral-large-latest'}
+# how these providers' keys begin: a key pasted with the wrong provider still
+# selected would otherwise replace that provider's stored key (2026-11-03)
+KEY_PREFIXES = {'openrouter': 'sk-or-', 'anthropic': 'sk-ant-', 'groq': 'gsk_', 'nvidia': 'nvapi-'}
 
 
 class ConnectionDialog(QDialog):
@@ -143,6 +146,10 @@ class ConnectionDialog(QDialog):
     def save(self):
         try:
             candidate = self.candidate()
+            prefix = KEY_PREFIXES.get(candidate.provider)
+            if self.key.text().strip() and prefix and not self.key.text().strip().startswith(prefix):
+                raise ValueError(f'This is not a key for {self.provider.currentText()} (its keys begin with '
+                                 f'"{prefix}"). Choose the provider the key belongs to; nothing was saved.')
             if self.key.text().strip():
                 set_key(candidate, self.key.text())
                 self.key.clear()
