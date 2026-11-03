@@ -1,5 +1,6 @@
 """OpenAI-compatible streaming transport, including LM Studio and llama.cpp."""
 import asyncio
+import contextlib
 import json
 import os
 import time
@@ -54,6 +55,32 @@ def rate_limit_wait(headers, attempt):
         except ValueError:
             continue
     return min(30.0, 2.0 * 2 ** attempt)
+
+
+@contextlib.asynccontextmanager
+async def connect_stream(client, url, payload, headers, emit):
+    """client.stream('POST', …), retried when the connection cannot be opened
+    (a Mistral ConnectTimeout lost a whole request, 2026-11-03): nothing reached
+    the server, so sending again is safe. Errors after connecting are not retried."""
+    for attempt in range(SERVER_RETRIES + 1):
+        try:
+            manager = client.stream('POST', url, json=payload, headers=headers)
+            response = await manager.__aenter__()
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            if attempt >= SERVER_RETRIES:
+                raise
+            wait = min(30.0, 2.0 * 2 ** attempt)
+            emit('status', f'Could not reach the provider ({type(exc).__name__}); retrying in {wait:.0f} s')
+            await asyncio.sleep(wait)
+            continue
+        try:
+            yield response
+        except BaseException as exc:
+            await manager.__aexit__(type(exc), exc, exc.__traceback__)
+            raise
+        else:
+            await manager.__aexit__(None, None, None)
+        return
 
 
 def content_parts(content):
@@ -172,8 +199,8 @@ class ModelClient:
             timeout = httpx.Timeout(connect=15, read=180, write=30, pool=15)
             async with httpx.AsyncClient(timeout=timeout) as client:
               for attempt in range(SERVER_RETRIES + 1):
-                async with client.stream('POST', base_url.rstrip('/') + '/chat/completions',
-                                         json=payload, headers=headers) as response:
+                async with connect_stream(client, base_url.rstrip('/') + '/chat/completions',
+                                          payload, headers, emit) as response:
                     if response.status_code in SERVER_ERRORS and attempt < SERVER_RETRIES:
                         # the provider's server briefly unreachable (Mistral answered 503
                         # "upstream connect error" for ~25 s, 2026-11-03): nothing ran, so

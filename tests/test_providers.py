@@ -104,6 +104,32 @@ def test_a_brief_provider_outage_is_retried(monkeypatch):
     assert any(kind=='status' and 'HTTP 503' in text for kind,text in events)
 
 
+def test_a_connection_that_cannot_open_is_retried(endpoint,monkeypatch):
+    """A Mistral ConnectTimeout lost a whole request (2026-11-03)."""
+    import httpx
+    from qtpy_ai_sidecar import backend
+    url,received,chunks=endpoint
+    chunks.append({'choices':[{'delta':{'content':'Hello'},'finish_reason':'stop'}]})
+    real_sleep=asyncio.sleep
+    async def fast(seconds):
+        await real_sleep(0)
+    monkeypatch.setattr(backend.asyncio,'sleep',fast)
+    real_stream=httpx.AsyncClient.stream
+    failures=[]
+    def flaky(self,*args,**kwargs):
+        if len(failures)<2:
+            failures.append(1)
+            raise httpx.ConnectTimeout('')
+        return real_stream(self,*args,**kwargs)
+    monkeypatch.setattr(httpx.AsyncClient,'stream',flaky)
+    monkeypatch.setenv('SIDECAR_TEST_KEY','test-not-a-real-api-key')
+    config=Config(provider='mistral',base_url=url,model='m',api_key_env='SIDECAR_TEST_KEY')
+    events=[]
+    answer,_=asyncio.run(ModelClient(config).complete([{'role':'user','content':'Hi'}],[],threading.Event(),lambda *a:events.append(a)))
+    assert answer['content']=='Hello' and len(failures)==2 and len(received)==1
+    assert any(kind=='status' and 'ConnectTimeout' in text for kind,text in events)
+
+
 def test_groq_transport_vision_and_rate_limit(monkeypatch):
     """Groq (cloud Qwen3.8-27B): reasoning kept out of the text, previews sent
     by 'auto', and an HTTP 429 waited out and retried."""
