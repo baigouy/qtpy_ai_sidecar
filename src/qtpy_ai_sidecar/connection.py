@@ -17,10 +17,13 @@ PRESETS = {'local': 'http://127.0.0.1:1234/v1', 'openai': 'https://api.openai.co
 # Free tiers listed at github.com/nejib1/Free-LLM (2026-11-03): IteraCompute's
 # model list marks qwen/qwen3.8-27b free; NVIDIA NIM lists the Nemotron VL id
 # (Hetzner's inference API, listed there too, turned out not to be free);
-# Mistral's alias for its current Large model (docs.mistral.ai, 2026-11-03)
+# Mistral Large 4 (1M context, reads images; mistral-large-latest was still
+# Large 3 on Mistral's model list, 2026-11-03). Mistral also serves Z.ai's GLM
+# models (zai-glm-*) with the same key; 'List models…' shows them.
 DEFAULT_MODELS = {'openrouter': 'openrouter/free', 'groq': 'qwen/qwen3.8-27b',
                   'iteracompute': 'qwen/qwen3.8-27b', 'nvidia': 'nvidia/nemotron-3.5-super-vl-120b-a12b',
-                  'mistral': 'mistral-large-latest'}
+                  'mistral': 'mistral-large-4'}
+READS_IMAGES = '  (reads images)'
 # how these providers' keys begin: a key pasted with the wrong provider still
 # selected would otherwise replace that provider's stored key (2026-11-03)
 KEY_PREFIXES = {'openrouter': 'sk-or-', 'anthropic': 'sk-ant-', 'groq': 'gsk_', 'nvidia': 'nvapi-'}
@@ -30,6 +33,7 @@ class ConnectionDialog(QDialog):
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self.config, self.result_config = config, None
+        self.vision_models = set()
         self.setWindowTitle('Model connection and secure credentials')
         form = QFormLayout(self)
         self.provider = QComboBox()
@@ -116,6 +120,11 @@ class ConnectionDialog(QDialog):
         if reply.status_code >= 400:
             raise ValueError(f'The provider answered HTTP {reply.status_code}: {reply.text[:300]}')
         models = reply.json().get('data', [])
+        # Mistral gives capabilities: keep the chat models that call tools (no
+        # embedding, OCR or speech models) and note which read images
+        models = [m for m in models if 'capabilities' not in m
+                  or (m['capabilities'].get('completion_chat') and m['capabilities'].get('function_calling'))]
+        self.vision_models = {m['id'] for m in models if (m.get('capabilities') or {}).get('vision')}
         free = [m['id'] for m in models if m.get('is_free') or str(m.get('id', '')).endswith(':free')]
         return free + sorted(m['id'] for m in models if m.get('id') and m['id'] not in free)
 
@@ -130,9 +139,10 @@ class ConnectionDialog(QDialog):
             self.error.setText('The provider listed no models for this key.')
             return
         current = models.index(self.model.text()) if self.model.text() in models else 0
-        chosen, ok = QInputDialog.getItem(self, 'Models', f'{len(models)} models available:', models, current, False)
+        labels = [m + READS_IMAGES if m in self.vision_models else m for m in models]
+        chosen, ok = QInputDialog.getItem(self, 'Models', f'{len(models)} models available:', labels, current, False)
         if ok and chosen:
-            self.model.setText(chosen)
+            self.model.setText(chosen.removesuffix(READS_IMAGES))
             self.error.setText('')
 
     def delete(self):

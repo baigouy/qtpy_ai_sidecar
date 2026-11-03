@@ -70,7 +70,7 @@ def test_connection_dialog_groq_preset(tmp_path):
     assert candidate.base_url == 'https://openrouter.ai/api/v1' and candidate.model == 'openrouter/free'
     for provider, url, model in (('iteracompute', 'https://api.iteracompute.com/v1', 'qwen/qwen3.8-27b'),
                                  ('nvidia', 'https://integrate.api.nvidia.com/v1', 'nvidia/nemotron-3.5-super-vl-120b-a12b'),
-                                 ('mistral', 'https://api.mistral.ai/v1', 'mistral-large-latest')):
+                                 ('mistral', 'https://api.mistral.ai/v1', 'mistral-large-4')):
         dialog.provider.setCurrentIndex(dialog.provider.findData(provider))
         candidate = dialog.candidate()
         assert (candidate.provider, candidate.base_url, candidate.model) == (provider, url, model)
@@ -97,6 +97,40 @@ def test_a_key_for_another_provider_is_not_saved(tmp_path, monkeypatch):
     dialog.key.setText('test-not-a-real-mistral-key')
     dialog.save()
     assert stored == [('mistral', 'test-not-a-real-mistral-key')] and dialog.result_config.provider == 'mistral'
+    dialog.close()
+
+
+def test_mistral_model_list_keeps_tool_chat_models_and_marks_vision(tmp_path, monkeypatch):
+    """Mistral's list (capabilities per model, Z.ai GLM included): embedding/OCR/
+    speech models dropped, models that read images marked, the mark not kept."""
+    import httpx
+    from qtpy.QtWidgets import QInputDialog
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.connection import ConnectionDialog, READS_IMAGES
+    app = QApplication.instance() or QApplication([])
+    chat = {'completion_chat': True, 'function_calling': True}
+
+    class Reply:
+        status_code = 200
+        text = ''
+        def json(self):
+            return {'data': [{'id': 'mistral-large-4', 'capabilities': dict(chat, vision=True)},
+                             {'id': 'zai-glm-latest', 'capabilities': dict(chat, vision=False)},
+                             {'id': 'mistral-embed', 'capabilities': {'completion_chat': False}},
+                             {'id': 'voxtral-mini-latest', 'capabilities': {'completion_chat': True}}]}
+    monkeypatch.setattr(httpx, 'get', lambda url, timeout=0, headers=None: Reply())
+    shown = []
+
+    def get_item(parent, title, label, items, current, editable):
+        shown.extend(items)
+        return items[0], True
+    monkeypatch.setattr(QInputDialog, 'getItem', staticmethod(get_item))
+    dialog = ConnectionDialog(Config(state_dir=str(tmp_path), provider='compatible', model='x'))
+    dialog.provider.setCurrentIndex(dialog.provider.findData('mistral'))
+    dialog.key.setText('test-not-a-real-key')
+    dialog.choose_model()
+    assert shown == ['mistral-large-4' + READS_IMAGES, 'zai-glm-latest']
+    assert dialog.model.text() == 'mistral-large-4'
     dialog.close()
 
 
