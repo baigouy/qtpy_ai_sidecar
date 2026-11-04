@@ -141,3 +141,7 @@ Implementation references: [llama.cpp server](https://github.com/ggml-org/llama.
 Tool IDs are stable across reconnects. Completed tool calls/results and discovered schemas remain in working context until explicit compression or the context budget is reached; a new message no longer discards them.
 For simple PyFigures letter-color edits, the host can finish immediately from exact verified target/color readback, without another model generation. Compound requests remain with the model.
 Model responses have an adjustable time cap (120 seconds by default, under Performance settings). This is separate from context and output-token limits; no context reduction is implied. An incomplete response is never executed as a tool call. A text-only recovery, when needed, has no tools and does not replay edits.
+
+## Licence
+
+BSD 2-Clause (see [LICENSE](LICENSE)). Copyright (c) 2026, Benoit Aigouy.
