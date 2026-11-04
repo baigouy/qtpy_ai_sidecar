@@ -184,6 +184,20 @@ def test_completion_summary_is_not_choices():
     assert choices('Done:\n1. Color changed\n2. Layout preserved') == []
 
 
+def test_options_inside_the_question_are_choices():
+    """User finding 2026-11-04: options written in the sentence were not
+    clickable (only lists were)."""
+    assert choices('Panel **b** is selected. What would you like to add on it — a **text note**, a '
+                   '**region of interest (ROI) box**, or an **arrow**? If you have specific wording, tell me.') \
+        == ['text note', 'region of interest (ROI) box', 'arrow']
+    assert choices('The bulk operation was rejected. Quick check: should the 10 µm bar go on '
+                   '**all five panels (a–e)**, or only specific ones?') \
+        == ['all five panels (a–e)', 'only specific ones']
+    # bold words in a statement, or a single bold word in a plain question, are not options
+    assert choices('Done — panel **b** now has an **inset**. Anything else?') == []
+    assert choices('Should I recolour **b**?') == []
+
+
 def test_short_cards_do_not_stretch_and_text_reflows(tmp_path):
     from qtpy.QtWidgets import QFrame
     from qtpy_ai_sidecar.widgets import MessageBrowser

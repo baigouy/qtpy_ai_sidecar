@@ -265,7 +265,10 @@ class PyFiguresAdapter:
         if plural_style_collection:singular=None
         operation = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
         if operation=='review_submission_readiness':self._quality_review_requested=True
-        if operation=='set_scale_bar_all' and not re.search(r'\b(?:all|every|each|whole|entire|throughout)\b|\bscale[ -]?bars\b',text,re.I):
+        # "add a 10 um scale bar to images" / "to the panels" / "to the figure": plural
+        # pictures with no letters after them mean every panel (it was refused)
+        plural_target=re.search(r'\b(?:to|on|for|in)\s+(?:the\s+|my\s+|these\s+|those\s+)?(?:images|panels|pictures|photos|figure)\b(?!\s+(?:[a-z]|\d+/\d+)\b(?:\s*(?:,|and|&)|\s*$))',text,re.I)
+        if operation=='set_scale_bar_all' and not plural_target and not re.search(r'\b(?:all|every|each|whole|entire|throughout)\b|\bscale[ -]?bars\b',text,re.I):
             # "Give a a scale bar", "put b a scale bar", "panel c": the request names its panel
             named=re.search(r'\b(?:panel|image)\s+([a-z]{1,2}|\d+/\d+)\b',text,re.I)
             if named and (re.search(r'\b(?:this|that|the|selected|current|same)\s*$',text[:named.start()],re.I)

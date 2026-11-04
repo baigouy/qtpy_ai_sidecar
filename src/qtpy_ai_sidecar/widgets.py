@@ -43,7 +43,27 @@ def choices(text):
         match = re.match(r'^\s*(?:\d+[.)]|[-*•])\s+(.+?)\s*$', line)
         if match:
             result.append(match.group(1))
-    return result if 2 <= len(result) <= 8 else []
+    if 2 <= len(result) <= 8:
+        return result
+    return inline_choices(text)
+
+
+def inline_choices(text):
+    """Options written inside the question itself (user finding 2026-11-04):
+    'add a **text note**, an **ROI box**, or an **arrow**?' or 'should it go
+    on **all five panels (a–e)**, or only specific ones?'. Bold words are the
+    options; one bold option plus 'or …' gives the alternative too."""
+    questions = re.findall(r'[^.!?\n]*\?', text)
+    for question in reversed(questions):
+        bold = [b.strip() for b in re.findall(r'\*\*(.+?)\*\*', question) if b.strip()]
+        if 2 <= len(bold) <= 8:
+            return bold
+        if len(bold) == 1:
+            tail = question[question.rindex('**') + 2:]
+            other = re.match(r'\s*,?\s*or\s+(.+?)\s*\?\s*$', tail, re.I)
+            if other and 0 < len(other.group(1).split()) <= 6:
+                return [bold[0], other.group(1)]
+    return []
 
 
 _DEVICE_PIXELS = None

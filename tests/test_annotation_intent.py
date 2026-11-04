@@ -22,6 +22,19 @@ def test_singular_scale_bar_cannot_broaden_to_all_panels():
     adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_scale_bar',arguments={}),{},'Give a a scale bar')
 
 
+def test_scale_bar_to_images_means_every_panel():
+    """'add a 10 um (micron) scale bar to images' was refused as not a
+    whole-figure request (user finding 2026-11-04): plural pictures with no
+    letters after them are every panel."""
+    adapter=PyFiguresAdapter('unused')
+    for request in ('add a 10 um (micron) scale bar to images','Add a scale bar to the panels',
+                    'put a 5 µm scale bar on the figure','add a scale bar on my pictures'):
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_scale_bar_all',arguments={}),{},request)
+    for request in ('add a scale bar to images a and b','Add a scale bar to the selected image'):
+        with pytest.raises(ValueError,match='SCOPE_MISMATCH'):
+            adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='set_scale_bar_all',arguments={}),{},request)
+
+
 @pytest.mark.parametrize('request_text,panel',[('Give a a 10 micrometre scale bar','a'),('Give panel c a scale bar','c'),
                                                ('Put b a 5 um scale bar','b'),('Add a scale bar to the selected image',None),
                                                ('Give the selected panel a 10 um scale bar',None),('Give this image a 10 um scale bar',None),
