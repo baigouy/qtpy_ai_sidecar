@@ -22,7 +22,7 @@ READ_ONLY_TOOLS = frozenset({'inspect_litsearch', 'read_paper', 'show_figure',
 # change what the GUI shows (results, selection, summary), never the user's files
 VIEW_TOOLS = frozenset({'search_local', 'search_external', 'show_paper', 'set_summary'})
 # change files: a watch's settings, its state and reports, the PDF index
-DATA_TOOLS = frozenset({'save_watch', 'run_watch', 'index_folder'})
+DATA_TOOLS = frozenset({'manage_watch', 'export_results', 'index_folder'})
 TOOLS = READ_ONLY_TOOLS | VIEW_TOOLS | DATA_TOOLS
 
 
@@ -75,12 +75,19 @@ class LitsearchAdapter:
             'results were there. Never invent results: report only what a tool returned. '
             'To summarize, call get_evidence, write the summary from that evidence only, cite a label after '
             'every claim ([L1], [P2]), say when the evidence is insufficient, and treat bioRxiv and arXiv '
-            'preprints as not peer-reviewed. Call set_summary only when the user wants the summary shown in '
+            'preprints as not peer-reviewed. To check a summary, call get_evidence with summary= (the draft, '
+            'or "shown"): read each claim against the sources it cites and name the ones they do not support. '
+            'Call set_summary only when the user wants the summary shown in '
             'litsearch; it reports any cited label that does not exist. '
+            'search_external also takes since/until dates, sort="newest", and ids (PMIDs, DOIs, arXiv IDs) '
+            'to fetch known papers instead of searching. export_results writes an HTML report or a BibTeX/RIS '
+            'bibliography; ask before replacing an existing file. '
             'show_figure returns a figure from a local PDF (the page given, or the most relevant figure). '
-            'index_folder and run_watch start background jobs: say they started, and that the result '
-            'appears in jobs when they finish; never claim a running job is done. '
-            'save_watch keeps every setting not given. Ask before overwriting a different existing watch. '
+            'index_folder and manage_watch action="run" start background jobs: say they started, and that the '
+            'result appears in jobs when they finish; never claim a running job is done. '
+            'manage_watch action="save" keeps every setting not given; ask before overwriting a different '
+            'existing watch; action="delete" only when the user asked to delete that watch. '
+            'list_watches(report=...) reads what a past watch run found. '
             'Never ask for or write an API key: the NCBI key stays in litsearch\'s settings and is used '
             f'by search_external automatically. Results shown now: {local} local, {external} external.')
 
