@@ -90,6 +90,8 @@ class LitsearchAdapter:
             'show_figure returns a figure from a local PDF (the page given, or the most relevant figure). '
             'library action="index" and manage_watch action="run" start background jobs: say they started, and '
             'that the result appears in jobs when they finish; never claim a running job is done. '
+            'search_local(paper=L2) searches inside one paper. Jobs show progress (pdfs_done of pdfs_total) '
+            'and when they started; library action="stop" stops indexing after the current PDF. '
             'library: "list" shows the indexed papers; external results already indexed carry in_library. '
             '"download" fetches only free legal PDFs of P results into the library folder and indexes them; '
             'for those not downloaded, offer to open their pages (action "open") so the user can download them '
