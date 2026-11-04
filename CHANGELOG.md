@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Up to 24 tools are passed to the model directly (was 12); `QTPY_AI_SIDECAR_MAX_DIRECT_TOOLS` changes it.
+- litsearch adapter: 22 tools, one per task (reviews, checks, notes, downloads, saved reviews).
+
 ## 0.1.0 — 2026-10-23
 
 - Independent QtPy package, standalone launcher and embedding API.
@@ -13,7 +18,7 @@
 Initial developer release. See README for validation boundaries and remaining integration work.
 
 - Added PyFigures row-swap guidance/verified completion and validated canvas click context (prototype bridge required).
-- litsearch adapter (`adapters/litsearch.py`): live state, read-only classification of its twelve tools, docking in its window; docking shared with PyFigures (`adapters/docking.py`); `Config.from_dict` for hosts that build their configuration in code; the standalone launcher accepts `"type": "litsearch"`.
+- litsearch adapter (`adapters/litsearch.py`): live state, read-only classification of its tools, docking in its window; docking shared with PyFigures (`adapters/docking.py`); `Config.from_dict` for hosts that build their configuration in code; the standalone launcher accepts `"type": "litsearch"`.
 - Optional embeddings (`embeddings.py`, tools menu > Embeddings…): off by default; the Mistral API with the stored Mistral key, or a local OpenAI-compatible server; `Embedder.model_id` for hosts to record what built their vectors.
 - Optional image descriptions for image search (PyFigures): `Embedder.describe()` and `vision_id`, the Embeddings… dialog's Image descriptions field (Mistral: `mistral-small-latest` by default; local: only a named vision model); `search_images` is a read-only PyFigures call.
 - litsearch adapter: `manage_watch` (save / run / delete) replaces `save_watch` and `run_watch`; new `export_results`; instructions for date filters, fetching by identifier and checking a summary's claims.

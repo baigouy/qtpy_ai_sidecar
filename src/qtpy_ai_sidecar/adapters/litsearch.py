@@ -17,12 +17,14 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 # The tools litsearch's MCP server offers, by what they change.
-READ_ONLY_TOOLS = frozenset({'inspect_litsearch', 'read_paper', 'show_figure',
-                             'get_evidence', 'list_watches'})
-# change what the GUI shows (results, selection, summary), never the user's files
-VIEW_TOOLS = frozenset({'search_local', 'search_external', 'show_paper', 'set_summary'})
-# change files: a watch's settings, its state and reports, the PDF index
-DATA_TOOLS = frozenset({'manage_watch', 'export_results', 'library'})
+READ_ONLY_TOOLS = frozenset({'inspect_litsearch', 'read_paper', 'show_figure', 'get_evidence',
+                             'review_material', 'list_watches', 'list_notes', 'check_papers'})
+# change what the GUI shows (results, selection, summary) or open a page, never the user's files
+VIEW_TOOLS = frozenset({'search_local', 'search_external', 'show_paper', 'set_summary', 'restore_view',
+                        'open_papers'})
+# change files: watches, exports, the PDF index, downloads, tags / notes, saved reviews
+DATA_TOOLS = frozenset({'manage_watch', 'export_results', 'library', 'download_papers', 'tag_papers',
+                        'note_paper', 'screen_papers', 'saved_reviews'})
 TOOLS = READ_ONLY_TOOLS | VIEW_TOOLS | DATA_TOOLS
 
 
@@ -49,8 +51,13 @@ class LitsearchAdapter:
     def is_read_only_call(self, tool_name, arguments):
         if tool_name in READ_ONLY_TOOLS:
             return True
-        if tool_name == 'library':      # list / duplicates / notes read; the other actions act
-            return (arguments or {}).get('action', 'list') in ('list', 'duplicates', 'notes')
+        action = (arguments or {}).get('action', 'list')
+        if tool_name == 'library':      # list / duplicates read; the other actions act
+            return action in ('list', 'duplicates')
+        if tool_name == 'saved_reviews':
+            return action == 'list'
+        if tool_name == 'screen_papers':    # without papers: the counts only
+            return not (arguments or {}).get('papers')
         if tool_name in VIEW_TOOLS or tool_name in DATA_TOOLS:
             return False
         return None   # another connected server: its own MCP hint decides
@@ -79,49 +86,46 @@ class LitsearchAdapter:
             'every claim ([L1], [P2]), say when the evidence is insufficient, and treat bioRxiv and arXiv '
             'preprints as not peer-reviewed. To check a summary, call get_evidence with summary= (the draft, '
             'or "shown"): read each claim against the sources it cites and name the ones they do not support. '
-            'For a review of chosen papers (guided by points the user wants addressed), call get_evidence '
-            'with review=True, papers= (labels) and points= (the user\'s questions, as given); write one '
-            'cited section per point from those passages only, say which papers are silent on a point, '
-            'then show it with set_summary and check it with get_evidence(summary="shown"). '
-            'papers= may be ["tag:to-read"] (a reading list; it replaces the results shown). '
-            'For a comparison table, call get_evidence(review=True) with one point per column, fill one row '
-            'per paper with the values found (page in brackets, "not reported" otherwise), show it as a '
-            'Markdown table and save it with export_results(table=[{"paper": "L1", ...}]) as csv, md or docx; '
-            'export_results md/docx also numbers the citations of the Summary tab with a reference list '
-            '(style vancouver, apa or nature). Every search or summary that replaces the view is kept: '
-            'inspect_litsearch lists the history, set_summary(restore=n) brings one back. '
-            'show_figure with only a query searches figures in the whole library. '
-            'library action "screen" records include / exclude / maybe decisions (with the user\'s reason) for '
-            'a named review; "import" reads a Zotero / EndNote .ris or .bib export. '
+            'Call set_summary only when the user wants the summary shown in litsearch; it reports any cited '
+            'label that does not exist. '
+            'REVIEWS: for a review of chosen papers, guided by the points the user wants addressed, call '
+            'review_material(papers=labels, points=the user\'s questions as given); write one cited section per '
+            'point from those passages only, say which papers are silent on a point, show it with set_summary, '
+            'check it with get_evidence(summary="shown"), and offer saved_reviews(action="save") to keep it. '
+            'For a comparison table, review_material with one point per column, one row per paper (page in '
+            'brackets, "not reported" otherwise), shown as a Markdown table and saved with '
+            'export_results(table=[{"paper": "L1", ...}]) as csv, md or docx. export_results md / docx number '
+            'the citations of the Summary tab with a reference list (style vancouver, apa or nature). '
+            'Before citing papers in a review, offer check_papers (retractions, corrections); check_papers('
+            'published_versions=True) finds the journal version of preprints, only when the user asks. '
             'To cite in Word / LibreOffice, export_results(labels=["cited"]) to a .ris named after the review; '
             'the user imports it in Zotero (File > Import: a collection of that name, PDFs attached) and cites '
             'with the Zotero plugin. '
-            'manage_watch download_to= makes a watch download its new open-access PDFs into the library. '
-            'Call set_summary only when the user wants the summary shown in '
-            'litsearch; it reports any cited label that does not exist. '
-            'search_external also takes since/until dates, sort="newest", and ids (PMIDs, DOIs, arXiv IDs) '
-            'to fetch known papers instead of searching, or related_to (a label, PMID or DOI) with relation '
-            '"similar", "citing" or "references" for related papers; append=True (also on search_local) adds to '
-            'the results shown instead of replacing them. read_paper(P#, full_text=True) reads an open-access '
-            'article in full. export_results writes an HTML report or a BibTeX/RIS '
-            'bibliography; ask before replacing an existing file. '
-            'show_figure returns a figure from a local PDF (the page given, or the most relevant figure). '
-            'library action="index" and manage_watch action="run" start background jobs: say they started, and '
-            'that the result appears in jobs when they finish; never claim a running job is done. '
-            'search_local(paper=L2) searches inside one paper. Jobs show progress (pdfs_done of pdfs_total) '
-            'and when they started; library action="stop" stops indexing after the current PDF. '
-            'manage_watch weekly="Monday 09:00" or "off" sets a watch\'s weekly run (Windows only). '
-            'library action="duplicates" finds papers indexed twice. library "tag" / "note" keep the user\'s '
-            'tags (reading lists such as to-read) and notes on papers, "notes" lists them; results show tags and '
-            'has_note. Write a note only with what the user asked to note. '
-            'library: "list" shows the indexed papers; external results already indexed carry in_library. '
-            '"download" fetches only free legal PDFs of P results into the library folder and indexes them; '
-            'for those not downloaded, offer to open their pages (action "open") so the user can download them '
-            'by hand. Also offer "open" whenever the user prefers to download a paper themselves. "remove" '
-            'takes papers out of the index (files kept) only when the user asks. '
-            'manage_watch action="save" keeps every setting not given; ask before overwriting a different '
-            'existing watch; action="delete" only when the user asked to delete that watch. '
-            'list_watches(report=...) reads what a past watch run found. '
+            'Any papers= may be ["tag:to-read"] (a reading list; it replaces the results shown). '
+            'UNDO: every view a tool replaces is kept; inspect_litsearch lists the history, restore_view(n) '
+            'brings one back. '
+            'SEARCH: search_local and search_external REPLACE the results shown unless append=True. '
+            'search_external takes since/until dates, sort="newest" or "cited" (most cited first, OpenAlex '
+            'counts), openalex_results (all fields, not only biomedicine), ids (PMIDs, DOIs, arXiv IDs) to '
+            'fetch known papers, or related_to (a label, PMID or DOI) with relation "similar", "citing" or '
+            '"references". search_local(paper=L2) searches inside one paper. read_paper(P#, full_text=True) '
+            'reads an open-access article in full. show_figure returns a figure from a local PDF; with only a '
+            'query, the most relevant figure in the whole library. '
+            'LIBRARY: library "list" the indexed papers (external results already indexed carry in_library), '
+            '"duplicates", "index" a folder and "stop" it (background jobs: say they started; never claim a '
+            'running job is done; jobs show progress), "remove" papers only when the user asks, "import" a '
+            'Zotero / EndNote .ris or .bib export. download_papers fetches only free legal PDFs of P results '
+            'into the library and indexes them; for the others, offer open_papers so the user downloads them '
+            'by hand (also whenever the user prefers to). tag_papers / note_paper keep the user\'s reading '
+            'lists and notes (write a note only with what the user asked to note); list_notes lists them. '
+            'screen_papers records include / exclude / maybe decisions, with the user\'s reason, for a named '
+            'review and returns the counts. '
+            'WATCHES: manage_watch action="save" keeps every setting not given; ask before overwriting a '
+            'different existing watch; "delete" only when asked; "run" starts a background job. weekly='
+            '"Monday 09:00" or "off" (Windows only); cites= a PMID or DOI watches the papers citing it; '
+            'download_to= a library folder downloads new open-access PDFs; follow_preprints=True (only when '
+            'asked) reports when followed preprints are published. list_watches(report=...) reads a past run. '
+            'export_results writes HTML, BibTeX, RIS, Markdown, Word or CSV; ask before replacing a file. '
             'Never ask for or write an API key: the NCBI key stays in litsearch\'s settings and is used '
             f'by search_external automatically. Results shown now: {local} local, {external} external.')
 

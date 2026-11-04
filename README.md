@@ -47,7 +47,7 @@ Supply a JSON configuration with `--config path/to/application.json`. Both stdio
 
 An HTTP server uses `{"url":"http://127.0.0.1:8765/mcp"}` instead. MCP header/env values can reference environment variables (`${NAME}`; Windows also accepts `%NAME%`). Do not put secret literals in an application config. The model API key is handled separately by the vault UI.
 
-`examples/demo.json` connects a small persistent demo document, independent of PyFigures. Run from the repository root, or replace its command/argument paths with absolute paths. A model capable of structured tool calling is required. Small MCP surfaces (at most twelve tools) are passed directly; large surfaces use paginated discovery, keeping all schemas out of the prompt until needed. Existing category-based servers therefore keep their efficient small surface.
+`examples/demo.json` connects a small persistent demo document, independent of PyFigures. Run from the repository root, or replace its command/argument paths with absolute paths. A model capable of structured tool calling is required. Small MCP surfaces (at most 24 tools; `QTPY_AI_SIDECAR_MAX_DIRECT_TOOLS` changes the limit) are passed directly; large surfaces use paginated discovery, keeping all schemas out of the prompt until needed. Existing category-based servers therefore keep their efficient small surface.
 
 ## Embed in a Qt host
 
@@ -97,7 +97,7 @@ It follows the PyFigures pattern: the GUI serves an authenticated loopback bridg
 | `search_local`, `search_external`, `show_paper`, `set_summary` | what the window shows (results, selection, summary) |
 | `manage_watch` (save / run / delete), `export_results`, `library` (list / index / remove / download / open) | files: a watch's settings, its state and report; an HTML report or BibTeX/RIS bibliography; the PDF index and downloaded PDFs (`library` with `action="list"` is read-only) |
 
-Twelve tools, so they are passed to the model directly (related actions share a tool to stay within twelve). litsearch has no undo, so no Undo/Redo controls are shown; `manage_watch` runs and `library` indexing start background jobs that the state reports when they finish. The provider and model are this panel's own connection settings for "litsearch" (first-run preset: Mistral AI API, `mistral-large-4`); keys stay in the OS vault, and litsearch's NCBI key stays in litsearch's own settings, never in the chat. The standalone window can also connect to a running litsearch with `{"adapter": {"type": "litsearch", "descriptor": "~/.litsearch/sidecar/connection.json"}}` and the same MCP server in its config.
+Twenty-two tools, one per task, passed to the model directly (up to 24 are; more go behind a search step). litsearch has no undo, so no Undo/Redo controls are shown; `manage_watch` runs and `library` indexing start background jobs that the state reports when they finish. The provider and model are this panel's own connection settings for "litsearch" (first-run preset: Mistral AI API, `mistral-large-4`); keys stay in the OS vault, and litsearch's NCBI key stays in litsearch's own settings, never in the chat. The standalone window can also connect to a running litsearch with `{"adapter": {"type": "litsearch", "descriptor": "~/.litsearch/sidecar/connection.json"}}` and the same MCP server in its config.
 
 ## Optional embeddings
 

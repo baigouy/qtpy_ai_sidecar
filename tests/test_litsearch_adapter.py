@@ -86,14 +86,19 @@ def test_context_and_cache_epoch_follow_the_gui(bridge):
 def test_tools_are_classified_and_unknown_ones_left_to_their_server():
     adapter = L.LitsearchAdapter('unused.json')
     assert all(adapter.is_read_only_call(t, {}) is True for t in L.READ_ONLY_TOOLS)
-    assert all(adapter.is_read_only_call(t, {'action': 'run'}) is False for t in L.VIEW_TOOLS | L.DATA_TOOLS)
+    assert all(adapter.is_read_only_call(t, {'action': 'run', 'papers': ['P1']}) is False
+               for t in L.VIEW_TOOLS | L.DATA_TOOLS)
     assert adapter.is_read_only_call('library', {}) is True
     assert adapter.is_read_only_call('library', {'action': 'list', 'query': 'wing'}) is True
     assert all(adapter.is_read_only_call('library', {'action': a}) is False
-               for a in ('index', 'stop', 'remove', 'download', 'open', 'tag', 'note'))
-    assert all(adapter.is_read_only_call('library', {'action': a}) is True for a in ('duplicates', 'notes'))
+               for a in ('index', 'stop', 'remove', 'import'))
+    assert adapter.is_read_only_call('library', {'action': 'duplicates'}) is True
+    assert adapter.is_read_only_call('saved_reviews', {}) is True
+    assert adapter.is_read_only_call('saved_reviews', {'action': 'open', 'name': 'x'}) is False
+    assert adapter.is_read_only_call('screen_papers', {'review': 'r'}) is True
+    assert adapter.is_read_only_call('screen_papers', {'review': 'r', 'papers': ['P1']}) is False
     assert adapter.is_read_only_call('some_other_server_tool', {}) is None
-    assert len(L.TOOLS) == 12      # small enough to be passed to the model directly
+    assert len(L.TOOLS) == 22      # within the 24 passed to the model directly
 
 
 def test_no_undo_is_offered():

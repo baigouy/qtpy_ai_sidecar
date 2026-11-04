@@ -19,6 +19,17 @@ DISCOVERY = [
      'parameters': {'type': 'object', 'properties': {'tool_id': {'type': 'string'}, 'arguments': {'type': 'object'}}, 'required': ['tool_id', 'arguments']}}}]
 
 
+def _max_direct_tools():
+    """Up to this many tools are given to the model directly, by name; more
+    go behind a search step (find_application_tools), so a large application
+    does not fill a small model's context with every schema. Default 24;
+    QTPY_AI_SIDECAR_MAX_DIRECT_TOOLS changes it (0: always search)."""
+    try:
+        return max(0, int(os.environ.get('QTPY_AI_SIDECAR_MAX_DIRECT_TOOLS', '24')))
+    except ValueError:
+        return 24
+
+
 class MCPHub:
     full_schemas = 2    # search hits returned with their whole argument schema
 
@@ -116,7 +127,7 @@ class MCPHub:
                 'tools': entries}
 
     def direct_ids(self):
-        if len(self.tools)>12: return {}
+        if len(self.tools)>_max_direct_tools(): return {}
         names={}
         reserved={'find_application_tools','execute_application_tool'}
         for ident,(server,_,tool) in self.tools.items():
@@ -142,7 +153,7 @@ class MCPHub:
     def model_tools(self):
         # Stable opaque IDs remain internal. Small surfaces expose readable
         # callable names so local models need not reproduce random hashes.
-        if len(self.tools)<=12:
+        if len(self.tools)<=_max_direct_tools():
             result=[]
             for public,ident in self.direct_ids().items():
                 name,_,tool=self.tools[ident]
