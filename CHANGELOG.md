@@ -17,3 +17,4 @@ Initial developer release. See README for validation boundaries and remaining in
 - Optional embeddings (`embeddings.py`, tools menu > Embeddings…): off by default; the Mistral API with the stored Mistral key, or a local OpenAI-compatible server; `Embedder.model_id` for hosts to record what built their vectors.
 - Optional image descriptions for image search (PyFigures): `Embedder.describe()` and `vision_id`, the Embeddings… dialog's Image descriptions field (Mistral: `mistral-small-latest` by default; local: only a named vision model); `search_images` is a read-only PyFigures call.
 - litsearch adapter: `manage_watch` (save / run / delete) replaces `save_watch` and `run_watch`; new `export_results`; instructions for date filters, fetching by identifier and checking a summary's claims.
+- litsearch adapter: `library` (list / index / remove / download open-access PDFs / open pages) replaces `index_folder`; its "list" action is read-only.

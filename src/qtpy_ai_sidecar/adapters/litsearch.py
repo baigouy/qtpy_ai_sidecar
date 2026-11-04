@@ -22,7 +22,7 @@ READ_ONLY_TOOLS = frozenset({'inspect_litsearch', 'read_paper', 'show_figure',
 # change what the GUI shows (results, selection, summary), never the user's files
 VIEW_TOOLS = frozenset({'search_local', 'search_external', 'show_paper', 'set_summary'})
 # change files: a watch's settings, its state and reports, the PDF index
-DATA_TOOLS = frozenset({'manage_watch', 'export_results', 'index_folder'})
+DATA_TOOLS = frozenset({'manage_watch', 'export_results', 'library'})
 TOOLS = READ_ONLY_TOOLS | VIEW_TOOLS | DATA_TOOLS
 
 
@@ -49,6 +49,8 @@ class LitsearchAdapter:
     def is_read_only_call(self, tool_name, arguments):
         if tool_name in READ_ONLY_TOOLS:
             return True
+        if tool_name == 'library':      # "list" reads; index / remove / download / open act
+            return (arguments or {}).get('action', 'list') == 'list'
         if tool_name in VIEW_TOOLS or tool_name in DATA_TOOLS:
             return False
         return None   # another connected server: its own MCP hint decides
@@ -83,8 +85,13 @@ class LitsearchAdapter:
             'to fetch known papers instead of searching. export_results writes an HTML report or a BibTeX/RIS '
             'bibliography; ask before replacing an existing file. '
             'show_figure returns a figure from a local PDF (the page given, or the most relevant figure). '
-            'index_folder and manage_watch action="run" start background jobs: say they started, and that the '
-            'result appears in jobs when they finish; never claim a running job is done. '
+            'library action="index" and manage_watch action="run" start background jobs: say they started, and '
+            'that the result appears in jobs when they finish; never claim a running job is done. '
+            'library: "list" shows the indexed papers; external results already indexed carry in_library. '
+            '"download" fetches only free legal PDFs of P results into the library folder and indexes them; '
+            'for those not downloaded, offer to open their pages (action "open") so the user can download them '
+            'by hand. Also offer "open" whenever the user prefers to download a paper themselves. "remove" '
+            'takes papers out of the index (files kept) only when the user asks. '
             'manage_watch action="save" keeps every setting not given; ask before overwriting a different '
             'existing watch; action="delete" only when the user asked to delete that watch. '
             'list_watches(report=...) reads what a past watch run found. '

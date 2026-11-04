@@ -86,7 +86,11 @@ def test_context_and_cache_epoch_follow_the_gui(bridge):
 def test_tools_are_classified_and_unknown_ones_left_to_their_server():
     adapter = L.LitsearchAdapter('unused.json')
     assert all(adapter.is_read_only_call(t, {}) is True for t in L.READ_ONLY_TOOLS)
-    assert all(adapter.is_read_only_call(t, {}) is False for t in L.VIEW_TOOLS | L.DATA_TOOLS)
+    assert all(adapter.is_read_only_call(t, {'action': 'run'}) is False for t in L.VIEW_TOOLS | L.DATA_TOOLS)
+    assert adapter.is_read_only_call('library', {}) is True
+    assert adapter.is_read_only_call('library', {'action': 'list', 'query': 'wing'}) is True
+    assert all(adapter.is_read_only_call('library', {'action': a}) is False
+               for a in ('index', 'remove', 'download', 'open'))
     assert adapter.is_read_only_call('some_other_server_tool', {}) is None
     assert len(L.TOOLS) == 12      # small enough to be passed to the model directly
 

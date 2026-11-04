@@ -95,9 +95,9 @@ It follows the PyFigures pattern: the GUI serves an authenticated loopback bridg
 |---|---|
 | `inspect_litsearch`, `read_paper`, `show_figure`, `get_evidence`, `list_watches` | nothing (read-only) |
 | `search_local`, `search_external`, `show_paper`, `set_summary` | what the window shows (results, selection, summary) |
-| `manage_watch` (save / run / delete), `export_results`, `index_folder` | files: a watch's settings, its state and report; an HTML report or BibTeX/RIS bibliography; the PDF index |
+| `manage_watch` (save / run / delete), `export_results`, `library` (list / index / remove / download / open) | files: a watch's settings, its state and report; an HTML report or BibTeX/RIS bibliography; the PDF index and downloaded PDFs (`library` with `action="list"` is read-only) |
 
-Twelve tools, so they are passed to the model directly (related actions share a tool to stay within twelve). litsearch has no undo, so no Undo/Redo controls are shown; `manage_watch` runs and `index_folder` start background jobs that the state reports when they finish. The provider and model are this panel's own connection settings for "litsearch" (first-run preset: Mistral AI API, `mistral-large-4`); keys stay in the OS vault, and litsearch's NCBI key stays in litsearch's own settings, never in the chat. The standalone window can also connect to a running litsearch with `{"adapter": {"type": "litsearch", "descriptor": "~/.litsearch/sidecar/connection.json"}}` and the same MCP server in its config.
+Twelve tools, so they are passed to the model directly (related actions share a tool to stay within twelve). litsearch has no undo, so no Undo/Redo controls are shown; `manage_watch` runs and `library` indexing start background jobs that the state reports when they finish. The provider and model are this panel's own connection settings for "litsearch" (first-run preset: Mistral AI API, `mistral-large-4`); keys stay in the OS vault, and litsearch's NCBI key stays in litsearch's own settings, never in the chat. The standalone window can also connect to a running litsearch with `{"adapter": {"type": "litsearch", "descriptor": "~/.litsearch/sidecar/connection.json"}}` and the same MCP server in its config.
 
 ## Optional embeddings
 
