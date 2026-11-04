@@ -99,6 +99,15 @@ It follows the PyFigures pattern: the GUI serves an authenticated loopback bridg
 
 Twelve tools, so they are passed to the model directly. litsearch has no undo, so no Undo/Redo controls are shown; `run_watch` and `index_folder` start background jobs that the state reports when they finish. The provider and model are this panel's own connection settings for "litsearch" (first-run preset: Mistral AI API, `mistral-large-4`); keys stay in the OS vault, and litsearch's NCBI key stays in litsearch's own settings, never in the chat. The standalone window can also connect to a running litsearch with `{"adapter": {"type": "litsearch", "descriptor": "~/.litsearch/sidecar/connection.json"}}` and the same MCP server in its config.
 
+## Optional embeddings
+
+**Tools icon > Embeddings (optional)…** chooses a text-embeddings source for the applications that need one (litsearch indexes and searches PDFs with it). Off by default; the chat never uses it, and it adds no dependency (`embeddings.py`, `embeddings_dialog.py`, loaded only when used). The choice is shared by every application using the sidecar (`embeddings.json` beside `providers.json`):
+
+- **Mistral AI API** (`mistral-embed`): uses the key already stored for the Mistral chat provider, nothing more to set up. It sends the texts to Mistral (for litsearch, the full text of the PDFs you index); check that your agreement covers unpublished material.
+- **Local server**: any OpenAI-compatible `/v1/embeddings` server on this computer, e.g. `llama-server -m nomic-embed-text-v1.5.Q8_0.gguf --embedding --port 8081`, Ollama or LM Studio. Nothing leaves the computer.
+
+**Test** embeds one sentence with the settings shown. An index built with one model can only be searched with that model, so a host should record `Embedder.model_id` beside its vectors (litsearch does, and refuses a mismatch with a clear message). For a host: `from qtpy_ai_sidecar import embeddings; e = embeddings.configured()` gives `None` when off, else `e.embed(texts)` (synchronous, batched, retried on HTTP 429/5xx).
+
 ## Local runtime and modest hardware
 
 The sidecar owns only the llama-server process it starts. It never stops other servers or changes system GPU drivers. Downloads and updates are explicit. The managed installer selects compatible official Windows ZIPs or macOS/Linux tarballs for x64/ARM64. macOS uses Metal or CPU; Windows/Linux offer Vulkan or CPU. Official Linux binaries require compatible Ubuntu/glibc libraries; users of other distributions can choose a locally built executable.

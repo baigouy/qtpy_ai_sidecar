@@ -373,6 +373,8 @@ class AssistantDock(QDockWidget):
         tools_menu = QMenu(self.tools_button)
         tools_menu.addAction('Import MCP configuration…', self.import_servers)
         tools_menu.addAction('Export MCP configuration…', self.export_servers)
+        tools_menu.addSeparator()
+        tools_menu.addAction('Embeddings (optional)…', self.embeddings_settings)
         self.tools_button.setMenu(tools_menu)
         top.addWidget(self.tools_button)
         root.addLayout(top)
@@ -951,6 +953,10 @@ class AssistantDock(QDockWidget):
         dialog = ConnectionDialog(self.engine.config, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.replace_engine(dialog.result_config)
+
+    def embeddings_settings(self):
+        from .embeddings_dialog import EmbeddingsDialog
+        EmbeddingsDialog(self).exec()
 
     def import_servers(self):
         if self.busy:

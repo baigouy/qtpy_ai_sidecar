@@ -320,7 +320,7 @@ def test_provider_button_and_mcp_export(tmp_path, monkeypatch):
     dock.connection_label.click()
     assert opened
     labels = [a.text() for a in dock.tools_button.menu().actions()]
-    assert labels == ['Import MCP configuration…', 'Export MCP configuration…']
+    assert labels == ['Import MCP configuration…', 'Export MCP configuration…', '', 'Embeddings (optional)…']
     out = tmp_path / 'out.json'
     monkeypatch.setattr(widgets.QFileDialog, 'getSaveFileName', staticmethod(lambda *a, **k: (str(out), '')))
     dock.export_servers()
