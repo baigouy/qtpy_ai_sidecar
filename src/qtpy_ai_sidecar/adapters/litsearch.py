@@ -49,8 +49,8 @@ class LitsearchAdapter:
     def is_read_only_call(self, tool_name, arguments):
         if tool_name in READ_ONLY_TOOLS:
             return True
-        if tool_name == 'library':      # "list" reads; index / remove / download / open act
-            return (arguments or {}).get('action', 'list') == 'list'
+        if tool_name == 'library':      # list / duplicates / notes read; the other actions act
+            return (arguments or {}).get('action', 'list') in ('list', 'duplicates', 'notes')
         if tool_name in VIEW_TOOLS or tool_name in DATA_TOOLS:
             return False
         return None   # another connected server: its own MCP hint decides
@@ -93,7 +93,9 @@ class LitsearchAdapter:
             'search_local(paper=L2) searches inside one paper. Jobs show progress (pdfs_done of pdfs_total) '
             'and when they started; library action="stop" stops indexing after the current PDF. '
             'manage_watch weekly="Monday 09:00" or "off" sets a watch\'s weekly run (Windows only). '
-            'library action="duplicates" finds papers indexed twice. '
+            'library action="duplicates" finds papers indexed twice. library "tag" / "note" keep the user\'s '
+            'tags (reading lists such as to-read) and notes on papers, "notes" lists them; results show tags and '
+            'has_note. Write a note only with what the user asked to note. '
             'library: "list" shows the indexed papers; external results already indexed carry in_library. '
             '"download" fetches only free legal PDFs of P results into the library folder and indexes them; '
             'for those not downloaded, offer to open their pages (action "open") so the user can download them '
