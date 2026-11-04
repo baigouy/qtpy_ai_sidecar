@@ -18,10 +18,15 @@ def main():
         config = Config.load(default)
     adapter = None
     if config.adapter:
-        if config.adapter.get('type') != 'pyfigures':
+        kind = config.adapter.get('type')
+        if kind == 'pyfigures':
+            from .adapters.pyfigures import PyFiguresAdapter
+            adapter = PyFiguresAdapter(config.adapter['descriptor'])
+        elif kind == 'litsearch':
+            from .adapters.litsearch import LitsearchAdapter
+            adapter = LitsearchAdapter(config.adapter['descriptor'])
+        else:
             parser.error('Unknown adapter; embed the widget to supply a custom adapter')
-        from .adapters.pyfigures import PyFiguresAdapter
-        adapter = PyFiguresAdapter(config.adapter['descriptor'])
     from qtpy.QtWidgets import QApplication, QMainWindow
     from qtpy.QtCore import Qt
     from .widgets import AssistantDock

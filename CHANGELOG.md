@@ -13,3 +13,4 @@
 Initial developer release. See README for validation boundaries and remaining integration work.
 
 - Added PyFigures row-swap guidance/verified completion and validated canvas click context (prototype bridge required).
+- litsearch adapter (`adapters/litsearch.py`): live state, read-only classification of its twelve tools, docking in its window; docking shared with PyFigures (`adapters/docking.py`); `Config.from_dict` for hosts that build their configuration in code; the standalone launcher accepts `"type": "litsearch"`.

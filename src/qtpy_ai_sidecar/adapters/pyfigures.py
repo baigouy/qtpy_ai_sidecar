@@ -684,28 +684,6 @@ class PyFiguresAdapter:
 
 def attach_to_window(window, config, descriptor):
     """Embed this package in a running PyFigures prototype main window."""
-    from qtpy.QtCore import Qt
     from qtpy_ai_sidecar import create_dock
-    from qtpy_ai_sidecar.branding import application_icon
-    dock = create_dock(window, config, PyFiguresAdapter(descriptor))
-    dock.setWindowIcon(application_icon())
-    dock.setMinimumWidth(320)
-    dock.setMaximumWidth(560)
-    # Message/choice size hints must never steal the host canvas width.
-    from qtpy.QtCore import QObject, QEvent
-    class WidthGuard(QObject):
-        def eventFilter(self, obj, event):
-            if event.type() == QEvent.Type.Resize:
-                cap = max(280, min(560, int(obj.width() * 0.4)))
-                dock.setMinimumWidth(min(320, cap))
-                dock.setMaximumWidth(cap)
-            return False
-    dock._width_guard = WidthGuard(window)
-    window.installEventFilter(dock._width_guard)
-    dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
-    window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
-    dock.setFloating(False)
-    window.local_chat_dock = dock
-    window.resize(max(window.width(), 1400), max(window.height(), 850))
-    window.resizeDocks([dock], [480], Qt.Orientation.Horizontal)
-    return dock
+    from .docking import dock_beside
+    return dock_beside(window, create_dock(window, config, PyFiguresAdapter(descriptor)))

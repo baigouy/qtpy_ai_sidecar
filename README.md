@@ -85,6 +85,20 @@ The PyFigures prototype must be restarted to pick up its recent redo fixes. Use 
 
 Readability checks and PyFigures-specific editing policies remain in the original prototype/server for now; they are not universal features silently imposed on other applications. Interrupted tool transport marks the outcome uncertain and blocks subsequent requests until the human inspects and acknowledges. The core does not automatically replay work or promise arbitrary selective undo. Tool-step and output limits stop further submission and report completed edits may remain.
 
+## litsearch
+
+[litsearch](https://github.com/baigouy/litsearch) (literature search over a local PDF index, PubMed, bioRxiv and arXiv) docks this panel in its own window: install both packages in one environment (`pip install -e path/to/qtpy_ai_sidecar -e "path/to/litsearch[gui,sidecar]"`), run `python -m litsearch.gui` and choose **View > Chat assistant** (Ctrl+Shift+A, or the button beside the tabs). The entry is absent when this package is not installed.
+
+It follows the PyFigures pattern: the GUI serves an authenticated loopback bridge (a fresh token in a descriptor file readable by the user only, removed on exit), litsearch's MCP server (`python -m litsearch.sidecar.mcp_server`) forwards each tool call to it, and `LitsearchAdapter` (`adapters/litsearch.py`) reads the window's current state before every message, so "what did I find?" is answered without a tool step. `adapters/docking.py` docks the panel as for PyFigures. The tools act on the live window, whose labels they share: L1, L2… for local hits, P1, P2… for external articles.
+
+| Tool | Changes |
+|---|---|
+| `inspect_litsearch`, `read_paper`, `show_figure`, `get_evidence`, `list_watches` | nothing (read-only) |
+| `search_local`, `search_external`, `show_paper`, `set_summary` | what the window shows (results, selection, summary) |
+| `save_watch`, `run_watch`, `index_folder` | files: a watch's settings, its state and report, the PDF index |
+
+Twelve tools, so they are passed to the model directly. litsearch has no undo, so no Undo/Redo controls are shown; `run_watch` and `index_folder` start background jobs that the state reports when they finish. The provider and model are this panel's own connection settings for "litsearch" (first-run preset: Mistral AI API, `mistral-large-4`); keys stay in the OS vault, and litsearch's NCBI key stays in litsearch's own settings, never in the chat. The standalone window can also connect to a running litsearch with `{"adapter": {"type": "litsearch", "descriptor": "~/.litsearch/sidecar/connection.json"}}` and the same MCP server in its config.
+
 ## Local runtime and modest hardware
 
 The sidecar owns only the llama-server process it starts. It never stops other servers or changes system GPU drivers. Downloads and updates are explicit. The managed installer selects compatible official Windows ZIPs or macOS/Linux tarballs for x64/ARM64. macOS uses Metal or CPU; Windows/Linux offer Vulkan or CPU. Official Linux binaries require compatible Ubuntu/glibc libraries; users of other distributions can choose a locally built executable.

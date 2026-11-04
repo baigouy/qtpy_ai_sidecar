@@ -71,7 +71,14 @@ class Config:
 
     @classmethod
     def load(cls, path):
-        value = json.loads(Path(path).read_text(encoding='utf-8'))
+        return cls.from_dict(json.loads(Path(path).read_text(encoding='utf-8')))
+
+    @classmethod
+    def from_dict(cls, value):
+        """A host's built-in configuration (the same keys as an application
+        JSON file), then the user's saved connection, performance and MCP
+        settings for that application on top, as load() does."""
+        value = dict(value)
         value['servers'] = value.pop('mcpServers', value.get('servers', {}))
         config = cls(**value)
         preferences = config.storage() / 'performance.json'
