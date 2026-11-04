@@ -92,6 +92,8 @@ class LitsearchAdapter:
             'that the result appears in jobs when they finish; never claim a running job is done. '
             'search_local(paper=L2) searches inside one paper. Jobs show progress (pdfs_done of pdfs_total) '
             'and when they started; library action="stop" stops indexing after the current PDF. '
+            'manage_watch weekly="Monday 09:00" or "off" sets a watch\'s weekly run (Windows only). '
+            'library action="duplicates" finds papers indexed twice. '
             'library: "list" shows the indexed papers; external results already indexed carry in_library. '
             '"download" fetches only free legal PDFs of P results into the library folder and indexes them; '
             'for those not downloaded, offer to open their pages (action "open") so the user can download them '
