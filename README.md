@@ -103,7 +103,7 @@ Twelve tools, so they are passed to the model directly. litsearch has no undo, s
 
 **Tools icon > Embeddings (optional)…** chooses a text-embeddings source for the applications that need one (litsearch indexes and searches PDFs with it). Off by default; the chat never uses it, and it adds no dependency (`embeddings.py`, `embeddings_dialog.py`, loaded only when used). The choice is shared by every application using the sidecar (`embeddings.json` beside `providers.json`):
 
-- **Mistral AI API** (`mistral-embed`): uses the key already stored for the Mistral chat provider, nothing more to set up. It sends the texts to Mistral (for litsearch, the full text of the PDFs you index); check that your agreement covers unpublished material.
+- **Mistral AI API** (`mistral-embed`): uses the key already stored for the Mistral chat provider, nothing more to set up. It sends the texts to Mistral (for litsearch, the full text of the PDFs you index); check that your agreement covers unpublished material. With this source, litsearch's automatic OCR also reads scanned pages with Mistral OCR (same key).
 - **Local server**: any OpenAI-compatible `/v1/embeddings` server on this computer, e.g. `llama-server -m nomic-embed-text-v1.5.Q8_0.gguf --embedding --port 8081`, Ollama or LM Studio. Nothing leaves the computer.
 
 **Test** embeds one sentence with the settings shown. An index built with one model can only be searched with that model, so a host should record `Embedder.model_id` beside its vectors (litsearch does, and refuses a mismatch with a clear message). For a host: `from qtpy_ai_sidecar import embeddings; e = embeddings.configured()` gives `None` when off, else `e.embed(texts)` (synchronous, batched, retried on HTTP 429/5xx).
