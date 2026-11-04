@@ -40,6 +40,8 @@ def test_invalidation_and_capacity():
 def test_application_policy_never_caches_inner_mutations_or_gui_actions():
     adapter=PyFiguresAdapter('unused')
     assert adapter.is_read_only_call('use_pyfigures_tool',{'tool_name':'inspect_native_gui'}) is True
+    assert adapter.is_read_only_call('use_pyfigures_tool',{'tool_name':'search_images'}) is True
+    assert adapter.is_read_only_call('use_pyfigures_tool',{'tool_name':'index_image_folder'}) is False
     for name in ('edit_panel_letters','set_image_property','undo_redo','select_live_objects','open_annotation_editor','show_me_how'):
         assert adapter.is_read_only_call('use_pyfigures_tool',{'tool_name':name}) is False
     for name in ('select_live_objects','undo_redo','show_me_how','open_native_menu'):

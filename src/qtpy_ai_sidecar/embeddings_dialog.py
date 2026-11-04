@@ -8,10 +8,12 @@ LABELS = (('off', 'Off'), ('mistral', 'Mistral AI API (mistral-embed)'),
 NOTES = {
     'off': 'Applications that need embeddings (litsearch\'s PDF index) use their own source.',
     'mistral': 'Sends the texts to embed (for litsearch, the full text of your indexed PDFs) to Mistral, '
-               'with the key stored for the Mistral chat provider. Check that your agreement covers '
-               'unpublished material.',
+               'with the key stored for the Mistral chat provider; PyFigures\' image search also sends '
+               'small thumbnails of your images to the image-description model. Check that your '
+               'agreement covers unpublished material.',
     'local': 'Any OpenAI-compatible /v1/embeddings server on this computer, e.g. '
-             'llama-server -m nomic-embed-text-v1.5.Q8_0.gguf --embedding --port 8081. Nothing leaves it.'}
+             'llama-server -m nomic-embed-text-v1.5.Q8_0.gguf --embedding --port 8081. Nothing leaves it. '
+             'Image descriptions need a vision model on that server (leave empty for none).'}
 
 
 class EmbeddingsDialog(QDialog):
@@ -24,9 +26,13 @@ class EmbeddingsDialog(QDialog):
             self.source.addItem(label, key)
         self.model = QLineEdit()
         self.url = QLineEdit()
+        self.vision = QLineEdit()
+        self.vision.setToolTip('A vision model that describes pictures in words for image search '
+                               '(PyFigures); empty: the default (Mistral) or none (local)')
         form.addRow('Source:', self.source)
         form.addRow('Model:', self.model)
         form.addRow('Address:', self.url)
+        form.addRow('Image descriptions:', self.vision)
         self.note = QLabel()
         self.note.setWordWrap(True)
         form.addRow(self.note)
@@ -47,23 +53,28 @@ class EmbeddingsDialog(QDialog):
         if saved['source'] != 'off':
             self.model.setText(saved['model'])
             self.url.setText(saved['base_url'])
+            self.vision.setText(saved['vision_model'])
         self.changed(keep=True)
         self.source.currentIndexChanged.connect(lambda _: self.changed())
 
     def settings(self):
-        return {'source': self.source.currentData(), 'model': self.model.text(), 'base_url': self.url.text()}
+        return {'source': self.source.currentData(), 'model': self.model.text(), 'base_url': self.url.text(),
+                'vision_model': self.vision.text()}
 
     def changed(self, keep=False):
         source = self.source.currentData()
         on = source != 'off'
         self.model.setEnabled(on)
         self.url.setEnabled(source == 'local')
+        self.vision.setEnabled(on)
         if on and not (keep and self.model.text()):
             self.model.setText(embeddings.DEFAULTS[source]['model'])
             self.url.setText(embeddings.DEFAULTS[source]['base_url'])
+            self.vision.setText(embeddings.DEFAULTS[source]['vision_model'])
         if not on:
             self.model.clear()
             self.url.clear()
+            self.vision.clear()
         self.note.setText(NOTES[source])
         self.result.clear()
 

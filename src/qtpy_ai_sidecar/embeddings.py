@@ -12,6 +12,11 @@ in the sidecar's user data folder, beside providers.json):
 
 An index built with one model can only be searched with that same model:
 Embedder.model_id names it, for the host to record beside its vectors.
+
+Optional image descriptions (PyFigures' image search): Embedder.describe()
+asks a vision model to describe a picture in words, which are then embedded.
+Mistral: mistral-small-latest unless another vision model is set; local: only
+when a vision model is named (the server must serve it). Sends the picture.
 """
 import json
 import time
@@ -21,8 +26,10 @@ from urllib.parse import urlsplit
 
 SOURCES = ('off', 'mistral', 'local')
 MISTRAL_URL = 'https://api.mistral.ai/v1'
-DEFAULTS = {'mistral': {'model': 'mistral-embed', 'base_url': MISTRAL_URL},
-            'local': {'model': 'nomic-embed-text', 'base_url': 'http://127.0.0.1:8081/v1'}}
+DEFAULTS = {'mistral': {'model': 'mistral-embed', 'base_url': MISTRAL_URL,
+                        'vision_model': 'mistral-small-latest'},
+            'local': {'model': 'nomic-embed-text', 'base_url': 'http://127.0.0.1:8081/v1',
+                      'vision_model': ''}}
 BATCH_TEXTS = 64          # texts per request
 BATCH_CHARS = 40000       # ~10k tokens: under Mistral's per-request token limit
 RETRIES = 4
@@ -38,15 +45,17 @@ def path():
 
 
 def load():
-    """{'source', 'model', 'base_url'}; source 'off' when never configured."""
+    """{'source', 'model', 'base_url', 'vision_model'}; source 'off' when never
+    configured. vision_model '' = the source's default (none for local)."""
     try:
         value = json.loads(Path(path()).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         value = {}
     if not isinstance(value, dict) or value.get('source') not in SOURCES:
-        return {'source': 'off', 'model': '', 'base_url': ''}
+        return {'source': 'off', 'model': '', 'base_url': '', 'vision_model': ''}
     return {'source': value['source'], 'model': str(value.get('model') or ''),
-            'base_url': str(value.get('base_url') or '')}
+            'base_url': str(value.get('base_url') or ''),
+            'vision_model': str(value.get('vision_model') or '')}
 
 
 def validate(settings):
@@ -68,7 +77,8 @@ def validate(settings):
 
 def save(settings):
     settings = {'source': settings.get('source', 'off'), 'model': str(settings.get('model') or '').strip(),
-                'base_url': str(settings.get('base_url') or '').strip().rstrip('/')}
+                'base_url': str(settings.get('base_url') or '').strip().rstrip('/'),
+                'vision_model': str(settings.get('vision_model') or '').strip()}
     validate(settings)
     target = Path(path())
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -91,12 +101,19 @@ class Embedder:
         self.source = settings['source']
         self.model = settings['model'].strip()
         self.base_url = settings['base_url'].rstrip('/')
+        self.vision_model = (str(settings.get('vision_model') or '').strip()
+                             or DEFAULTS[self.source]['vision_model'])
         self.timeout = timeout
 
     @property
     def model_id(self):
         """What a host records beside its vectors, e.g. 'mistral/mistral-embed'."""
         return self.source + '/' + self.model
+
+    @property
+    def vision_id(self):
+        """The model describe() uses, e.g. 'mistral/mistral-small-latest'; '' when none."""
+        return self.source + '/' + self.vision_model if self.vision_model else ''
 
     def _headers(self):
         headers = {'Content-Type': 'application/json'}
@@ -134,12 +151,21 @@ class Embedder:
         return out
 
     def _post(self, client, headers, batch):
+        url = self.base_url + '/embeddings'
+        data = sorted(self._request(client, url, headers, {'model': self.model, 'input': batch}).get('data', []),
+                      key=lambda d: d.get('index', 0))
+        if len(data) != len(batch):
+            raise EmbeddingsUnavailable(f'{url} returned {len(data)} vectors for {len(batch)} texts')
+        return [d['embedding'] for d in data]
+
+    @staticmethod
+    def _request(client, url, headers, payload):
+        """POST with retries on busy (429) and server errors; the JSON reply."""
         import httpx
         from .backend import rate_limit_wait, SERVER_ERRORS
-        url = self.base_url + '/embeddings'
         for attempt in range(RETRIES + 1):
             try:
-                reply = client.post(url, headers=headers, json={'model': self.model, 'input': batch})
+                reply = client.post(url, headers=headers, json=payload)
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                 if attempt >= RETRIES:
                     raise EmbeddingsUnavailable(f'Cannot reach {url}: {exc}') from None
@@ -152,7 +178,29 @@ class Embedder:
                 continue
             if reply.status_code != 200:
                 raise EmbeddingsUnavailable(f'{url} answered HTTP {reply.status_code}: {reply.text[:300]}')
-            data = sorted(reply.json().get('data', []), key=lambda d: d.get('index', 0))
-            if len(data) != len(batch):
-                raise EmbeddingsUnavailable(f'{url} returned {len(data)} vectors for {len(batch)} texts')
-            return [d['embedding'] for d in data]
+            return reply.json()
+        raise EmbeddingsUnavailable(f'{url}: no answer')   # pragma: no cover
+
+    def describe(self, image, prompt, mime='image/jpeg', max_tokens=300):
+        """The vision model's text answer to *prompt* about *image* (encoded
+        bytes, e.g. a JPEG thumbnail). Sends the picture to the source."""
+        import base64
+        import httpx
+        if not self.vision_model:
+            raise EmbeddingsUnavailable('No vision model for image descriptions: name one in Embeddings… '
+                                        '(the local server must serve it)')
+        url = self.base_url + '/chat/completions'
+        payload = {'model': self.vision_model, 'max_tokens': max_tokens, 'temperature': 0,
+                   'messages': [{'role': 'user', 'content': [
+                       {'type': 'text', 'text': prompt},
+                       {'type': 'image_url', 'image_url': {
+                           'url': 'data:' + mime + ';base64,' + base64.b64encode(image).decode()}}]}]}
+        with httpx.Client(timeout=self.timeout) as client:
+            reply = self._request(client, url, self._headers(), payload)
+        try:
+            content = reply['choices'][0]['message']['content']
+        except (KeyError, IndexError, TypeError):
+            raise EmbeddingsUnavailable(f'{url} returned no description') from None
+        if isinstance(content, list):      # content chunks
+            content = ' '.join(c.get('text', '') for c in content if isinstance(c, dict))
+        return str(content or '').strip()

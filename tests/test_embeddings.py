@@ -33,8 +33,14 @@ def server():
                 self.send_header('Content-Length', '0')
                 self.end_headers()
                 return
-            data = [{'index': i, 'embedding': [float(len(t)), float(i)]} for i, t in enumerate(body['input'])]
-            reply = json.dumps({'data': data[::-1]}).encode()
+            if self.path.endswith('/chat/completions'):     # a vision model describing the picture
+                parts = body['messages'][0]['content']
+                image = next(p['image_url']['url'] for p in parts if p['type'] == 'image_url')
+                text = f"{body['model']} saw {image.split(';')[0]} after: {parts[0]['text']}"
+                reply = json.dumps({'choices': [{'message': {'content': text}}]}).encode()
+            else:
+                data = [{'index': i, 'embedding': [float(len(t)), float(i)]} for i, t in enumerate(body['input'])]
+                reply = json.dumps({'data': data[::-1]}).encode()
             self.send_response(200)
             self.send_header('Content-Length', str(len(reply)))
             self.end_headers()
@@ -115,7 +121,34 @@ def test_dialog_saves_and_tests(server):
     dialog.test()
     assert dialog.result.text() == 'Works: 2 numbers per text.'
     dialog.accept()
-    assert E.load() == {'source': 'local', 'model': 'nomic-embed-text', 'base_url': url}
+    assert E.load() == {'source': 'local', 'model': 'nomic-embed-text', 'base_url': url, 'vision_model': ''}
+    dialog.source.setCurrentIndex(dialog.source.findData('mistral'))
+    assert dialog.vision.text() == 'mistral-small-latest'
+    dialog.source.setCurrentIndex(dialog.source.findData('local'))
+    dialog.url.setText(url)
     dialog.source.setCurrentIndex(dialog.source.findData('mistral'))
     assert 'Sends the texts' in dialog.note.text() and not dialog.url.isEnabled()
     assert EmbeddingsDialog().url.text() == url      # reopened: the saved settings
+
+
+def test_image_descriptions(server, monkeypatch):
+    url, state = server
+    local = E.Embedder({'source': 'local', 'model': 'm', 'base_url': url})
+    assert local.vision_id == ''                       # local: only with a named vision model
+    with pytest.raises(E.EmbeddingsUnavailable, match='vision model'):
+        local.describe(b'jpeg', 'Describe it.')
+    assert state['calls'] == []
+    state['fail_first'] = True
+    vision = E.Embedder({'source': 'local', 'model': 'm', 'base_url': url, 'vision_model': 'pixtral'})
+    monkeypatch.setattr(E.time, 'sleep', lambda s: None)
+    assert vision.vision_id == 'local/pixtral'
+    assert vision.describe(b'jpeg', 'Describe it.') == 'pixtral saw data:image/jpeg after: Describe it.'
+    assert len(state['calls']) == 2                   # the busy answer was retried
+
+
+def test_mistral_describes_with_a_small_vision_model_by_default():
+    settings = {'source': 'mistral', 'model': 'mistral-embed', 'base_url': E.MISTRAL_URL}
+    assert E.Embedder(settings).vision_id == 'mistral/mistral-small-latest'
+    assert E.Embedder({**settings, 'vision_model': 'pixtral-large-latest'}).vision_id == 'mistral/pixtral-large-latest'
+    E.save({**settings, 'vision_model': ' pixtral-large-latest '})
+    assert E.load()['vision_model'] == 'pixtral-large-latest'

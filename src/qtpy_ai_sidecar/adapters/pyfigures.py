@@ -62,7 +62,8 @@ class PyFiguresAdapter:
               'inspect_panel_letters','get_annotations','get_figure_caption',
               'get_figure_properties','list_how_to_guides','explain_how',
               'explain_live_interaction','find_pyfigures_tools',
-              'list_pyfigures_categories','list_fonts','preview_panel','preview_luts'}
+              'list_pyfigures_categories','list_fonts','preview_panel','preview_luts',
+              'search_images'}
         if tool_name=='use_pyfigures_tool':
             return arguments.get('tool_name') in pure
         if tool_name in pure:return True
