@@ -14,7 +14,7 @@ from qtpy.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QScr
     QFileDialog, QToolButton, QMenu, QCheckBox, QSizePolicy, QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QSlider)
 import qtawesome as qta
 from .engine import Engine
-from .config import DEFAULT_NOTICE
+from .config import DEFAULT_NOTICE, DEFAULT_REMOTE_NOTICE
 from .adapters import NullAdapter
 
 # "Preview edits before applying" is parked (hidden, never checked) until it
@@ -283,6 +283,26 @@ class ModelPicker(QComboBox):
         self.dock.change_model(self.itemData(index))
 
 
+PICK_SCHEME = 'sidecar-pick'
+_CODE = re.compile(r'(```.*?```|`[^`\n]*`)', re.S)
+_BOLD = re.compile(r'(?<![\[\*\\])\*\*(?=\S)(.+?)(?<=\S)\*\*(?!\*)')
+
+
+def bold_as_picks(text):
+    """**bold** in an answer becomes a link that puts the words in the message
+    box (like the suggested answers); code and existing links are left alone."""
+    from urllib.parse import quote
+
+    def pick(match):
+        inner = match.group(1)
+        if '](' in inner or '[' in inner:
+            return match.group(0)
+        return f'[**{inner}**]({PICK_SCHEME}:{quote(markdown_to_plain(inner), safe="")})'
+
+    parts = _CODE.split(text)
+    return ''.join(part if i % 2 else _BOLD.sub(pick, part) for i, part in enumerate(parts))
+
+
 def markdown_to_plain(text):
     """The text of one line of Markdown, without its formatting marks."""
     from qtpy.QtGui import QTextDocument
@@ -304,6 +324,28 @@ class MessageBrowser(QTextBrowser):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.fit_text()
+
+    def style_picks(self):
+        """Clickable bold words look like bold text (no link blue/underline),
+        with a pointing hand and a tooltip."""
+        from qtpy.QtGui import QTextCursor, QTextCharFormat, QColor
+        block = self.document().begin()
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                fragment = it.fragment()
+                fmt = fragment.charFormat()
+                if fragment.isValid() and fmt.isAnchor() and fmt.anchorHref().startswith(PICK_SCHEME + ':'):
+                    cursor = QTextCursor(self.document())
+                    cursor.setPosition(fragment.position())
+                    cursor.setPosition(fragment.position() + fragment.length(), QTextCursor.MoveMode.KeepAnchor)
+                    change = QTextCharFormat()
+                    change.setFontUnderline(False)
+                    change.setForeground(QColor('#7a3f1d'))
+                    change.setToolTip('Click to put this in the message box')
+                    cursor.mergeCharFormat(change)
+                it += 1
+            block = block.next()
 
     def fit_text(self, *args):
         if self._fitting:
@@ -516,10 +558,11 @@ class AssistantDock(QDockWidget):
         root.addWidget(self.context)
         self.show_context()
         # always shown: the host may word it for its own risks (config.notice)
-        self.notice = QLabel('⚠ ' + (config.notice.strip() or DEFAULT_NOTICE))
+        self.notice = QLabel()
         self.notice.setObjectName('modelNotice')
         self.notice.setWordWrap(True)
         root.addWidget(self.notice)
+        self.update_notice()
         body.setStyleSheet('''QLabel#modelNotice {color:#a15c00;}
             ''' + '''QWidget#sidecarBody {background:#fbf7f1;color:#493c32;}
             QFrame#composerFrame {background:#fffdf9;border:1px solid #d8bea9;border-radius:18px;}
@@ -561,7 +604,13 @@ class AssistantDock(QDockWidget):
         browser = MessageBrowser()
         browser.document().setDefaultFont(self.widget().font())
         browser.setOpenExternalLinks(False)
-        browser.setMarkdown(text)
+        browser.setOpenLinks(False)          # never navigate the message away
+        browser.anchorClicked.connect(self.link_clicked)
+        if role == 'assistant':
+            browser.setMarkdown(bold_as_picks(text))
+            browser.style_picks()
+        else:
+            browser.setMarkdown(text)
         QTimer.singleShot(0, browser.fit_text)
         layout.addWidget(browser)
         row = QHBoxLayout()
@@ -591,6 +640,15 @@ class AssistantDock(QDockWidget):
             button.parentWidget().layout().removeWidget(button)
             button.deleteLater()
         self.choice_buttons.clear()
+
+    def link_clicked(self, url):
+        """Bold words of an answer go to the message box; web links open in the browser."""
+        from urllib.parse import unquote
+        if url.scheme() == PICK_SCHEME:
+            self.choose(unquote(url.path() or url.toString()[len(PICK_SCHEME) + 1:]))
+        elif url.scheme() in ('http', 'https'):
+            from qtpy.QtGui import QDesktopServices
+            QDesktopServices.openUrl(url)
 
     def choose(self, text):
         if self.busy:
@@ -913,6 +971,31 @@ class AssistantDock(QDockWidget):
                 or dict(ConnectionDialog.BUILTIN_LABELS).get(config.provider) or config.provider)
         self.connection_label.setText(('Local model' if config.provider == 'local' else 'Provider: ' + name)
                                       + ' · ' + config.model + '   — change…')
+        self.update_notice()
+
+    def provider_name(self):
+        from . import providers
+        from .connection import ConnectionDialog
+        config = self.engine.config
+        return ((providers.find(config.provider) or {}).get('label')
+                or dict(ConnectionDialog.BUILTIN_LABELS).get(config.provider) or config.provider)
+
+    def update_notice(self):
+        """The always-shown warning, plus, for an online provider only, that the
+        conversation and images leave this computer (said explicitly)."""
+        if not hasattr(self, 'notice'):
+            return
+        config = self.engine.config
+        lines = ['⚠ ' + (config.notice.strip() or DEFAULT_NOTICE)]
+        host = config.online_host()
+        if host:
+            template = config.remote_notice.strip() or DEFAULT_REMOTE_NOTICE
+            try:
+                text = template.format(provider=self.provider_name(), host=host)
+            except (KeyError, IndexError, ValueError):     # a host's template with other fields
+                text = template
+            lines.append('⚠ ' + text)
+        self.notice.setText('\n'.join(lines))
 
     def show_context(self):
         """Estimated use (characters / 3) of the Context tokens setting, and the

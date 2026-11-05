@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2 — 2026-11-05
+
+- Bold words in an answer can be clicked: they go into the message box, like the suggested-answer buttons. Links in answers open in the browser instead of blanking the message.
+- With an online provider, a second notice line says explicitly that messages, the content the chat reads and images are sent outside the computer to that provider (`Config.remote_notice` lets hosts word it). Never shown for a model on this computer, including a custom server on a loopback address.
+- Eight tool searches in a row without a successful application call stop the turn with an explanation of what blocked it, instead of using every remaining step.
+- PyFigures adapter: "remove / reset / clear the LUTs" may use NONE (the image file's own LUT) and is steered there instead of ending on a question; the same LUT on several channels of one image (GRAY on all) needs the user's own words ("all channels"); uneven rows (row_counts); every multiple-choice answer also offers to set up the GUI (the panel editor on the right tab, or the right-click menu with the right selection level).
+
 ## 0.1.1 — 2026-11-05
 
 - Debug exports include the pictures the chat showed (canvas snapshots, before/after previews) and a screenshot of the window, linked from `conversation.md`; snapshots are kept next to the local log.

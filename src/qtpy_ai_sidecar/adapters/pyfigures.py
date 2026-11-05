@@ -97,7 +97,7 @@ class PyFiguresAdapter:
                 'If a capability is missing from dedicated MCP tools, discover inspect_native_gui and inspect the actual native controls instead of concluding the GUI cannot do it. Use_native_gui takes only inspected IDs and exact choices. Native context/drag menus are available via open_native_menu; keyboard, canvas gestures and file drops have native_gui tools. Prefer dedicated semantic tools for common edits. '
                 'Native GUI calls return queued jobs, not success. Inspect native_gui jobs and active modal controls, fill native fields and accept/cancel as requested, then verify actual document state. Do not claim queued or running work has completed. Teaching requests still do not authorize using edit controls. '
                 'How-to/manual/shortcut questions are teaching requests, not permission to edit. For native arrow keys and drag/drop discover explain_live_interaction; include figure focus, selection level, source/target and relevant verified shortcuts. For other topics use authored explain_how/show_me_how. Never invent modifiers or menu labels. Never provide Python unless code or recipe was explicitly requested. '
-                'For arrange_live_images, columns is the number of images per row; a row count is a different request. For set_figure_caption, caption is exact plain text including punctuation, title is separate, and caption_markdown is an optional formatted STRING, never a boolean. Use set_scale_bar with panel_ref for a single panel; set_scale_bar_all is only for a whole-figure request. '
+                'For arrange_live_images, columns is the number of images per row; a row count is a different request; uneven rows (e.g. 3-2-2-2) are row_counts=[3, 2, 2, 2] in one call.For set_figure_caption, caption is exact plain text including punctuation, title is separate, and caption_markdown is an optional formatted STRING, never a boolean. Use set_scale_bar with panel_ref for a single panel; set_scale_bar_all is only for a whole-figure request. '
                 'Use find_pyfigures_tools for the exact schema before a first use; state field names are not function argument names. Native image/annotation tools prefer panel_ref for named panels. Text setters use text_index from inspection; ROI/removal tools use the full annotation_index. panel_id is not a setter argument. open_annotation_editor uses panel_ref, not panel_id. edit_panel_letters has no letters or style object arguments: pass its flat schema fields. A mixed colour summary is not a valid colour; omit styling to preserve actual styles. '
                 'Convert an existing ROI into an inset with roi_to_inset: this magnifies the same source, no external filename required. If multiple ROIs exist ask which; do not redefine the already clear request. '
                 'Is a font available? Use list_fonts(query=the_font), answer from font_check. '
@@ -111,6 +111,7 @@ class PyFiguresAdapter:
                 'removal_request is a literal quote of the human request, never a rewritten instruction invented to pass validation. On a tool exception inspect and explain the failure; changing file paths cannot fix an internal exception. '
                 'select_live_objects is directly available: clear=true clears the selection without panel_refs. Select actual GUI targets with panel_refs for letters/IDs, row_numbers starting at 1, or group_paths for rows/columns. For a named row reversal select that row then reverse_selected_row. '
                 'A general request to annotate/add annotations to a panel specifies no annotation content. Select the panel, then ask what to add or offer to open_annotation_editor. Never invent a placeholder annotation. Explicit open-editor requests use open_annotation_editor, which selects its panel and schedules the native dialog; do not claim annotations were added. '
+                'Whenever you list choices for a change (always for a HELP request such as "help me change the channel colours of e"), add one more choice that sets the GUI up for the user: open the panel editor on the right tab (open_annotation_editor; channel colours / LUTs: tab="scale", crop: "crop", text: "text"), or select the right object and open its right-click menu (select_live_objects, then open_native_menu), saying what the yellow selection outline must surround (one image, its row, the figure). Open nothing until chosen. '
                 'Swap IMAGE PANELS by default: swap b and c or put b in place of a and a in place of b means exchange images. Use swap_live_panels target=images. Letter TEXT swaps require an explicit swap-the-letters/labels request. If a reference is missing or non-unique, STOP and ask; never substitute an existing panel or retry with other references. '
                 'A uniquely named panel wins over a positional/visual description; act on that name and mention the discrepancy. Never edit then undo to ask. '
                 'For whole-row swaps discover swap_rows; use visible row numbers starting at 1. Never simulate row swaps using move_image. With automatic lettering enabled, row swaps regenerate letters in positional order, like native keyboard rearrangement; retain styles, not old letter text. '
@@ -395,8 +396,29 @@ class PyFiguresAdapter:
             ref=str(args.get('panel_ref') or '')
             current=next((p.get('luts') or [] for p in state.get('panel_references',[])
                           if ref and (p.get('panel_id')==ref or ref in [str(x) for x in p.get('letters',[])])),[])
+            # "remove all LUTs" (2026-11-05): GRAY was refused as unnamed and the turn ended;
+            # removing / resetting a LUT means the image file's own LUT: set_lut's NONE
+            # (DEFAULT is accepted as a synonym)
+            removing=re.search(r'\b(?:remov\w*|reset\w*|clear\w*|undo|delete\w*|drop|strip|get rid of|no|without|original|acquisition)\b'
+                               r'[^.?!]{0,40}?\b(?:luts?|colou?r ?(?:tables?|maps?)|look-?up tables?|pseudo-?colou?rs?)\b',spoken) \
+                or re.search(r'\b(?:luts?|colou?r ?tables?)\b[^.?!]{0,30}?\b(?:off|removed|gone|reset)\b',spoken)
             unnamed=[l for i,l in enumerate(args['luts']) if isinstance(l,str) and stem(l) and stem(l) not in spoken
+                     and not (removing and stem(l) in ('default','none'))
                      and not (i<len(current) and isinstance(current[i],str) and stem(current[i])==stem(l))]
+            # "try GRAY" (2026-11-05): after a one-LUT warning the model put GRAY on every
+            # channel of 2- and 3-channel images; same-coloured channels add up and cannot be
+            # told apart, so that needs the user's own words
+            names=[stem(l) for l in args['luts'] if isinstance(l,str) and stem(l) and stem(l) not in ('none','default')]
+            repeated=sorted({n for n in names if names.count(n)>1})
+            if repeated and not re.search(r'\b(?:all|every|each|both|the)\s+(?:\w+\s+)?channels?\b|\bchannels?\s+(?:all|both)\b|\bper channel\b',spoken):
+                from ..errors import NeedsClarification
+                raise NeedsClarification(f'This would give the {", ".join(n.upper() for n in repeated)} LUT to {names.count(repeated[0])} channels of the same image: '
+                                         'they would add up in one colour and could no longer be told apart. Do you want that, or one channel '
+                                         'in gray (the others hidden), or a channel split? No LUT was changed.')
+            if unnamed and removing:
+                raise ValueError('Removing a LUT means going back to the LUT of the image file itself: use "NONE" '
+                                 'for each channel, e.g. luts=["NONE"], unless the user asked for '
+                                 + ', '.join(unnamed) + '. No LUT was changed.')
             if unnamed:
                 from ..errors import NeedsClarification
                 raise NeedsClarification('The request does not name the colour table '+', '.join(unnamed)+'. Which LUT do you want (e.g. GRAY, RED, GREEN, BLUE, MAGENTA, YELLOW_HOT; list_luts lists them all)? No LUT was changed.')
@@ -406,7 +428,7 @@ class PyFiguresAdapter:
             from ..errors import NeedsClarification
             raise NeedsClarification(f'There is no panel called {greek[1]} in this figure. Which panel do you mean? Nothing was changed.')
         columns=re.search(r'(?<![\w.])(-?\d+)\s+(?:pictures?|images?|panels?)\s+(?:per|on each|in each|in a|a)\s+row\b',text,re.I)
-        if columns and operation=='arrange_live_images' and args.get('columns')!=int(columns[1]):
+        if columns and operation=='arrange_live_images' and not args.get('row_counts') and args.get('columns')!=int(columns[1]):
             from ..errors import NeedsClarification
             raise NeedsClarification('The requested number of images per row is '+columns[1]+'. I cannot substitute a different count; please choose a valid positive number. No replacement layout was submitted.')
         point_sizes=list(re.finditer(r'(?<![\w.])(minus\s+|negative\s+)?(-?\d+(?:\.\d+)?)\s*(?:pt|points?)\b',text,re.I))

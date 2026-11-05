@@ -246,6 +246,44 @@ def test_a_colour_table_must_be_one_the_user_named():
     adapter.validate_tool_call('use_pyfigures_tool',{'tool_name':'set_lut','arguments':{'panel_ref':'a','luts':['Grays']}},{},'Make panel a grey.')
     adapter.validate_tool_call('use_pyfigures_tool',{'tool_name':'set_lut','arguments':{'panel_ref':'a','luts':['Fire']}},{},'Use the fire LUT on a.')
 
+@pytest.mark.parametrize('request_text',['remove all LUTS','Reset the LUTs please','no LUT on panel a',
+                                         'clear the colour tables','put the original colours back, without luts',
+                                         'turn the LUTs off'])
+def test_removing_luts_means_default_not_a_question(request_text):
+    """'remove all LUTS' (2026-11-05): the model's GRAY was refused as unnamed and the turn
+    ended on a question; removing a LUT is the image file's own LUT (NONE; DEFAULT a synonym)."""
+    from qtpy_ai_sidecar.errors import NeedsClarification
+    adapter=PyFiguresAdapter('unused')
+    adapter.validate_tool_call('use_pyfigures_tool',{'tool_name':'set_lut','arguments':{'panel_ref':'a','luts':['NONE','default']}},{},request_text)
+    with pytest.raises(ValueError,match='NONE') as err:         # retried by the model, not asked
+        adapter.validate_tool_call('use_pyfigures_tool',{'tool_name':'set_lut','arguments':{'panel_ref':'a','luts':['GRAY']}},{},request_text)
+    assert not isinstance(err.value,NeedsClarification)
+
+def test_one_lut_on_several_channels_needs_the_users_words():
+    """'try GRAY' (2026-11-05): GRAY went on all 3 channels of RGB panels; same-coloured
+    channels add up and cannot be told apart."""
+    from qtpy_ai_sidecar.errors import NeedsClarification
+    adapter=PyFiguresAdapter('unused')
+    call=lambda luts,text:adapter.validate_tool_call('use_pyfigures_tool',{'tool_name':'set_lut','arguments':{'panel_ref':'c','luts':luts}},{},text)
+    with pytest.raises(NeedsClarification,match='told apart'):
+        call(['GRAY','GRAY','GRAY'],'try GRAY')
+    with pytest.raises(NeedsClarification):
+        call(['gray','Grays'],'make c gray')
+    call(['GRAY','GRAY','GRAY'],'make all channels gray')
+    call(['GRAY','GRAY'],'put both channels in gray')
+    call(['GRAY'],'try GRAY')                                 # one channel: fine
+    call(['RED','GREEN'],'use red and green')                 # different LUTs: fine
+
+def test_removing_luts_to_gray_when_asked():
+    adapter=PyFiguresAdapter('unused')
+    adapter.validate_tool_call('use_pyfigures_tool',{'tool_name':'set_lut','arguments':{'panel_ref':'a','luts':['GRAY']}},{},'remove the LUTs and make everything gray')
+
+def test_default_is_still_unnamed_without_a_removal_request():
+    from qtpy_ai_sidecar.errors import NeedsClarification
+    adapter=PyFiguresAdapter('unused')
+    with pytest.raises(NeedsClarification):
+        adapter.validate_tool_call('use_pyfigures_tool',{'tool_name':'set_lut','arguments':{'panel_ref':'a','luts':['NONE']}},{},'make panel a prettier')
+
 def test_a_panel_named_like_a_greek_letter_must_exist():
     from qtpy_ai_sidecar.errors import NeedsClarification
     adapter=PyFiguresAdapter('unused')

@@ -4,6 +4,10 @@ import json
 
 # true of every model and every host: hosts may word it for their own risks
 DEFAULT_NOTICE = 'Models can make mistakes. Check what they do.'
+# shown only when the model is not on this computer; {provider} and {host} are filled in
+DEFAULT_REMOTE_NOTICE = ('Online provider ({provider}, {host}): your messages, the content the chat reads '
+                         'and any images are sent outside this computer, to that provider.')
+LOOPBACK_HOSTS = ('127.0.0.1', 'localhost', '::1')
 
 
 @dataclass
@@ -33,6 +37,9 @@ class Config:
     compact_from: float = 0.0
     # the line always shown under the chat; empty = DEFAULT_NOTICE
     notice: str = ''
+    # the line added when the provider is online (data leaves the computer);
+    # empty = DEFAULT_REMOTE_NOTICE; never shown for a model on this computer
+    remote_notice: str = ''
     # images returned by tools (figure previews) sent to the model: 'auto' when
     # the server reports a vision model, 'on', or 'off' (shown to the human only)
     vision: str = 'auto'
@@ -68,6 +75,17 @@ class Config:
         from urllib.parse import urlsplit
         if self.provider == 'local' and urlsplit(self.base_url).hostname not in ('127.0.0.1', 'localhost', '::1'):
             raise ValueError('Local mode requires a loopback endpoint; select a remote API provider explicitly')
+
+    def online_host(self):
+        """The host requests go to when the model is not on this computer, else None.
+
+        A custom provider on a loopback address (a local server) is not online.
+        """
+        from urllib.parse import urlsplit
+        host = urlsplit(self.base_url).hostname or ''
+        if self.provider == 'local' or host in LOOPBACK_HOSTS:
+            return None
+        return host or self.provider
 
     @classmethod
     def load(cls, path):
