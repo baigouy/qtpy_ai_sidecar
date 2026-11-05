@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 — 2026-11-05
 
+- Debug exports include the pictures the chat showed (canvas snapshots, before/after previews) and a screenshot of the window, linked from `conversation.md`; snapshots are kept next to the local log.
 - Up to 24 tools are passed to the model directly (was 12); `QTPY_AI_SIDECAR_MAX_DIRECT_TOOLS` changes it.
 - litsearch adapter: 22 tools, one per task (reviews, checks, notes, downloads, saved reviews).
 

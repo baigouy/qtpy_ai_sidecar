@@ -1,5 +1,5 @@
 """Importing the package does not load Qt or start a model/server."""
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 
 def create_dock(parent, config, adapter=None):

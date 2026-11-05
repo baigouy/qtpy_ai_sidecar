@@ -1019,10 +1019,28 @@ class AssistantDock(QDockWidget):
         path, _ = QFileDialog.getSaveFileName(self, 'Export conversation', 'sidecar-debug.zip', 'ZIP (*.zip)')
         if path:
             try:
-                self.engine.journal.export(path)
+                self.engine.journal.export(path, screenshots=self.screenshots())
                 self.status.setText('Exported ' + path)
             except Exception as exc:
                 self.add_message('assistant', 'Export failed: ' + str(exc))
+
+    def screenshots(self):
+        """PNG of the window holding the chat (the host application when docked),
+        so a debugging export shows what the user saw."""
+        from qtpy.QtCore import QBuffer, QByteArray, QIODevice
+        shots = {}
+        try:
+            pixmap = self.window().grab()
+            if not pixmap.isNull():
+                data = QByteArray()
+                buffer = QBuffer(data)
+                buffer.open(QIODevice.OpenModeFlag.WriteOnly if hasattr(QIODevice, 'OpenModeFlag') else QIODevice.WriteOnly)
+                pixmap.save(buffer, 'PNG')
+                buffer.close()
+                shots['window.png'] = bytes(data)
+        except Exception as exc:          # never lose the export over a screenshot
+            self.engine.journal.record('screenshot_failed', str(exc))
+        return shots
 
     def shutdown(self):
         self.closed = True

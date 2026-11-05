@@ -82,6 +82,15 @@ class Engine:
         self.journal.record(kind, value)
         emit(kind, value)
 
+    def _keeping_images(self, emit, source):
+        """emit, but pictures a tool shows (canvas snapshots) are also saved in
+        the journal, so an exported conversation has them."""
+        def forward(kind, value):
+            if kind == 'image' and isinstance(value, dict):
+                self.journal.record_image(value.get('data'), value.get('mime'), source)
+            emit(kind, value)
+        return forward
+
     def context(self, emit, messages=None):
         # the meter counts what is really sent (the MCP guidance included), as the guard does
         emit('context', {'estimated_tokens': size_estimate(self.messages if messages is None else messages), 'context_tokens': self.config.context_tokens,
@@ -312,7 +321,7 @@ class Engine:
                                         discovery_results.clear();discovery_stalled=False
                                     self.journal.record('operation_intent',args)
                                     try:
-                                        result=await hub.execute(args['tool_id'],args['arguments'],emit)
+                                        result=await hub.execute(args['tool_id'],args['arguments'],self._keeping_images(emit,args.get('tool_id')))
                                     except BaseException as exc:
                                         self.uncertain=True
                                         raise RuntimeError('Application tool outcome is uncertain. Inspect the application before continuing; no automatic retry.') from exc

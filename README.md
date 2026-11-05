@@ -23,7 +23,7 @@ In the standalone window:
 - **Tools icon:** import an application's MCP JSON configuration, or export the one in use as a standard `{"mcpServers": …}` file for another MCP client or computer. Credential fields must use environment references rather than secret literals, so an exported file holds no secret.
 - **Gear icon:** context and output limits, supported thinking settings, CPU threads, GPU layers and **Force CPU**. Hardware settings apply only to the managed local runtime.
 - **Compress:** summarize older dialogue while retaining the latest ten dialogue messages exactly. The complete local log remains. `/compact` works too.
-- **Export icon:** save readable Markdown and structured events together as a ZIP.
+- **Export icon:** save readable Markdown and structured events together as a ZIP, with the pictures the chat showed (canvas snapshots, before/after previews) in `images/` and a screenshot of the window in `screenshots/`, linked from the Markdown. Attach it to bug reports.
 
 Enter sends; Shift+Enter inserts a newline. Current numbered/bulleted clarification choices can be clicked into the composer. Status, elapsed time, generation activity and context usage are below the composer. Context estimates are explicitly marked approximate; server-reported usage is shown when available. Loading/compression use an indeterminate progress bar; downloads display byte progress when size is known.
 
@@ -124,7 +124,7 @@ The default is local; there is no automatic fallback to a paid provider. API mod
 
 Saved API keys use native OS vaults via `keyring`: Windows Credential Manager, macOS Keychain, or supported Linux Secret Service/libsecret/KWallet backends. Plaintext, null and third-party file backends are rejected. If no secure vault is available, saving fails clearly; there is no plaintext fallback. Native secure backends inside a keyring chain can be selected. Keys can be removed in the connection dialog. Advanced deployments can supply `api_key_env`; the application never persists that environment value.
 
-Keys exist briefly in process memory and HTTP headers while used. Known keys and common credential fields are redacted from event logs. Exported logs still contain user conversation/document content and file paths; review them before sharing. Configs, raw credentials, model files and figure files are not bundled into debug exports. Remote credentialed requests require HTTPS; HTTP is allowed only for local loopback endpoints. TLS verification remains enabled.
+Keys exist briefly in process memory and HTTP headers while used. Known keys and common credential fields are redacted from event logs. Exported logs still contain user conversation/document content, file paths, the pictures shown in the chat and a screenshot of the window; review them before sharing. Configs, raw credentials, model files and figure files are not bundled into debug exports. Remote credentialed requests require HTTPS; HTTP is allowed only for local loopback endpoints. TLS verification remains enabled.
 
 Settings/logs/downloads live in per-user platform data folders, grouped by application name. `state_dir` can override that for a fully self-contained deployment or isolated tests. No personal paths, models or credentials belong in Git.
 
