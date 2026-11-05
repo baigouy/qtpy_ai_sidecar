@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3 — 2026-11-05
+
+- PyFigures adapter: an answer that explains how to do something in the GUI ends with two buttons, **highlight where to click** (outlines every route) and **open it for me** (opens the menus or the panel editor, never does the edit); a list of GUI choices gets **Show me where to click**. Added by the adapter, not left to the model.
+- Choice buttons after a list of steps come from the closing question, not from the steps.
+- PyFigures adapter: "swap channels 1 and 2" may reuse the colours the channels already show (their LUT, else the file's own colour) without naming them; channels cannot be reordered, so a swap moves the colours.
+
 ## 0.1.2 — 2026-11-05
 
 - Bold words in an answer can be clicked: they go into the message box, like the suggested-answer buttons. Links in answers open in the browser instead of blanking the message.
