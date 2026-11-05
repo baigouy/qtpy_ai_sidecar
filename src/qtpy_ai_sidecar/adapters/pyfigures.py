@@ -112,6 +112,7 @@ class PyFiguresAdapter:
                 'select_live_objects is directly available: clear=true clears the selection without panel_refs. Select actual GUI targets with panel_refs for letters/IDs, row_numbers starting at 1, or group_paths for rows/columns. For a named row reversal select that row then reverse_selected_row. '
                 'A general request to annotate/add annotations to a panel specifies no annotation content. Select the panel, then ask what to add or offer to open_annotation_editor. Never invent a placeholder annotation. Explicit open-editor requests use open_annotation_editor, which selects its panel and schedules the native dialog; do not claim annotations were added. '
                 'Whenever you list choices for a change (always for a HELP request such as "help me change the channel colours of e"), add one more choice: "show me where to click". On that choice call show_me_where with EVERY route that does it (menu bar; right-click menu of the object at level image or row; or the panel editor tab and buttons, e.g. editor_tab="File Infos + Scale", controls=["Reset all LUTs"]): all are outlined at once and cleared when it worked. Say what the yellow selection outline surrounds and what to click first. open_menus=true only when the user explicitly asks to be shown the menu; never click for them in that mode. '
+                'panel_references.channel_colours is what each channel shows now (its LUT, else the file\'s own colour): "swap channels 1 and 2" = set_lut with those colours permuted, e.g. [RED, GREEN, BLUE] -> luts=["GREEN", "RED", "BLUE"]. '
                 'Channels cannot be reordered, but each channel colour can be set on its own (set_lut; GUI: right-click > Appearance > Set LUT(s), or the editor File Infos + Scale tab > Set LUTs): say so and offer both, with an example such as "make channel 1 blue, channel 2 red". '
                 'GUI how-to answers end with "Should I highlight where to click, or open it for me?". "highlight where to click" (or show me where) = show_me_where with every route of your previous answer. "open it for me" = the same show_me_where call with open_menus=true: it opens the menus down to the entry the user clicks, or (where=editor, panel_ref, editor_tab) the panel editor with its buttons outlined; never perform the edit itself. '
                 'Swap IMAGE PANELS by default: swap b and c or put b in place of a and a in place of b means exchange images. Use swap_live_panels target=images. Letter TEXT swaps require an explicit swap-the-letters/labels request. If a reference is missing or non-unique, STOP and ask; never substitute an existing panel or retry with other references. '
@@ -397,8 +398,16 @@ class PyFiguresAdapter:
                 return re.sub(r'[^a-z ]','',name).strip().rstrip('s')   # Grays -> gray
             # a channel keeping its current table ("leave the other channels alone") needs no name
             ref=str(args.get('panel_ref') or '')
-            current=next((p.get('luts') or [] for p in state.get('panel_references',[])
-                          if ref and (p.get('panel_id')==ref or ref in [str(x) for x in p.get('letters',[])])),[])
+            panel_state=next((p for p in state.get('panel_references',[])
+                              if ref and (p.get('panel_id')==ref or ref in [str(x) for x in p.get('letters',[])])),{})
+            # what each channel shows now: its LUT, else the image file's own colour
+            shown=panel_state.get('channel_colours') or []
+            current=[l or (shown[i] if i<len(shown) else None) for i,l in enumerate(panel_state.get('luts') or [None]*len(shown))]
+            # "swap channel 1 and 2" (2026-11-05): GREEN, RED was refused as unnamed; a swap
+            # moves the colours the channels already show, so those names need no repeating
+            swapping=re.search(r'\b(?:swap\w*|exchang\w*|switch\w*|permut\w*|reorder\w*|invert\w* (?:the )?order|revers\w* (?:the )?order)\b',spoken) \
+                and re.search(r'\b(?:channels?|chanels?|colou?rs?|luts?)\b',spoken)
+            shown_names={stem(c) for c in current if isinstance(c,str)}
             # "remove all LUTs" (2026-11-05): GRAY was refused as unnamed and the turn ended;
             # removing / resetting a LUT means the image file's own LUT: set_lut's NONE
             # (DEFAULT is accepted as a synonym)
@@ -407,6 +416,7 @@ class PyFiguresAdapter:
                 or re.search(r'\b(?:luts?|colou?r ?tables?)\b[^.?!]{0,30}?\b(?:off|removed|gone|reset)\b',spoken)
             unnamed=[l for i,l in enumerate(args['luts']) if isinstance(l,str) and stem(l) and stem(l) not in spoken
                      and not (removing and stem(l) in ('default','none'))
+                     and not (swapping and stem(l) in shown_names)
                      and not (i<len(current) and isinstance(current[i],str) and stem(current[i])==stem(l))]
             # "try GRAY" (2026-11-05): after a one-LUT warning the model put GRAY on every
             # channel of 2- and 3-channel images; same-coloured channels add up and cannot be
