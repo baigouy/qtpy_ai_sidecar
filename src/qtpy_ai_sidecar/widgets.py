@@ -39,10 +39,18 @@ def choices(text):
         return []
     lines = text.splitlines()
     result = []
-    for line in lines:
+    last_item = -1
+    for index, line in enumerate(lines):
         match = re.match(r'^\s*(?:\d+[.)]|[-*•])\s+(.+?)\s*$', line)
         if match:
             result.append(match.group(1))
+            last_item = index
+    # Steps followed by a question with its own bold options ("1. Click e …
+    # Should I **highlight where to click** or **open it for me**?"): the
+    # question's options are the choices, not the steps.
+    after = '\n'.join(lines[last_item + 1:]) if last_item >= 0 else ''
+    if result and '?' in after and len(inline_choices(after)) >= 2:
+        return inline_choices(after)
     if 2 <= len(result) <= 8:
         return result
     return inline_choices(text)

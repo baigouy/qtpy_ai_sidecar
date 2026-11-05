@@ -112,6 +112,7 @@ class PyFiguresAdapter:
                 'select_live_objects is directly available: clear=true clears the selection without panel_refs. Select actual GUI targets with panel_refs for letters/IDs, row_numbers starting at 1, or group_paths for rows/columns. For a named row reversal select that row then reverse_selected_row. '
                 'A general request to annotate/add annotations to a panel specifies no annotation content. Select the panel, then ask what to add or offer to open_annotation_editor. Never invent a placeholder annotation. Explicit open-editor requests use open_annotation_editor, which selects its panel and schedules the native dialog; do not claim annotations were added. '
                 'Whenever you list choices for a change (always for a HELP request such as "help me change the channel colours of e"), add one more choice: "show me where to click". On that choice call show_me_where with EVERY route that does it (menu bar; right-click menu of the object at level image or row; or the panel editor tab and buttons, e.g. editor_tab="File Infos + Scale", controls=["Reset all LUTs"]): all are outlined at once and cleared when it worked. Say what the yellow selection outline surrounds and what to click first. open_menus=true only when the user explicitly asks to be shown the menu; never click for them in that mode. '
+                'GUI how-to answers end with "Should I highlight where to click, or open it for me?". "highlight where to click" (or show me where) = show_me_where with every route of your previous answer. "open it for me" = the same show_me_where call with open_menus=true: it opens the menus down to the entry the user clicks, or (where=editor, panel_ref, editor_tab) the panel editor with its buttons outlined; never perform the edit itself. '
                 'Swap IMAGE PANELS by default: swap b and c or put b in place of a and a in place of b means exchange images. Use swap_live_panels target=images. Letter TEXT swaps require an explicit swap-the-letters/labels request. If a reference is missing or non-unique, STOP and ask; never substitute an existing panel or retry with other references. '
                 'A uniquely named panel wins over a positional/visual description; act on that name and mention the discrepancy. Never edit then undo to ask. '
                 'For whole-row swaps discover swap_rows; use visible row numbers starting at 1. Never simulate row swaps using move_image. With automatic lettering enabled, row swaps regenerate letters in positional order, like native keyboard rearrangement; retain styles, not old letter text. '
@@ -266,6 +267,7 @@ class PyFiguresAdapter:
         if plural_style_collection:singular=None
         operation = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
         if operation=='review_submission_readiness':self._quality_review_requested=True
+        if operation in self._GUIDING_TOOLS:self._guided=True
         # "add a 10 um scale bar to images" / "to the panels" / "to the figure": plural
         # pictures with no letters after them mean every panel (it was refused)
         plural_target=re.search(r'\b(?:to|on|for|in)\s+(?:the\s+|my\s+|these\s+|those\s+)?(?:images|panels|pictures|photos|figure)\b(?!\s+(?:[a-z]|\d+/\d+)\b(?:\s*(?:,|and|&)|\s*$))',text,re.I)
@@ -545,7 +547,13 @@ class PyFiguresAdapter:
         # Mixed questions/actions must retain the normal conversational/tool path.
         if re.search(r'\b(?:and|then|also)\s+(?:please\s+)?(?:do|apply|flip|rotate|change|set|move|remove|delete|make|swap|open)\b', request, re.I):
             return None
-        return self.finalize_manual_response(request)
+        answer = self.finalize_manual_response(request)
+        if answer:
+            self._guided = False
+            offered = self.offer_gui_help(answer['content'])
+            if offered:
+                answer = {'content': offered, 'evidence': {**answer['evidence'], 'gui_help_offered': True}}
+        return answer
 
 
     def finalize_manual_response(self,request):
@@ -659,7 +667,48 @@ class PyFiguresAdapter:
                     'evidence':{'status':'unavailable','error':str(exc)}}
         return None
 
+    GUI_HELP_OFFER = 'Should I **highlight where to click**, or **open it for me**?'
+    _GUIDING_TOOLS = ('show_me_where', 'show_me_how', 'open_annotation_editor', 'open_native_menu', 'use_native_gui')
+
+    def offer_gui_help(self, reply):
+        """User finding 2026-11-05: answers that tell how to do something in the
+        GUI never offered to highlight the path or open it. The offer is added
+        here, not left to the model: GUI steps get the two-option question,
+        a list of choices that names GUI controls gets 'Show me where to click'.
+        Nothing is added after the chat already guided or opened something."""
+        import re
+        if not reply or getattr(self, '_guided', False):
+            return None
+        if re.search(r'show me where|where to click|highlight (?:where|the path|it|them)|open (?:it|them|the [\w +-]{1,30}) for (?:you|me)', reply, re.I):
+            return None
+        gui = re.findall(r'double[- ]click|right[- ]click|\bclick\b|\btabs?\b|\bmenus?\b|\bdialog\b|\beditor\b|\bpress\s+\**OK\b|→|➜', reply, re.I)
+        if len(gui) < 2:
+            return None
+        lines = reply.rstrip().splitlines()
+        items = [i for i, line in enumerate(lines) if re.match(r'^\s*(?:\d+[.)]|[-*•])\s+\S', line)]
+        if not items:
+            return None
+        questions = [i for i, line in enumerate(lines) if '?' in line]
+        # choices: the question introduces the list or closes the answer right after it
+        is_choice = 2 <= len(items) <= 7 and any(items[0] - 3 <= q < items[0] or q > items[-1] for q in questions)
+        if is_choice:
+            numbered = re.match(r'^(\s*)(\d+)[.)]\s', lines[items[-1]])
+            entry = (numbered.group(1) + str(int(numbered.group(2)) + 1) + '. ') if numbered else '- '
+            lines.insert(items[-1] + 1, entry + '**Show me where to click**')
+            return '\n'.join(lines)
+        return reply.rstrip() + '\n\n' + self.GUI_HELP_OFFER
+
     def finalize_response(self,request,reply,state,preview=False):
+        verified = self._verify_response(request, reply, state, preview)
+        content = verified['content'] if verified else reply
+        offered = self.offer_gui_help(content)
+        if offered is None:
+            return verified
+        evidence = dict(verified['evidence']) if verified else {}
+        evidence['gui_help_offered'] = True
+        return {'content': offered, 'evidence': evidence}
+
+    def _verify_response(self,request,reply,state,preview=False):
         import re
         manual=self.finalize_manual_response(request)
         if manual:return manual
@@ -697,6 +746,7 @@ class PyFiguresAdapter:
 
     def begin(self, text, preview=False):
         self._quality_review_requested=False
+        self._guided=False
         return self.request('action_begin', {'text': text, 'preview': preview})
 
     def finish(self, interrupted=False):
