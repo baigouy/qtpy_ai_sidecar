@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4 — 2026-11-06
+
+- When the turn is stopped (search loop, repeated refusals) and the model still answers the text-only request with a tool call, it is asked once more for plain text, then given a short fallback reply, instead of ending the turn on an error.
+
 ## 0.1.3 — 2026-11-05
 
 - PyFigures adapter: an answer that explains how to do something in the GUI ends with two buttons, **highlight where to click** (outlines every route) and **open it for me** (opens the menus or the panel editor, never does the edit); a list of GUI choices gets **Show me where to click**. Added by the adapter, not left to the model.
