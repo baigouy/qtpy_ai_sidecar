@@ -113,9 +113,25 @@ class Engine:
         return answer
 
     async def _stopped_text_summary(self,prompt,emit):
+        from .backend import TextOnlyToolCall
         try:
-            summary,_=await self.backend.complete(prompt,[],self.cancel,emit,final_only=True)
+            try:
+                summary,_=await self.backend.complete(prompt,[],self.cancel,emit,final_only=True)
+            except TextOnlyToolCall as exc:
+                # with tools disabled, Mistral Large 4 still answered the stop
+                # message with a tool call: the turn ended on an error instead
+                # of an explanation (2026-11-06). Ask once more, plainly.
+                self.record('text_only_tool_call',{'error':str(exc),'tools_submitted':False},emit)
+                again=prompt+[{'role':'system','content':'Tools are disabled: a tool call is discarded. '
+                               'Answer in plain text only, now.'}]
+                summary,_=await self.backend.complete(again,[],self.cancel,emit,final_only=True)
             return summary
+        except TextOnlyToolCall as exc:
+            self.record('text_only_tool_call',{'error':str(exc),'tools_submitted':False},emit)
+            return {'role':'assistant','content':
+                    "I stopped before finishing: I kept looking for another tool instead of answering. "
+                    "No further tool was run. Edits already completed remain; check the figure, and "
+                    "ask again in other words if it is not what you wanted."}
         except ReplyProtocolError as exc:
             self.record('text_only_protocol_refusal',{'error':str(exc),'tools_submitted':False},emit)
             return {'role':'assistant','content':

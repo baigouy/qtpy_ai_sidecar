@@ -11,6 +11,11 @@ class GenerationTimeout(RuntimeError):
     pass
 
 
+class TextOnlyToolCall(RuntimeError):
+    """Asked for a text-only answer (tools disabled), the model still called a
+    tool. Nothing is executed; the caller may ask again or fall back."""
+
+
 class EmptyModelReply(RuntimeError):
     pass
 
@@ -271,7 +276,7 @@ class ModelClient:
             if '<tool_call>' in text and not calls:
                 raise RuntimeError('Model emitted raw tool markup instead of structured tool calls. Check the server chat template; no markup executed.')
             if final_only and calls:
-                raise RuntimeError('Text-only recovery returned a tool call; nothing executed')
+                raise TextOnlyToolCall('Text-only recovery returned a tool call; nothing executed')
             message = {'role': 'assistant', 'content': text}
             if raw_qwen and reasoning:
                 message['reasoning_content'] = reasoning
