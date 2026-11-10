@@ -264,6 +264,9 @@ class PyFiguresAdapter:
         explicit_target = re.search(r'\b(?:all|every|whole|entire)\b|\b(?:panel|letter)\s+(?:[a-z]|[0-9]+(?:/[0-9]+)?)\b', text, re.I)
         # "the third picture in the second row", "the top-left image" name a position, not a selection
         explicit_target = explicit_target or re.search(r'\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|last|\d+(?:st|nd|rd|th))\s+(?:picture|image|panel)\b|\b(?:top|bottom|upper|lower)[ -](?:left|right)\s+(?:picture|image|panel)\b', text, re.I)
+        # "make g bigger" → "the letter", "add a label to b": a lone letter names the panel
+        # (Mistral Large 4, 2026-11-10: both were refused as "which panel?").
+        explicit_target = explicit_target or re.search(r"(?<![\w'’./-])[b-hj-z](?![\w'’./-])|\b(?:to|of|in|on|from|for)\s+[ai]\s*(?:$|[.,;!?\n]|\s(?:to|into|by|with|as|and|or|is|too|should|please|bigger|smaller|larger)\b)", text, re.I)
         singular = re.search(r'\b(?:one|a|single|this|that|the)\s+(?:panel\s+)?(?:letter|label)\b', text, re.I)
         plural_style_collection=re.search(r'\b(?:the|these|those)\s+(?:panel\s+)?(?:letter|label)\s+(?:backgrounds|boxes|fills|fonts|sizes|colours|colors|positions|styles)\b',text,re.I)
         if plural_style_collection:singular=None
