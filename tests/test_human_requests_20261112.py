@@ -179,6 +179,60 @@ def test_i_want_to_edit_it_opens_the_editor_and_changes_nothing(text):
     call(text, 'open_annotation_editor', {'panel_ref': 'B'})          # what to do instead
 
 
+FIVE = {'selection': {'selected_panels': []},
+        'panel_references': [{'panel_id': f'0/{i}', 'letters': [l]} for i, l in enumerate('abcde')]}
+
+
+def _fake(state, opened, fail=None):
+    def request(operation, arguments=None):
+        if operation == 'inspect':
+            return state
+        if operation == 'open_annotation_editor':
+            if fail:
+                raise RuntimeError(fail)
+            opened.append(arguments)
+            return {'status': 'scheduled'}
+        raise AssertionError(operation)
+    return request
+
+
+def test_i_wanna_edit_the_roi_in_b_opens_its_editor_at_once():
+    """Two questions came before the editor opened (user chat 2026-11-12)."""
+    adapter, opened = PyFiguresAdapter('unused'), []
+    adapter.request = _fake(FIVE, opened)
+    out = adapter.preflight_manual_response('I wanna edit the ROI of the inset in b')
+    assert opened == [{'panel_ref': 'b', 'tab': 'annotations'}] and 'OK' in out['content']
+    # the next turn: "it" is that panel
+    out = adapter.preflight_manual_response('i wanna edit it myself')
+    assert opened[-1] == {'panel_ref': 'b', 'tab': 'annotations'} and len(opened) == 2
+    # the crop of panel c opens on its crop tab
+    adapter.preflight_manual_response('let me crop panel c myself')
+    assert opened[-1] == {'panel_ref': 'c', 'tab': 'crop'}
+
+
+def test_an_unclear_panel_is_asked_with_the_editor_among_the_choices():
+    adapter, opened = PyFiguresAdapter('unused'), []
+    adapter.request = _fake(FIVE, opened)
+    out = adapter.preflight_manual_response('I want to edit the ROI myself')
+    assert not opened and 'Open the editor of panel **b**' in out['content'] and 'tell me the change' in out['content']
+
+
+def test_an_editor_already_open_is_said_so():
+    adapter, opened = PyFiguresAdapter('unused'), []
+    adapter.request = _fake(FIVE, opened, fail='ANNOTATION_EDITOR_OPEN: the native editor is open')
+    out = adapter.preflight_manual_response('I wanna edit the arrow in d')
+    assert 'already open' in out['content']
+
+
+@pytest.mark.parametrize('text', ['make the ROI in b red', 'I want to edit the title of b to say Control',
+                                  'I want to change the letters myself', 'move the inset in b up'])
+def test_edits_with_a_value_or_not_of_one_panel_go_to_the_model(text):
+    adapter = PyFiguresAdapter('unused')
+    adapter.request = _fake(FIVE, [])
+    out = adapter.preflight_manual_response(text)
+    assert out is None
+
+
 @pytest.mark.parametrize('text', ['I want to edit the title to say Control', 'I want to edit b: make the ROI red',
                                   'make it bigger so I can see it', 'I want to adjust the inset size by 20%'])
 def test_an_edit_with_its_value_is_still_made(text):

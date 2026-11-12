@@ -22,7 +22,7 @@ class PyFiguresAdapter:
         if url.hostname not in ('127.0.0.1', 'localhost', '::1'):
             raise ValueError('The PyFigures bridge must be local')
         payload={'operation':operation,'arguments':arguments or {},'request_id':str(uuid.uuid4())}
-        if operation in ('inspect_annotation_objects','letter_state','select_live_objects'):
+        if operation in ('inspect_annotation_objects','letter_state','select_live_objects','open_annotation_editor'):
             current=self.request('inspect')
             payload.update(session_id=current['session_id'],expected_revision=current['revision'])
         data=json.dumps(payload).encode()
@@ -640,9 +640,92 @@ class PyFiguresAdapter:
         return target + verb + (' already ' if not operation.get('changed') else ' now ') + request[0] + '. Verified in the open figure.'
 
 
+    _EDITOR_THINGS = (r'\b(?:rois?|insets?|arrows?|annotations?|rectangles?|ellipses?|circles?|lines?|boxe?s?|shapes?|'
+                      r'scale\s*bars?|crop\w*|rotat\w*|texts?|labels?|colou?rs?|luts?|channels?|pixel\s+size|it|this|that|them)\b')
+    _EDITOR_TABS = ((r'\bcrop\w*', 'crop'), (r'\brotat\w*', 'rotate'), (r'\b(?:colou?rs?|luts?|channels?|pixel\s+size)\b', 'scale'),
+                    (r'\btexts?\b', 'text'))
+
+    def _named_panel(self, text, state):
+        """The panel *text* names ("in b", "panel b", "of B", "#3"), checked against the figure."""
+        import re
+        refs = state.get('panel_references') or []
+        letters = {str(l).lower(): str(l) for p in refs for l in (p.get('letters') or []) + [p.get('name')]
+                   if l and len(str(l)) == 1}
+        for m in re.finditer(r"\b(?:panel|image|picture|in|of|on|for)\s+([a-z])\b(?![\w'’])", text, re.I):
+            letter = m.group(1).lower()
+            if letter in ('a', 'i') and not re.match(r'(?:panel|image|picture)\b', m.group(0), re.I):
+                continue                    # "in a minute", "of I": only "panel a" names a / i
+            if letter in letters:
+                return letters[letter]
+        m = re.search(r"#\s?(\d+)\b", text)
+        if m and 0 < int(m.group(1)) <= len(refs):
+            return str(refs[int(m.group(1)) - 1].get('panel_id'))
+        return None
+
+    def _open_editor_for_self_edit(self, request):
+        """"I wanna edit the ROI of the inset in b", "let me edit it myself": open the
+        panel editor at once instead of asking which ROI and what change (user chat
+        2026-11-12: two questions before the editor opened)."""
+        import re
+        if not self._wants_to_edit_himself(request) or not re.search(self._EDITOR_THINGS, request, re.I):
+            return None
+        if re.search(r'\b(?:letters?|layout|rows?|columns?|figure|spacing|order)\b', request, re.I):
+            return None                     # not things of one panel's editor
+        try:
+            state = self.request('inspect')
+        except Exception:
+            return None
+        ref = self._named_panel(request, state)
+        if ref is None:
+            selected = (state.get('selection') or {}).get('selected_panels') or []
+            if len(selected) == 1:
+                ref = selected[0].get('panel_id')
+        if ref is None:
+            ref = getattr(self, '_last_named_panel', None)
+        if ref is None:
+            # unclear: ask, offering the editor of each panel (the user's rule: ask, with choices)
+            names = [str(l) for p in (state.get('panel_references') or []) for l in (p.get('letters') or [])][:8]
+            choices = '\n'.join(f'- Open the editor of panel **{n}** for you' for n in names) or \
+                '- Select the panel (click it), then ask again: I open its editor for you'
+            content = ('Which panel do you want to edit yourself?\n' + choices +
+                       '\n- Or tell me the change (e.g. "move the ROI in b up") and I make it')
+            return {'content': content, 'evidence': {'operation_executed': False, 'self_edit': True,
+                                                     'clarification': 'which panel'}}
+        tab = next((t for pattern, t in self._EDITOR_TABS if re.search(pattern, request, re.I)), 'annotations')
+        name = ref if not re.fullmatch(r'[\d/]+', str(ref)) else 'the selected panel'
+        try:
+            self.request('open_annotation_editor', {'panel_ref': ref, 'tab': tab})
+        except Exception as exc:
+            if 'ANNOTATION_EDITOR_OPEN' in str(exc) or 'already' in str(exc).lower():
+                content = ('The panel editor is already open: make your changes there, then press **OK** to apply them '
+                           'or **Cancel** to drop them.')
+            else:
+                return None
+        else:
+            title = {'annotations': 'Annotations', 'crop': 'Rotate + Crop', 'rotate': 'Rotate + Crop',
+                     'scale': 'File Infos + Scale', 'text': 'Texts'}[tab]
+            content = (f'I opened the editor of panel **{name}** on its **{title}** tab. Click what you want to change '
+                       f'(drag it to move it, drag a corner to resize it), then press **OK** to apply your changes or '
+                       f'**Cancel** to drop them. I won\'t change anything meanwhile.')
+        return {'content': content, 'evidence': {'operation': 'open_annotation_editor', 'panel_ref': ref, 'tab': tab,
+                                                 'operation_executed': False, 'self_edit': True}}
+
     def preflight_manual_response(self, request):
         """Resolve a pure control-location question from reviewed help before model discovery."""
         import re
+        try:
+            state = None
+            named = None
+            if re.search(r"\b(?:panel|image|picture|in|of|on|for)\s+[b-hj-z]\b(?![\w'’])", request, re.I):
+                state = self.request('inspect')
+                named = self._named_panel(request, state)
+            if named:
+                self._last_named_panel = named      # "edit it myself" next turn means that panel
+        except Exception:
+            pass
+        opened = self._open_editor_for_self_edit(request)
+        if opened:
+            return opened
         if not re.match(r'^\s*where\s+(?:is|are)\b', request, re.I):
             return None
         # Mixed questions/actions must retain the normal conversational/tool path.

@@ -3,6 +3,7 @@
 ## Unreleased
 
 - PyFigures adapter: "I want to edit / adjust X" with no value given, "let me edit it", "myself", "by hand", "so I can edit it" change nothing: the model is told to open the editor for the user ("i wanna edit smallest ROI inset in b" made a second inset).
+- PyFigures adapter: such a request naming its panel ("…in b"), or with one panel selected, or after a turn that named one, opens that panel's editor at once (on the crop / colours / texts tab when named), without the model; with no panel known, the reply asks which, offering to open each panel's editor or to make the change.
 
 ## 0.1.7 — 2026-11-12
 
