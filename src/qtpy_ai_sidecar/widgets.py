@@ -734,7 +734,9 @@ class AssistantDock(QDockWidget):
         self.input.setEnabled(False)
         self.send_button.setEnabled(True)
         self.send_button.setAccessibleName('Stop')
-        self.send_button.setToolTip('Stop')
+        # stopping keeps what is already done ("Stop" sounded like throwing the edits away
+        # while the model was only re-checking them, 2026-11-12)
+        self.send_button.setToolTip('Stop here: the changes already made stay (Undo removes them)')
         self.send_button.setIcon(qta.icon('fa5s.stop', color='#fffdf9'))
         self.thinking_mode.setEnabled(False)
         self.thinking_slider.setEnabled(False)

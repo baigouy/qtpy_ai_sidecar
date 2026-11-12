@@ -63,7 +63,12 @@ class PyFiguresAdapter:
               'get_figure_properties','list_how_to_guides','explain_how',
               'explain_live_interaction','find_pyfigures_tools',
               'list_pyfigures_categories','list_fonts','preview_panel','preview_luts',
-              'search_images'}
+              'search_images',
+              # plain reads: 9 get_image_property re-reads counted as edits, so the
+              # engine could not tell checking from editing (2026-11-12)
+              'get_image_property','list_image_properties','get_scale_bar','get_journal_style',
+              'list_colors','list_luts','list_images','list_insets','list_label_rows',
+              'list_journal_presets','list_journal_styles','describe_figure','preview_figure'}
         if tool_name=='use_pyfigures_tool':
             return arguments.get('tool_name') in pure
         if tool_name in pure:return True
@@ -167,9 +172,11 @@ class PyFiguresAdapter:
                 uniform = (state.get('verified_letter_specification') or {}).get('uniform_letter_style') or {}
                 for field in extras & set(args):
                     if field in uniform and uniform[field] == args[field]:args.pop(field)
-                unsupported = extras & set(args)
+                # bold/italic/underline are fields of edit_panel_letters since 2026-11-12 ("the letter
+                # bold on every rotated panel": restyle_texts bolded all nine)
+                unsupported = {'opacity'} & set(args)
                 if unsupported:
-                    raise ValueError('Unsupported edit_panel_letters fields: ' + ', '.join(sorted(unsupported)) + '. Bold/italic/underline use restyle_texts(target=letters); opacity requires a supported discovered tool. No edit submitted; fields that would change state were not silently discarded.')
+                    raise ValueError('Unsupported edit_panel_letters fields: ' + ', '.join(sorted(unsupported)) + '. Opacity requires a supported discovered tool. No edit submitted; fields that would change state were not silently discarded.')
 
 
 
@@ -210,6 +217,11 @@ class PyFiguresAdapter:
             names.extend(labels)
         names = list(dict.fromkeys(names))
         if not names:
+            return
+        # "add bars to a d e, remove the letter of b, and make h green": other lone letters
+        # name panels too, so the verb pattern did not find the complete target set.
+        others = re.findall(r"(?<![\w'’./-])[b-hj-z](?![\w'’./-])", source.lower())
+        if any(letter not in names for letter in others):
             return
         panels = state.get('panel_references') or []
         requested = []
@@ -262,6 +274,8 @@ class PyFiguresAdapter:
         selection = state.get('selection') or {}
         panels = selection.get('selected_panels') or []
         explicit_target = re.search(r'\b(?:all|every|whole|entire)\b|\b(?:panel|letter)\s+(?:[a-z]|[0-9]+(?:/[0-9]+)?)\b', text, re.I)
+        # "#3", "number 3": the numbers the canvas shows on selected panels (2026-11-12)
+        explicit_target = explicit_target or re.search(r'#\s?\d+\b|\b(?:number|no\.?|n°)\s?\d+\b', text, re.I)
         # "the third picture in the second row", "the top-left image" name a position, not a selection
         explicit_target = explicit_target or re.search(r'\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|last|\d+(?:st|nd|rd|th))\s+(?:picture|image|panel)\b|\b(?:top|bottom|upper|lower)[ -](?:left|right)\s+(?:picture|image|panel)\b', text, re.I)
         # "make g bigger" → "the letter", "add a label to b": a lone letter names the panel
@@ -276,7 +290,7 @@ class PyFiguresAdapter:
         # "add a 10 um scale bar to images" / "to the panels" / "to the figure": plural
         # pictures with no letters after them mean every panel (it was refused)
         plural_target=re.search(r'\b(?:to|on|for|in)\s+(?:the\s+|my\s+|these\s+|those\s+)?(?:images|panels|pictures|photos|figure)\b(?!\s+(?:[a-z]|\d+/\d+)\b(?:\s*(?:,|and|&)|\s*$))',text,re.I)
-        if operation=='set_scale_bar_all' and not plural_target and not re.search(r'\b(?:all|every|each|whole|entire|throughout)\b|\bscale[ -]?bars\b',text,re.I):
+        if operation=='set_scale_bar_all' and not plural_target and not re.search(r'\b(?:all|every|each|whole|entire|throughout|everywhere|everything|partout|toutes?|tous|chaque)\b|\b(?:scale[ -]?)?bars\b|\bbarres\b',text,re.I):
             # "Give a a scale bar", "put b a scale bar", "panel c": the request names its panel
             named=re.search(r'\b(?:panel|image)\s+([a-z]{1,2}|\d+/\d+)\b',text,re.I)
             if named and (re.search(r'\b(?:this|that|the|selected|current|same)\s*$',text[:named.start()],re.I)
@@ -318,7 +332,9 @@ class PyFiguresAdapter:
             known = {str(p.get('panel_id', '')).casefold() for p in state['panel_references']}
             for p in state['panel_references']:
                 known.update(str(v).casefold() for v in p.get('letters', []))
-            stop = {'to', 'in', 'on', 'at', 'of', 'by', 'is', 'it', 'as', 'up', 'an', 'or', 'so', 'no', 'me', 'my', 'be', 'do', 'go', 'if', 'we', 'us'}
+            stop = {'to', 'in', 'on', 'at', 'of', 'by', 'is', 'it', 'as', 'up', 'an', 'or', 'so', 'no', 'me', 'my', 'be', 'do', 'go', 'if', 'we', 'us',
+                    # 'give each image bg a different bg color' (2026-11-12): abbreviations, not panels
+                    'bg', 'fg', 'px', 'pt', 'mm', 'cm', 'um', 'nm', 'ok', 'id', 'ch', 'sz'}
             for named in re.finditer(r'\b(?:image|panel|picture|photo|select|pick)\s+([a-z]{1,2}|\d+/\d+)(?![\w/])', text, re.I):
                 ref = named[1].casefold()
                 if ref not in known and ref not in stop:
@@ -338,6 +354,26 @@ class PyFiguresAdapter:
                     raise ValueError(f'SWAP_REFERENCE_MISMATCH: the request names {spoken[1]!r} and {spoken[2]!r}. Never substitute another panel; '
                                      'if a reference does not exist, tell the user and ask. Nothing was swapped.')
         self._named_panel_address_guard(operation, args, state, text)
+        # "make it fit one column of nature": a page width; the nine panels were stacked in one
+        # column first (Mistral Large 4, 2026-11-12)
+        if operation == 'arrange_live_images' \
+                and re.search(r'\b(?:nature|science|cell|plos|elife|pnas|embo|jcb|neuron|development|current biology|journal)\b', text, re.I) \
+                and re.search(r'\b(?:one|single|1|two|double|2|1\.5|full)[- ]?(?:columns?|width)\b|\bcolumns?\s+(?:of|width|in|for)\b', text, re.I) \
+                and not re.search(r'\b(?:stack\w*|arrange\w*|rearrange\w*|layout|per row|vertical\w*|rows?)\b', text, re.I):
+            raise ValueError('JOURNAL_COLUMN: a column of a journal is a page WIDTH, not a layout. Keep the panels where they are and '
+                             'use resize_figure(journal=..., column="single" or "double"). Nothing was rearranged.')
+        # "make it publication ready": the figure was resized to 89 mm and every letter turned
+        # white without a word; "make it nicer" had been asked back correctly
+        last_line = (text.strip().splitlines() or [''])[-1]
+        checks_only = ('check_', 'inspect_', 'get_', 'list_', 'review_', 'preview_', 'render_', 'find_', 'journal_info',
+                       'validate_', 'describe_', 'show_me', 'select_live', 'generate_alt')
+        if re.search(r'\b(?:publication|submission|print)[- ]ready\b|\bready\s+(?:for|to)\s+(?:publication|submission|submit|publish|print)\b',
+                     last_line, re.I) \
+                and not re.search(r'\b(?:nature|science|cell|plos|elife|pnas|embo|jcb|neuron)\b|\d\s*(?:mm|cm|dpi|pt)\b', last_line, re.I) \
+                and not str(operation or '').startswith(checks_only):
+            raise ValueError('VAGUE_REQUEST: "publication ready" names no change. Run read-only checks only (review_submission_readiness '
+                             'with width_mm=89 if no journal is known, check_resolution, check_scale_consistency), report what fails in '
+                             'plain words, and ask which fixes to apply and for which journal. Nothing was changed.')
         # Annotation tokens change after an earlier edit in this same turn.
         token_state = self.context() if operation == 'edit_annotation_properties' else state
         self._efficient_arguments(operation, args, token_state)
@@ -416,7 +452,12 @@ class PyFiguresAdapter:
             # (DEFAULT is accepted as a synonym)
             removing=re.search(r'\b(?:remov\w*|reset\w*|clear\w*|undo|delete\w*|drop|strip|get rid of|no|without|original|acquisition)\b'
                                r'[^.?!]{0,40}?\b(?:luts?|colou?r ?(?:tables?|maps?)|look-?up tables?|pseudo-?colou?rs?)\b',spoken) \
-                or re.search(r'\b(?:luts?|colou?r ?tables?)\b[^.?!]{0,30}?\b(?:off|removed|gone|reset)\b',spoken)
+                or re.search(r'\b(?:luts?|colou?r ?tables?)\b[^.?!]{0,30}?\b(?:off|removed|gone|reset)\b',spoken) \
+                or re.search(r'\b(?:default|restor\w*|original|natural|normal|own|real|true)\b[^.?!]{0,30}?\b(?:luts?|colou?rs?|channels?)\b'
+                             r'|\b(?:luts?|colou?rs?)\b[^.?!]{0,30}?\b(?:unnatural|weird|strange|odd|wrong|off|fake|garish|ugly)\b',spoken)
+            # "the colors look unnatural can this be fixed" (2026-11-12): going back to the image
+            # file's own colours (NONE) is the expected fix, and what the refusal offers
+            offered_default=re.search(r"image's own colours",str(state.get('_last_reply') or ''))
             unnamed=[l for i,l in enumerate(args['luts']) if isinstance(l,str) and stem(l) and stem(l) not in spoken
                      and not (removing and stem(l) in ('default','none'))
                      and not (swapping and stem(l) in shown_names)
@@ -426,18 +467,42 @@ class PyFiguresAdapter:
             # told apart, so that needs the user's own words
             names=[stem(l) for l in args['luts'] if isinstance(l,str) and stem(l) and stem(l) not in ('none','default')]
             repeated=sorted({n for n in names if names.count(n)>1})
-            if repeated and not re.search(r'\b(?:all|every|each|both|the)\s+(?:\w+\s+)?channels?\b|\bchannels?\s+(?:all|both)\b|\bper channel\b',spoken):
+            if repeated and not re.search(r'\b(?:all|every|each|both|the)\s+(?:\w+\s+)?channels?\b|\bchannels?\s+(?:all|both)\b|\bper channel\b'
+                                          # "make everything grayscale": one grey image is what was asked (2026-11-12)
+                                          r'|\bgr[ae]y ?scale\b|\bblack (?:and|&) white\b|\bmonochrome\b|\bnoir et blanc\b|\bniveaux de gris\b',spoken):
                 from ..errors import NeedsClarification
                 raise NeedsClarification(f'This would give the {", ".join(n.upper() for n in repeated)} LUT to {names.count(repeated[0])} channels of the same image: '
                                          'they would add up in one colour and could no longer be told apart. Do you want that, or one channel '
                                          'in gray (the others hidden), or a channel split? No LUT was changed.')
             if unnamed and removing:
-                raise ValueError('Removing a LUT means going back to the LUT of the image file itself: use "NONE" '
-                                 'for each channel, e.g. luts=["NONE"], unless the user asked for '
+                raise ValueError('Removing a LUT, or colours back to normal, means going back to the LUT of the image '
+                                 'file itself (its own colours): use "NONE" for each channel, e.g. luts=["NONE", "NONE"], '
+                                 'unless the user asked for '
                                  + ', '.join(unnamed) + '. No LUT was changed.')
+            # "is it colour blind safe?" -> the assistant proposes magenta/green -> "fix it" (2026-11-12):
+            # colours the assistant offered and the user accepted, or a choice left to the assistant
+            offered=str(state.get('_last_reply') or '').lower()
+            accepting=re.search(r"\b(?:yes|yep|yeah|ok|okay|sure|please|do it|do that|go ahead|go for it|fix it|fix them|fix that|apply|sounds good|"
+                                r"first|second|third|option|that one|the same|oui|vas[- ]y|d'accord)\b|^\s*\d\s*$",text,re.I)
+            delegated=re.search(r'\bcolou?r[- ]?blind\w*|\bdaltoni\w*|\baccessib\w*|\bcvd\b|\b(?:you|your)\s+(?:choose|pick|decide|choice)\b|\bwhatever\b',spoken)
+            if unnamed and (delegated or (accepting and all(stem(u) in offered for u in unnamed))):
+                unnamed=[]
+            # "restore it as it was" after "E had RED_HOT; restoring the file's colours"
+            # (2026-11-12): the LUT it had before, named in the last reply, is not invented
+            reverting=re.search(r'\b(?:as it was|as they were|as before|like before|put (?:it|them) back|revert\w*|go back|'
+                                r'undo|previous|comme avant|remet\w*)\b',spoken)
+            compact=re.sub(r'[^a-z]','',offered)
+            if unnamed and reverting and all(stem(u).replace(' ','') in compact for u in unnamed):
+                unnamed=[]
+            if unnamed and offered_default and (accepting or re.search(r'\b(?:default|own|original|restor\w*|back)\b',spoken)):
+                unnamed=[u for u in unnamed if stem(u) not in ('default','none')]
+            if re.search(r'\bgr[ae]y ?scale\b|\bblack (?:and|&) white\b|\bmonochrome\b|\bnoir et blanc\b|\bniveaux de gris\b',spoken):
+                unnamed=[u for u in unnamed if stem(u)!='gray']        # "black and white" is GRAY
             if unnamed:
                 from ..errors import NeedsClarification
-                raise NeedsClarification('The request does not name the colour table '+', '.join(unnamed)+'. Which LUT do you want (e.g. GRAY, RED, GREEN, BLUE, MAGENTA, YELLOW_HOT; list_luts lists them all)? No LUT was changed.')
+                raise NeedsClarification('The request does not name the colour table '+', '.join(unnamed)+". Do you want the image's own colours "
+                                         'back (the default LUT of the file), or a LUT you name (e.g. GRAY, RED, GREEN, BLUE, MAGENTA, '
+                                         'YELLOW_HOT; list_luts lists them all)? No LUT was changed.')
         greek=re.search(r'\b(?:panel|image|picture)\s+(alpha|beta|gamma|delta|epsilon|zeta|eta|theta|iota|kappa|lambda|mu|nu|xi|omicron|pi|rho|sigma|tau|upsilon|phi|chi|psi|omega)\b',text,re.I)
         if greek and not read_only and not any(greek[1].lower() in [str(x).lower() for x in p.get('letters',[])] for p in state.get('panel_references',[])):
             # "the letter from panel omega": no such panel, so nothing may be guessed.
@@ -604,6 +669,10 @@ class PyFiguresAdapter:
                 negative=re.search(r'\b(?:not|no longer|remove|disable|without)\s+(?:the\s+)?'+word+r'\b',request,re.I)
                 desired[prop]=not bool(negative)
         if not desired:return None
+        # "the letter bold on every ROTATED panel" (2026-11-12) is a subset this check cannot
+        # name: taken for "all letters", a correct result was sent back as unfinished
+        if re.search(r'\b(?:all|every|each)\s+(?:of\s+)?(?:the\s+)?(?!panels?\b|letters?\b|images?\b|pictures?\b|automatic\b|auto\b|panel\b|existing\b|current\b|visible\b|my\b|these\b|those\b|figure\b)\w+\s+(?:panels?|images?|pictures?|letters?)\b',request,re.I):
+            return None
         all_requested=bool(re.search(r'\b(?:all|every|throughout|entire)\b',request,re.I))
         selected={p['panel_id'] for p in (state.get('selection') or {}).get('selected_panels',[])}
         named=re.findall(r'\b(?:panel|letter)\s+([a-z])(?!\w)',request,re.I)

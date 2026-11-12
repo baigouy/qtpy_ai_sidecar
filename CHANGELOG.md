@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.6 — 2026-11-12
+
+- After a turn's edits succeeded, re-reading what each tool already read back is cut short: after two reads in a row the model is told to answer, after four its tools are switched off and it answers from the results (asked to say which part of the request is not done yet, never to call it done). The status line says "Changes applied; checking them (Stop keeps them)" and the Stop tooltip says that the changes already made stay.
+- The host-verification recovery note and the stop note are sent as user messages: Mistral refused a conversation ending on a system message after the model's reply (HTTP 400).
+- PyFigures adapter:
+  - Plain reads (`get_image_property`, `list_luts`, `preview_figure`…) count as reads, not edits.
+  - "Colours look unnatural / back to normal / the default colours" may use the image file's own colours (NONE), and the colour question offers them; "restore it as it was" may go back to the LUT the last reply named.
+  - Several requests in one sentence each name their panel; "#3" / "number 3" names the panel shown with that number; a journal column must not become a row layout; "publication ready" with no journal or size allows checks only.
+  - Short words after "image" or "panel" ("each image bg") are not panel names.
+  - `edit_panel_letters` takes bold/italic/underline for some panels; "every rotated panel" is not checked as "every letter".
+
 ## 0.1.4 — 2026-11-06
 
 - When the turn is stopped (search loop, repeated refusals) and the model still answers the text-only request with a tool call, it is asked once more for plain text, then given a short fallback reply, instead of ending the turn on an error.

@@ -26,6 +26,17 @@ def test_a_label_for_a_named_panel_is_not_refused(text):
     call(text, 'select_live_objects', {'panel_refs': ['B']})
 
 
+@pytest.mark.parametrize('text', ['same scale bar everywhere, 20 um', 'bars in black', 'une barre de 10 µm partout'])
+def test_everywhere_and_plural_bars_mean_every_panel(text):
+    """'same scale bar everywhere' was refused four times as a single-panel request (2026-11-12)."""
+    call(text, 'set_scale_bar_all', {'bar_width_in_units': 20})
+
+
+def test_one_bar_is_still_not_every_panel():
+    with pytest.raises(ValueError, match='SCOPE_MISMATCH'):
+        call('add a 20 um scale bar', 'set_scale_bar_all', {'bar_width_in_units': 20})
+
+
 @pytest.mark.parametrize('text', ['make the letter bigger', 'the letter is hard to see', 'add a label in a corner'])
 def test_no_panel_named_still_asks(text):
     with pytest.raises(NeedsClarification, match='tell me its panel label'):

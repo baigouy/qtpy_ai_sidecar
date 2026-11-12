@@ -22,7 +22,10 @@ def test_dump_noops_are_removed_but_changes_refused():
     PyFiguresAdapter._efficient_arguments('edit_panel_letters',args,state)
     assert args=={'action':'style','scope':'all','color':'yellow'}
     with pytest.raises(ValueError,match='No edit submitted'):
-        PyFiguresAdapter._efficient_arguments('edit_panel_letters',{'bold':True},state)
+        PyFiguresAdapter._efficient_arguments('edit_panel_letters',{'opacity':0.5},state)
+    bold={'scope':'panels','panel_ids':['0/0'],'bold':True}          # a real change goes through
+    PyFiguresAdapter._efficient_arguments('edit_panel_letters',bold,state)
+    assert bold['bold'] is True
 
 def test_draft_object_token_has_priority():
     state={'panel_references':[{'panel_id':'1/3','letters':['h']}],

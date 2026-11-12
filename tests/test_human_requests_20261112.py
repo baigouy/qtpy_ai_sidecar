@@ -1,0 +1,159 @@
+"""Human-style requests through Mistral Large 4 (2026-11-12): guards that
+refused what the user had asked for or accepted.
+"is it colour blind safe?" -> the assistant proposes magenta and green ->
+"fix it": set_lut MAGENTA was refused as "not named by the request"."""
+import pytest
+
+from qtpy_ai_sidecar.adapters.pyfigures import PyFiguresAdapter
+from qtpy_ai_sidecar.errors import NeedsClarification
+
+PANELS = [{'panel_id': '0/0', 'letters': ['A'], 'channel_colours': ['RED', 'GREEN'], 'luts': [None, None]}]
+OFFER = ('Not entirely: panel A shows RED + GREEN. A colour-blind-friendly pair would be '
+         'magenta + green, or cyan + yellow. Shall I change it?')
+
+
+def set_lut(text, luts, last_reply=''):
+    state = {'panel_references': PANELS, 'selection': {'selected_panels': []}, '_last_reply': last_reply}
+    PyFiguresAdapter('unused').validate_tool_call(
+        'use_pyfigures_tool', {'tool_name': 'set_lut', 'arguments': {'panel_ref': 'A', 'luts': luts}}, state, text)
+
+
+@pytest.mark.parametrize('text', ['fix it', 'yes', 'ok do it', 'go ahead', 'oui', 'the first option', '1'])
+def test_colours_the_assistant_offered_and_the_user_accepted(text):
+    set_lut(text, ['MAGENTA', 'GREEN'], OFFER)
+
+
+def test_a_colour_blind_request_leaves_the_choice_to_the_assistant():
+    set_lut('make a colour blind safe', ['MAGENTA', 'GREEN'])
+    set_lut('is it colorblind friendly?\nfix it', ['CYAN', 'YELLOW'])
+
+
+def test_everything_grayscale_may_put_gray_on_every_channel():
+    set_lut('make everything grayscale', ['GRAY', 'GRAY'])
+    set_lut('black and white please', ['GRAY', 'GRAY'])
+    with pytest.raises(NeedsClarification, match='could no longer be told apart'):
+        set_lut('try gray', ['GRAY', 'GRAY'])
+
+
+NINE = {'selection': {'selected_panels': []},
+        'panel_references': [{'panel_id': f'{i // 3}/{i % 3}', 'letters': [letter]} for i, letter in enumerate('ABCDEFGHI')]}
+
+
+def call(text, tool, arguments, state=NINE):
+    PyFiguresAdapter('unused').validate_tool_call('use_pyfigures_tool', {'tool_name': tool, 'arguments': arguments}, state, text)
+
+
+def test_several_requests_in_one_sentence_each_name_their_panel():
+    """'add bars to a d e, remove the letter of b, and make h green': removing B's letter
+    was refused because "make h" was taken for the only panel named."""
+    text = 'add bars to a d e, remove the letter of b, and make h green'
+    call(text, 'edit_panel_letters', {'action': 'remove', 'scope': 'panels', 'panel_ids': ['0/1'], 'removal_request': text})
+    call(text, 'set_scale_bar', {'panel_ref': '1/0', 'bar_width_in_units': 20})
+    with pytest.raises(ValueError, match='PANEL_ADDRESS_MISMATCH'):
+        call('make h bigger', 'edit_panel_letters', {'action': 'style', 'scope': 'panels', 'panel_ids': ['0/1'], 'font_size': 20})
+
+
+@pytest.mark.parametrize('text', ['make it fit one column of nature', 'single column for cell please',
+                                  'format it for science, double column'])
+def test_a_column_of_a_journal_is_a_width_not_a_layout(text):
+    with pytest.raises(ValueError, match='JOURNAL_COLUMN'):
+        call(text, 'arrange_live_images', {'columns': 1})
+    call(text, 'resize_figure', {'journal': 'nature', 'column': 'single'})
+
+
+@pytest.mark.parametrize('text', ['put everything in one column', 'arrange the panels in one column for nature',
+                                  'stack them in a single column, it is for cell'])
+def test_a_column_layout_is_still_a_layout(text):
+    call(text, 'arrange_live_images', {'columns': 1})
+
+
+@pytest.mark.parametrize('text', ['make it publication ready', 'is it ready for submission? make it submission-ready'])
+def test_publication_ready_checks_and_asks_before_changing(text):
+    for tool, arguments in (('resize_figure', {'width_mm': 89}), ('edit_panel_letters', {'action': 'style', 'scope': 'all', 'color': '#ffffff'})):
+        with pytest.raises(ValueError, match='VAGUE_REQUEST'):
+            call(text, tool, arguments)
+    call(text, 'review_submission_readiness', {'width_mm': 89})
+    call(text, 'check_resolution', {'min_dpi': 300})
+
+
+@pytest.mark.parametrize('text', ['make it publication ready\nyes, fix the width', 'make it publication ready for nature',
+                                  'make it publication ready at 89 mm'])
+def test_publication_ready_with_an_answer_or_a_target_goes_ahead(text):
+    call(text, 'resize_figure', {'width_mm': 89})
+
+
+@pytest.mark.parametrize('text', ['make the letter of #3 red', 'the letter on number 3 is too small'])
+def test_a_panel_number_shown_on_the_canvas_names_the_panel(text):
+    call(text, 'edit_panel_letters', {'action': 'style', 'scope': 'panels', 'panel_ids': ['#3'], 'color': '#ff0000'})
+
+
+@pytest.mark.parametrize('text', ['the colors look unnatural can this be fixed', 'restore the original colours',
+                                  'back to the default colors', 'the colours are weird', 'normal colours please'])
+def test_colours_back_to_normal_restore_the_image_own_luts(text):
+    """'the colors look unnatural can this be fixed' (user chat 2026-11-12): the model chose
+    RED, was refused, and the user was never offered the image's own colours."""
+    set_lut(text, ['NONE', 'NONE'])
+    set_lut(text, ['DEFAULT', None])
+    with pytest.raises(ValueError, match='use "NONE" for each channel'):
+        set_lut(text, ['BLUE', None])                         # an invented colour: told to use NONE
+
+
+def test_the_clarification_offers_the_image_own_colours_and_yes_accepts_it():
+    with pytest.raises(NeedsClarification, match="image's own colours") as asked:
+        set_lut('make it look better', ['BLUE', None])
+    set_lut('yes', ['NONE', 'NONE'], str(asked.value))
+    set_lut('the default one', ['NONE', 'NONE'], str(asked.value))
+    with pytest.raises(NeedsClarification):
+        set_lut('yes', ['CYAN', None], str(asked.value))     # not what was offered
+
+
+@pytest.mark.parametrize('text', ['give each image bg a different bg color', 'make the panel bg black',
+                                  'image px size is 0.2 um'])
+def test_an_abbreviation_after_image_is_not_a_panel_name(text):
+    """'give each image bg a different bg color' (user chat 2026-11-12): refused with
+    "There is no panel 'bg' in this figure"."""
+    call(text, 'set_image_property', {'panel_ref': '0/0', 'property_name': 'fill_color', 'value': '16711680'})
+
+
+def test_a_panel_that_does_not_exist_is_still_asked_about():
+    with pytest.raises(NeedsClarification, match="There is no panel 'aa'"):
+        call('select image aa, then make its letter blue', 'set_image_property',
+             {'panel_ref': '0/0', 'property_name': 'fill_color', 'value': '0'})
+
+
+RESTORED = ("Fixed — E now shows its natural colors. The weird orange-yellow tint was the RED_HOT "
+            "LUT on channel 1, now removed.")
+
+
+@pytest.mark.parametrize('text', ['restore it as it was', 'put it back', 'revert that', 'remets comme avant'])
+def test_going_back_to_the_lut_the_last_reply_named(text):
+    """'restore it as it was' (user chat 2026-11-12): RED_HOT, named in the reply that had
+    just removed it, was refused as 'not named by the request'."""
+    set_lut(text, ['RED_HOT', None], RESTORED)
+    with pytest.raises(NeedsClarification):
+        set_lut(text, ['CYAN', None], RESTORED)                # not what it was
+
+
+def test_a_qualified_every_is_not_all_letters():
+    """'rotate A, then make the letter bold on every rotated panel' (2026-11-12): checked
+    as 'all 9 letters bold' and sent back as unfinished although only A is rotated."""
+    adapter = PyFiguresAdapter('unused')
+    asked = []
+    adapter.request = lambda *a, **k: asked.append(a) or {'panels': [
+        {'panel_id': '0/0', 'letters': [{'text': 'A', 'bold': True}]},
+        {'panel_id': '0/1', 'letters': [{'text': 'B', 'bold': False}]}]}
+    state = {'selection': {'selected_panels': []}}
+    assert adapter._verify_letter_style_reply('make the letter bold on every rotated panel',
+                                              'Done: the letter of A is bold.', state) is None
+    assert not asked                                           # nothing was checked against all
+    flagged = adapter._verify_letter_style_reply('make every letter bold', 'Done: all letters are bold.', state)
+    assert flagged['evidence']['mismatched_panel_ids'] == ['0/1']    # a plain "every" still counts
+
+
+def test_colours_nobody_named_are_still_refused():
+    with pytest.raises(NeedsClarification, match='does not name the colour table'):
+        set_lut('fix it', ['MAGENTA', 'GREEN'])                       # nothing was offered
+    with pytest.raises(NeedsClarification, match='does not name the colour table'):
+        set_lut('yes', ['ORANGE_HOT', 'GREEN'], OFFER)                # not what was offered
+    with pytest.raises(NeedsClarification, match='does not name the colour table'):
+        set_lut('make the letters bigger', ['MAGENTA', 'GREEN'], OFFER)   # no acceptance

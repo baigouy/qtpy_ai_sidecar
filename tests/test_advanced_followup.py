@@ -110,8 +110,12 @@ def test_verified_clause_recovery_is_bounded(tmp_path):
             return {'content':'Requested selection is incomplete.','evidence':{'status':'incomplete_selection'}}
     class Model:
         count=0
-        async def complete(self,*a,**kw):
+        last_roles=[]
+        async def complete(self,messages,*a,**kw):
             self.count+=1
+            # Mistral refuses a conversation that ends on the assistant's reply plus a
+            # system message (HTTP 400, 2026-11-12): the recovery note is a user message
+            self.last_roles.append([m['role'] for m in messages if m['role']!='system'][-1])
             return {'role':'assistant','content':'Done.'},{}
     class Hub:
         instructions={}
@@ -124,6 +128,7 @@ def test_verified_clause_recovery_is_bounded(tmp_path):
     events=[]
     asyncio.run(engine.turn('Select h.',lambda *a:events.append(a)))
     assert model.count==2
+    assert model.last_roles==['user','user']
     assert [v for k,v in events if k=='assistant']==['Requested selection is incomplete.']
 
 
