@@ -269,6 +269,23 @@ class PyFiguresAdapter:
             raise ValueError('PANEL_ADDRESS_MISMATCH: you targeted ' + actual + '; the request names ' + intended + '. No edit was dispatched. Inspect current references and correct the target explicitly; nothing was retargeted or undone.')
 
 
+    _SELF_EDIT_OK = frozenset({'open_annotation_editor', 'open_annotation_properties', 'show_me_where', 'select_live_objects',
+                               'explain_how', 'explain_live_interaction', 'undo_redo'})
+
+    @staticmethod
+    def _wants_to_edit_himself(text):
+        """"I want to edit / move / adjust X" with no value to set ("to red", "by 10 px",
+        "make it…"), or "myself", "by hand", "so I can": the user edits, the chat opens."""
+        import re
+        if re.search(r"\b(?:my\s*self|by\s+hand|manually|so\s+(?:that\s+)?i\s+can\s+(?:edit|do|move|change|adjust|fix|tweak)|let\s+me\s+(?:edit|do|move|change|adjust|fix))\b", text, re.I):
+            return True
+        wish = re.search(r"\b(?:i|i'd|i'll)\s+(?:wanna|want\s+to|would\s+like\s+to|like\s+to|need\s+to|will|have\s+to)\s+"
+                         r"(?:edit|adjust|tweak|reposition|fine[ -]?tune)\b", text, re.I)
+        if not wish:
+            return False
+        rest = text[wish.end():]
+        return not re.search(r"\b(?:to|into|by|with)\s+\S|\b(?:make|set|put|turn|use|change|move|add|remove|delete)\b|\d", rest, re.I)
+
     def validate_tool_call(self, tool_name, arguments, state, text):
         import re
         selection = state.get('selection') or {}
@@ -323,6 +340,11 @@ class PyFiguresAdapter:
                                                           'edit_', 'apply_', 'arrange_', 'restyle_', 'reorder_', 'move_', 'crop_', 'rotate_', 'split_', 'merge_')):
             raise ValueError('HOW_TO_NO_EDIT: the user asked HOW to do this, not to do it. Answer with the human GUI steps '
                              '(explain_how / explain_live_interaction), then offer to do it. Nothing was changed or written.')
+        if operation and not read_only and operation not in self._SELF_EDIT_OK and self._wants_to_edit_himself(text):
+            # "i wanna edit smallest ROI inset in b" made a second inset (user chat 2026-11-12)
+            raise ValueError('SELF_EDIT: the user wants to make this edit by hand, not have it made. Open the editor for '
+                             'them: open_annotation_editor(panel_ref=<the panel>) (or show_me_where), then let them work. '
+                             'Nothing was changed.')
         if operation in ('delete_last_rows', 'remove_group', 'remove_image', 'ungroup_all_images', 'remove_label_row') and not re.search(
                 r'\b(?:delet\w*|remov\w*|drop|eras\w*|discard|get\s+rid|take\s+out|clear|cut|trim|lose|eliminat\w*|fewer|ungroup\w*|undo|keep\s+only|only\s+keep|just\s+keep)\b', text, re.I):
             # 'Put 0 pictures per row.' -> columns=0 refused, then delete_last_rows was accepted (24 -> 16 images)

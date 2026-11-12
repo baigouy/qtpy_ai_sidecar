@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- PyFigures adapter: "I want to edit / adjust X" with no value given, "let me edit it", "myself", "by hand", "so I can edit it" change nothing: the model is told to open the editor for the user ("i wanna edit smallest ROI inset in b" made a second inset).
+
 ## 0.1.7 — 2026-11-12
 
 - PyFigures adapter: "how many / how much / how big…" asks for a number, not for steps: "how many channels does this image have" was answered with the channel-split guide.

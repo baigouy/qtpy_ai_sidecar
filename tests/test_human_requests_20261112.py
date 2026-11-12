@@ -168,3 +168,18 @@ def test_colours_nobody_named_are_still_refused():
         set_lut('yes', ['ORANGE_HOT', 'GREEN'], OFFER)                # not what was offered
     with pytest.raises(NeedsClarification, match='does not name the colour table'):
         set_lut('make the letters bigger', ['MAGENTA', 'GREEN'], OFFER)   # no acceptance
+
+
+@pytest.mark.parametrize('text', ['i wanna edit smallest >ROI inset in b', 'I want to adjust the ROI in b',
+                                  'open the editor so I can move it myself', 'let me edit the arrow in c by hand'])
+def test_i_want_to_edit_it_opens_the_editor_and_changes_nothing(text):
+    """"i wanna edit smallest ROI inset in b" made a second inset (user chat 2026-11-12)."""
+    with pytest.raises(ValueError, match='SELF_EDIT'):
+        call(text, 'roi_to_inset', {'panel_ref': 'B', 'annotation_index': 6})
+    call(text, 'open_annotation_editor', {'panel_ref': 'B'})          # what to do instead
+
+
+@pytest.mark.parametrize('text', ['I want to edit the title to say Control', 'I want to edit b: make the ROI red',
+                                  'make it bigger so I can see it', 'I want to adjust the inset size by 20%'])
+def test_an_edit_with_its_value_is_still_made(text):
+    call(text, 'roi_to_inset', {'panel_ref': 'B', 'annotation_index': 6})
