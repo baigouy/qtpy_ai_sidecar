@@ -150,6 +150,17 @@ def test_a_qualified_every_is_not_all_letters():
     assert flagged['evidence']['mismatched_panel_ids'] == ['0/1']    # a plain "every" still counts
 
 
+@pytest.mark.parametrize('text', ['how many channels does this imahge have', 'how big is panel A',
+                                  'how much space is there between panels'])
+def test_how_many_asks_for_a_number_not_steps(text):
+    """'how many channels does this imahge have' (user chat 2026-11-12) was answered with the
+    channel-split guide."""
+    adapter = PyFiguresAdapter('unused')
+    adapter.request = lambda *a, **k: {'status': 'explained', 'steps': ['Click the image.'], 'title': 'Split channels'}
+    assert adapter.finalize_manual_response(text) is None
+    assert adapter.finalize_manual_response('how do I split the channels') is not None
+
+
 def test_colours_nobody_named_are_still_refused():
     with pytest.raises(NeedsClarification, match='does not name the colour table'):
         set_lut('fix it', ['MAGENTA', 'GREEN'])                       # nothing was offered

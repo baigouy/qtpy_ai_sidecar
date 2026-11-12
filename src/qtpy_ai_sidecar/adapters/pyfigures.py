@@ -637,7 +637,10 @@ class PyFiguresAdapter:
 
     def finalize_manual_response(self,request):
         import re
-        manual=bool(re.search(r'\b(?:how|explain|tutorial|instructions?|shortcuts?)\b|\bwhere\s+(?:is|are|do|can|should)\b|\bwhat\s+if\b',request,re.I))
+        # "how many channels does this image have" asks for a number, not steps: it got the
+        # channel-split guide (2026-11-12)
+        asks_steps=re.sub(r'\bhow\s+(?:many|much|big|large|small|long|wide|tall|old|often)\b','',request,flags=re.I)
+        manual=bool(re.search(r'\b(?:how|explain|tutorial|instructions?|shortcuts?)\b|\bwhere\s+(?:is|are|do|can|should)\b|\bwhat\s+if\b',asks_steps,re.I))
         if not manual:return None
         positive=re.sub(r"\b(?:without|no|do not|don't)\s+(?:any\s+)?(?:using\s+)?(?:python|code|recipes?|scripts?)\b",'',request,flags=re.I)
         if re.search(r'\b(?:code|python|recipes?|scripts?)\b',positive,re.I):return None

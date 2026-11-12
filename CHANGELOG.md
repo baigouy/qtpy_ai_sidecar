@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7 — 2026-11-12
+
+- PyFigures adapter: "how many / how much / how big…" asks for a number, not for steps: "how many channels does this image have" was answered with the channel-split guide.
+
 ## 0.1.6 — 2026-11-12
 
 - After a turn's edits succeeded, re-reading what each tool already read back is cut short: after two reads in a row the model is told to answer, after four its tools are switched off and it answers from the results (asked to say which part of the request is not done yet, never to call it done). The status line says "Changes applied; checking them (Stop keeps them)" and the Stop tooltip says that the changes already made stay.
