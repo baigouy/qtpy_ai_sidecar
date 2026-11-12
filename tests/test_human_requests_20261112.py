@@ -210,6 +210,41 @@ def test_i_wanna_edit_the_roi_in_b_opens_its_editor_at_once():
     assert opened[-1] == {'panel_ref': 'c', 'tab': 'crop'}
 
 
+@pytest.mark.parametrize('text', ['I wanna move the roi of one of the insets in b, open the dioalog for me',
+                                  'open the editor of panel b', 'open panel b editor please'])
+def test_open_the_dialog_for_me_opens_it(text):
+    adapter, opened = PyFiguresAdapter('unused'), []
+    adapter.request = _fake(FIVE, opened)
+    out = adapter.preflight_manual_response(text)
+    assert opened == [{'panel_ref': 'b', 'tab': 'annotations'}] and 'OK' in out['content']
+
+
+@pytest.mark.parametrize('text', ['open the export dialog', "don't open the editor, move the ROI in b up"])
+def test_other_dialogs_or_no_dialog_go_to_the_model(text):
+    adapter = PyFiguresAdapter('unused')
+    adapter.request = _fake(FIVE, [])
+    assert adapter.preflight_manual_response(text) is None
+
+
+def _letters(b_style):
+    base = dict(font_family='Segoe UI', font_size=9.0, bold=False, italic=False, underline=False, background=None)
+    return {'panels': [{'panel_id': f'0/{i}', 'letters': [dict(base, text=t, color=0xFFFFFF if i % 2 else 0,
+                                                               **(b_style if t == 'b' else {}))]}
+                       for i, t in enumerate('abcde')]}
+
+
+def test_consistent_letters_are_checked_and_the_choices_offered():
+    """b stayed the only bold letter with a white box; the reply said they were consistent
+    (user chat 2026-11-12)."""
+    adapter = PyFiguresAdapter('unused')
+    adapter.request = lambda op, args=None: _letters({'bold': True, 'background': '#ffffff'})
+    out = adapter._verify_response("don't change font size and use consitent fonts for all letters...", 'Done.', {})
+    assert out['evidence']['differing'] == {'bold': ['b'], 'background box': ['b']}
+    assert 'Make b like the other letters' in out['content'] and 'Make every letter like b' in out['content']
+    adapter.request = lambda op, args=None: _letters({})          # only the colours differ: fine
+    assert adapter._verify_response('use consistent fonts for all letters', 'Done.', {}) is None
+
+
 def test_an_unclear_panel_is_asked_with_the_editor_among_the_choices():
     adapter, opened = PyFiguresAdapter('unused'), []
     adapter.request = _fake(FIVE, opened)

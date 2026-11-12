@@ -86,7 +86,7 @@ class PyFiguresAdapter:
         if summary.get('empty'):     # a short state lets the model answer without any tool step
             return {'figure_summary': summary, 'native_gui_available': result.get('native_gui_available'),
                     'revision': result.get('revision'), 'dirty': result.get('dirty')}
-        context = {key: result.get(key) for key in ('figure_summary', 'selection', 'verified_letter_specification', 'panel_references', 'text_annotations', 'roi_annotations', 'last_canvas_click', 'annotation_editor_status', 'native_gui_jobs', 'native_gui_available', 'revision', 'dirty')}
+        context = {key: result.get(key) for key in ('figure_summary', 'selection', 'verified_letter_specification', 'panel_references', 'text_annotations', 'roi_annotations', 'insets', 'last_canvas_click', 'annotation_editor_status', 'native_gui_jobs', 'native_gui_available', 'revision', 'dirty')}
         if result.get('annotation_editor_open'):
             context['annotation_editor']=self.request('inspect_annotation_objects')
         return context
@@ -667,8 +667,16 @@ class PyFiguresAdapter:
         panel editor at once instead of asking which ROI and what change (user chat
         2026-11-12: two questions before the editor opened)."""
         import re
-        if not self._wants_to_edit_himself(request) or not re.search(self._EDITOR_THINGS, request, re.I):
+        # "open the dioalog for me", "open its editor" (user chat 2026-11-12: typed with a typo)
+        explicit = re.search(r"\bopen\s+(?:up\s+)?(?:the\s+|its\s+|his\s+|her\s+|a\s+|panel\s+\w+(?:['’]s)?\s+)?"
+                             r"(?:panel\s+|image\s+|annotation\s+|edit(?:ing)?\s+)?(?:editor|di\w{0,3}log\w*|edit\s+window)\b",
+                             request, re.I)
+        if re.search(r"\b(?:don['’]?t|do\s+not|no\s+need\s+to|never)\s+open\b", request, re.I):
+            explicit = None
+        if not explicit and (not self._wants_to_edit_himself(request) or not re.search(self._EDITOR_THINGS, request, re.I)):
             return None
+        if explicit and re.search(r'\b(?:export|save|print|preferences?|settings|file|journal|letters?\s+dialog)\b', request, re.I):
+            return None                     # another dialog than the panel editor
         if re.search(r'\b(?:letters?|layout|rows?|columns?|figure|spacing|order)\b', request, re.I):
             return None                     # not things of one panel's editor
         try:
@@ -765,6 +773,46 @@ class PyFiguresAdapter:
         if guide.get('guide')=='reorder_panels':
             content+='\n\nWith automatic lettering enabled, letters follow panel positions.'
         return {'content':content,'evidence':{'kind':'authored_manual_guide','guide':guide,'operation_executed':False}}
+
+    _STYLE_WORDS = {'font_family': 'font', 'font_size': 'size', 'bold': 'bold', 'italic': 'italic',
+                    'underline': 'underline', 'background': 'background box'}
+    # (colour is left out: automatic letters are white on dark panels, black on light ones)
+
+    def _verify_letter_consistency(self, request):
+        """"Use consistent fonts for all letters": letter b stayed the only bold one with a
+        white box and the reply said they were consistent (user chat 2026-11-12). Some
+        letters still differing is said, with the choices to settle it."""
+        import re
+        if not (re.search(r'\b(?:cons?i?s?t[ae]n\w*|same|uniform\w*|identical|match\w*|harmoni[sz]\w*|alike)\b', request, re.I)
+                and re.search(r'\b(?:letters?|fonts?|labels?|lettering)\b', request, re.I)):
+            return None
+        try:
+            current = self.request('letter_state')
+        except Exception:
+            return None
+        letters = [(str(a.get('text', '')), a) for p in current.get('panels', []) for a in p.get('letters', [])]
+        if len(letters) < 2:
+            return None
+        differing = {}
+        for field, word in self._STYLE_WORDS.items():
+            values = [a.get(field) for _, a in letters]
+            if any(v != values[0] for v in values):
+                # the odd ones: the value fewer letters have
+                counts = {}
+                for v in values:
+                    counts[repr(v)] = counts.get(repr(v), 0) + 1
+                common = max(counts, key=counts.get)
+                differing[word] = [t for t, a in letters if repr(a.get(field)) != common]
+        if not differing:
+            return None
+        odd = sorted({t for ts in differing.values() for t in ts})
+        what = '; '.join(f"{w}: {', '.join(ts)} differ" for w, ts in differing.items())
+        listed = ', '.join(odd)
+        content = (f'The letters are not all the same yet ({what}). Which do you want?\n'
+                   f'- Make {listed} like the other letters\n'
+                   f'- Make every letter like {odd[0]}\n'
+                   f'- Keep {listed} different on purpose')
+        return {'content': content, 'evidence': {'status': 'not_consistent', 'differing': differing}}
 
     def _verify_letter_style_reply(self,request,reply,state):
         import re
@@ -910,6 +958,8 @@ class PyFiguresAdapter:
         if selection_verification:return selection_verification
         style_verification=self._verify_letter_style_reply(request,reply,state)
         if style_verification:return style_verification
+        consistency=self._verify_letter_consistency(request)
+        if consistency:return consistency
         asks_ready=bool(re.search(r'\b(?:ready|readiness)\b',request,re.I) and
                         re.search(r'\b(?:is|are|whether|tell|check|review|submission|publication|submit)\b',request,re.I))
         asks_compliance=bool(re.search(r'\b(?:check|review|assess|audit)\b.*\b(?:compliance|print resolution|submission)\b',request,re.I))
