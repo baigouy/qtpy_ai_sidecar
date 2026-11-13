@@ -352,6 +352,12 @@ class PyFiguresAdapter:
                              f'preview_panel(panel_ref="{ref}") first: it shows that panel\'s whole source image with '
                              f'pixel rulers and its current crop. Read the region\'s edges off the rulers, then crop once. '
                              f'Nothing was changed.')
+        if operation == 'remove_rois' and not re.search(
+                r'\b(?:remov\w*|delet\w*|clear\w*|eras\w*|get\s+rid|replac\w*|instead|rather|prefer\w*|swap\w*|'
+                r'turn\w*\s+(?:them|the\s+\w+)\s+into|change\w*|convert\w*|start\s+(?:over|again)|redo|undo)\b', text, re.I):
+            # bulk removal only for words that ask to remove or replace the ROIs
+            raise ValueError('REMOVAL_NOT_REQUESTED: remove_rois deletes every ROI of the panel; the request does '
+                             'not ask to remove or replace ROIs. Nothing was removed.')
         if (operation in ('add_roi_rect', 'add_roi_ellipse', 'add_roi_polygon', 'add_arrow')
                 and re.search(r'\b(?:cells?|nucle(?:us|i)|embryos?|objects?|blobs?|spots?|particles?|beads?)\b', text, re.I)
                 and getattr(self, '_panel_previewed_for', None) != text):

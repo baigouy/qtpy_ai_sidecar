@@ -314,6 +314,22 @@ def test_a_crop_chosen_from_the_image_needs_the_panel_preview_first(text):
         adapter.validate_tool_call('use_pyfigures_tool', CROP_320, FIVE, text + ' please')
 
 
+@pytest.mark.parametrize('text,allowed', [('I would prefer triangular ROIs, can you do that?', True),
+                                          ('remove all the boxes in e', True),
+                                          ('great but I wanted squares instead of circles', True),
+                                          ('make the ROIs of e thicker', False),
+                                          ('how many cells are in e', False)])
+def test_bulk_roi_removal_needs_words_that_ask_for_it(text, allowed):
+    """'I would prefer triangular ROIs': 26 remove_annotation calls (2026-11-13);
+    remove_rois does it at once, but only when removing or replacing was asked."""
+    removal = {'tool_name': 'remove_rois', 'arguments': {'panel_ref': 'e'}}
+    if allowed:
+        call(text, 'remove_rois', {'panel_ref': 'e'})
+    else:
+        with pytest.raises(ValueError, match='REMOVAL_NOT_REQUESTED'):
+            PyFiguresAdapter('unused').validate_tool_call('use_pyfigures_tool', removal, FIVE, text)
+
+
 def test_rois_on_cells_need_a_look_at_the_panel():
     """'can you draw ROIs over every cell in e': two boxes placed by eye from the whole
     figure, both off target (user chat 2026-11-13)."""
