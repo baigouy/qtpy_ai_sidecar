@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- PyFigures adapter: "again i made a mistake", "oops I pressed cancel" right after the chat opened a panel editor, or "open it again" / "reopen it" at any time, open that editor again at once (the reply had asked what the mistake was, then "I said open it again" went through a tool search). With other words in the message (undo, make it red…) the request goes to the model as before.
+
 ## 0.1.8 — 2026-11-13
 
 - PyFigures adapter: "I want to edit / adjust X" with no value given, "let me edit it", "myself", "by hand", "so I can edit it" change nothing: the model is told to open the editor for the user ("i wanna edit smallest ROI inset in b" made a second inset).

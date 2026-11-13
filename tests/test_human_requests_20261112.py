@@ -219,6 +219,47 @@ def test_open_the_dialog_for_me_opens_it(text):
     assert opened == [{'panel_ref': 'b', 'tab': 'annotations'}] and 'OK' in out['content']
 
 
+@pytest.mark.parametrize('text', ['again i made a mistake', 'I said open it again', 'reopen it', 'oops I pressed cancel',
+                                  'open the editor again please', 'again'])
+def test_a_mistake_in_the_editor_reopens_it(text):
+    """"again i made a mistake" after the editor of b opened was asked "what was the
+    mistake?"; "I said open it again" then went through a tool search (user chat 2026-11-13)."""
+    adapter, opened = PyFiguresAdapter('unused'), []
+    adapter.request = _fake(FIVE, opened)
+    adapter.preflight_manual_response("i don't like the position of one inset generating ROI in b open it for me so i can edit it")
+    assert opened == [{'panel_ref': 'b', 'tab': 'annotations'}]
+    out = adapter.preflight_manual_response(text)
+    assert opened[-1] == {'panel_ref': 'b', 'tab': 'annotations'} and len(opened) == 2
+    assert out['evidence']['reopened'] and 'again' in out['content']
+
+
+def test_a_mistake_reopens_the_editor_the_model_opened():
+    adapter, opened = PyFiguresAdapter('unused'), []
+    adapter.request = _fake(FIVE, opened)
+    adapter._turns_since_editor = 99
+    call_args = {'tool_name': 'open_annotation_editor', 'arguments': {'panel_ref': 'c', 'tab': 'crop'}}
+    adapter.validate_tool_call('use_pyfigures_tool', call_args, FIVE, 'open the crop of panel c')
+    adapter.preflight_manual_response('oops, I made a mistake')
+    assert opened == [{'panel_ref': 'c', 'tab': 'crop'}]
+
+
+@pytest.mark.parametrize('text', ['I made a mistake, undo it', 'again i made a mistake, make the ROI red',
+                                  'I made a mistake in my last message'])
+def test_a_mistake_with_another_request_is_not_a_reopen(text):
+    adapter, opened = PyFiguresAdapter('unused'), []
+    adapter.request = _fake(FIVE, opened)
+    adapter.preflight_manual_response('I wanna edit the ROI of the inset in b')
+    assert adapter.preflight_manual_response(text) is None and len(opened) == 1
+
+
+def test_a_late_mistake_is_not_a_reopen():
+    adapter, opened = PyFiguresAdapter('unused'), []
+    adapter.request = _fake(FIVE, opened)
+    adapter.preflight_manual_response('I wanna edit the ROI of the inset in b')
+    adapter._turns_since_editor = 5
+    assert adapter.preflight_manual_response('I made a mistake') is None and len(opened) == 1
+
+
 @pytest.mark.parametrize('text', ['open the export dialog', "don't open the editor, move the ROI in b up"])
 def test_other_dialogs_or_no_dialog_go_to_the_model(text):
     adapter = PyFiguresAdapter('unused')

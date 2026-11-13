@@ -340,6 +340,11 @@ class PyFiguresAdapter:
                                                           'edit_', 'apply_', 'arrange_', 'restyle_', 'reorder_', 'move_', 'crop_', 'rotate_', 'split_', 'merge_')):
             raise ValueError('HOW_TO_NO_EDIT: the user asked HOW to do this, not to do it. Answer with the human GUI steps '
                              '(explain_how / explain_live_interaction), then offer to do it. Nothing was changed or written.')
+        if operation == 'open_annotation_editor' and args.get('panel_ref'):
+            # the model opened it: "I made a mistake" / "open it again" next reopens it
+            self._last_editor = (str(args['panel_ref']), args.get('tab') if args.get('tab') in
+                                 ('annotations', 'crop', 'rotate', 'scale', 'text') else 'annotations')
+            self._turns_since_editor = 0
         if operation and not read_only and operation not in self._SELF_EDIT_OK and self._wants_to_edit_himself(text):
             # "i wanna edit smallest ROI inset in b" made a second inset (user chat 2026-11-12)
             raise ValueError('SELF_EDIT: the user wants to make this edit by hand, not have it made. Open the editor for '
@@ -662,11 +667,55 @@ class PyFiguresAdapter:
             return str(refs[int(m.group(1)) - 1].get('panel_id'))
         return None
 
+    _REOPEN = (r"\b(?:re-?open|open\s+(?:it|this|that|them|the\s+\w+(?:\s+\w+)?)?\s*(?:again|back|once\s+more|one\s+more\s+time))\b")
+    _EDITOR_SLIP = (r"\b(?:(?:i\s+)?(?:made|make|did)\s+a\s+(?:mistake|wrong\s+move|error)|"
+                    r"(?:i\s+)?(?:pressed|clicked|hit)\s+(?:the\s+)?(?:cancel|ok|wrong\s+button)|closed\s+it|"
+                    r"messed\s+(?:it\s+)?up|screwed\s+(?:it\s+)?up|oops|try\s+again|once\s+more|one\s+more\s+time)\b|^\W*again\W*$")
+    _NOT_A_REOPEN = (r"\b(?:undo|revert|go\s+back|restore|put\s+it\s+back|make|set|change|remove|delete|add|move|"
+                     r"rename|resize|colou?r|crop|rotate|export|save|message|meant|typo|wrote|asked)\b")
+
+    def _reopen_editor(self, request):
+        """"again i made a mistake" right after the chat opened an editor, "I said open
+        it again", "reopen it": open that editor again (user chat 2026-11-13: the reply
+        asked what the mistake was; "open it again" went through a tool search)."""
+        import re
+        last = getattr(self, '_last_editor', None)
+        if not last or len(request.split()) > 14 or re.search(self._NOT_A_REOPEN, request, re.I):
+            return None
+        explicit = re.search(self._REOPEN, request, re.I)
+        slip = re.search(self._EDITOR_SLIP, request, re.I) and getattr(self, '_turns_since_editor', 99) <= 2
+        if not (explicit or slip):
+            return None
+        ref, tab = last
+        name = ref if not re.fullmatch(r'[\d/]+', str(ref)) else 'the selected panel'
+        title = {'annotations': 'Annotations', 'crop': 'Rotate + Crop', 'rotate': 'Rotate + Crop',
+                 'scale': 'File Infos + Scale', 'text': 'Texts'}[tab]
+        try:
+            self.request('open_annotation_editor', {'panel_ref': ref, 'tab': tab})
+        except Exception as exc:
+            if 'ANNOTATION_EDITOR_OPEN' in str(exc) or 'already' in str(exc).lower():
+                content = ('The panel editor is still open: make your changes there, then press **OK** to apply them '
+                           'or **Cancel** to drop them.')
+            else:
+                return None
+        else:
+            content = (f'I opened the editor of panel **{name}** again, on its **{title}** tab. Make your change, then '
+                       f'press **OK** to apply it or **Cancel** to drop it.')
+            if slip and not explicit:
+                content += (' If you pressed **OK** on a change you don\'t want, press the **Undo** button of the '
+                            'figure (Ctrl+Z) first, or tell me to undo it.')
+        self._turns_since_editor = 0
+        return {'content': content, 'evidence': {'operation': 'open_annotation_editor', 'panel_ref': ref, 'tab': tab,
+                                                 'operation_executed': False, 'self_edit': True, 'reopened': True}}
+
     def _open_editor_for_self_edit(self, request):
         """"I wanna edit the ROI of the inset in b", "let me edit it myself": open the
         panel editor at once instead of asking which ROI and what change (user chat
         2026-11-12: two questions before the editor opened)."""
         import re
+        reopened = self._reopen_editor(request)
+        if reopened:
+            return reopened
         # "open the dioalog for me", "open its editor" (user chat 2026-11-12: typed with a typo)
         explicit = re.search(r"\bopen\s+(?:up\s+)?(?:the\s+|its\s+|his\s+|her\s+|a\s+|panel\s+\w+(?:['’]s)?\s+)?"
                              r"(?:panel\s+|image\s+|annotation\s+|edit(?:ing)?\s+)?(?:editor|di\w{0,3}log\w*|edit\s+window)\b",
@@ -715,12 +764,15 @@ class PyFiguresAdapter:
             content = (f'I opened the editor of panel **{name}** on its **{title}** tab. Click what you want to change '
                        f'(drag it to move it, drag a corner to resize it), then press **OK** to apply your changes or '
                        f'**Cancel** to drop them. I won\'t change anything meanwhile.')
+        self._last_editor = (ref, tab)      # "I made a mistake" / "open it again" reopens it
+        self._turns_since_editor = 0
         return {'content': content, 'evidence': {'operation': 'open_annotation_editor', 'panel_ref': ref, 'tab': tab,
                                                  'operation_executed': False, 'self_edit': True}}
 
     def preflight_manual_response(self, request):
         """Resolve a pure control-location question from reviewed help before model discovery."""
         import re
+        self._turns_since_editor = getattr(self, '_turns_since_editor', 99) + 1
         try:
             state = None
             named = None
