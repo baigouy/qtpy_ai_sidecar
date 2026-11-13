@@ -129,6 +129,39 @@ class Turn:
     request: str
     items: list = field(default_factory=list)
     undone: bool = False
+    seconds: float = 0.0                # from the request to the last event of the turn
+
+    def calls(self):
+        return [s for kind, s in self.items if kind == 'call']
+
+    def answers(self):
+        return [t for kind, t in self.items if kind == 'assistant']
+
+
+def _when(event):
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(event.get('time')))
+    except (TypeError, ValueError):
+        return None
+
+
+def compare(adapter, then_steps, now_steps) -> dict:
+    """How the edits a model made for one request compare between two runs."""
+    then = [describe(adapter, s) for s in kept_steps(then_steps)]
+    now = [describe(adapter, s) for s in kept_steps(now_steps)]
+    op = lambda text: text.split(' ', 1)[0]
+    if then == now:
+        verdict = 'same edits'
+    elif [op(t) for t in then] == [op(t) for t in now]:
+        verdict = 'same operations, other arguments'
+    elif not now and then:
+        verdict = 'no edit now'
+    else:
+        verdict = 'different edits'
+    return {'verdict': verdict, 'then': then, 'now': now,
+            'calls_then': len(then_steps), 'calls_now': len(now_steps),
+            'failed_now': sum(1 for s in now_steps if s.recorded_error)}
 
 
 def load_turns(path, adapter=None) -> list[Turn]:
@@ -136,13 +169,19 @@ def load_turns(path, adapter=None) -> list[Turn]:
     texts and its calls (each with its role and what it gave then)."""
     turns, events = [], read_events(path)          # read once: a chat log can be several MB
     steps = iter(load_steps(path, adapter, events))
+    start = None
     for event in events:
         kind, value = event.get('kind'), event.get('value')
         if kind == 'user':
             turns.append(Turn(str(value)))
-        elif not turns:
+            start = _when(event)
             continue
-        elif kind == 'assistant' and str(value or '').strip():
+        if not turns:
+            continue
+        when = _when(event)
+        if start and when:
+            turns[-1].seconds = max(turns[-1].seconds, (when - start).total_seconds())
+        if kind == 'assistant' and str(value or '').strip():
             turns[-1].items.append(('assistant', str(value)))
         elif kind == 'error':
             turns[-1].items.append(('error', str(value)))

@@ -4,6 +4,7 @@ itself? ... if this makes it reusable for other tools then yes"). A fake MCP hub
 for the application: no model, no network."""
 import json
 import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -156,6 +157,56 @@ def test_a_chat_is_replayed_in_the_chat_panel_turn_by_turn(tmp_path):
         assert any('undone in the chat' in t for _, t in shown)
         # the red letters were undone with the Undo button, the crop by the chat: not run
         assert not any(c[1].get('tool_name') == 'edit_panel_letters' for c in hub.calls)
+    finally:
+        replay.close()
+    app.processEvents()
+
+
+def test_live_replay_asks_the_model_again_and_compares(tmp_path):
+    """'this has to be a live test ... tell me if the documented MCP is improving and if
+    models consistently answer' (user, 2026-11-13). A fake model stands for the API: for
+    the first request it makes the same edit, for the second another one."""
+    import time
+    from qtpy.QtWidgets import QApplication
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.widgets import AssistantDock
+    app = QApplication.instance() or QApplication([])
+    lines = [_ev('user', 'rotate all by 25'), _use('transform_image', {'rotation': 25}, [{'panel_ref': 'a'}]), OK,
+             _ev('assistant', 'Rotated.'),
+             _ev('user', 'black backgrounds'), _use('set_image_property', {'property_name': 'fill_color', 'value': '0'}), OK,
+             _ev('assistant', 'Black now.')]
+    chat = tmp_path / 'old.jsonl'
+    chat.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path / 'state')))
+    dock.engine.adapter = PyFiguresAdapter('unused')
+    asked = []
+
+    async def model_turn(text, emit, preview=False):        # what the API model does now
+        journal = dock.engine.journal
+        journal.record('user', text)
+        asked.append(text)
+        call = ({'tool_name': 'transform_image', 'arguments': {'rotation': 25}, 'batch': [{'panel_ref': 'a'}]}
+                if 'rotate' in text else {'tool_name': 'set_image_property', 'arguments': {'property_name': 'fill_color', 'value': '255'}})
+        journal.record('tool_call', {'name': 'use_pyfigures_tool', 'arguments': call})
+        journal.record('tool_result', {'is_error': False, 'content': 'done'})
+        journal.record('assistant', 'Done now: ' + text)
+        emit('assistant', 'Done now: ' + text)
+    dock.engine.turn = model_turn
+    replay = dock.procedure_action('replay', str(chat))
+    replay.mode.setCurrentIndex(1)                           # Ask the model again (live)
+    replay.confirmed = True                                  # the question asked before the first request
+    try:
+        replay.play_all()
+        deadline = time.monotonic() + 20
+        while replay.report_path is None and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.02)
+        assert asked == ['rotate all by 25', 'black backgrounds']
+        assert [r['verdict'] for r in replay.rows] == ['same edits', 'same operations, other arguments']
+        assert replay.rows[1]['answer_then'] == 'Black now.' and replay.rows[1]['answer_now'] == 'Done now: black backgrounds'
+        report = Path(replay.report_path).read_text(encoding='utf-8')
+        assert '1 of 2 request(s) with the same edits' in report and 'Answer then:' in report
+        assert json.loads(Path(replay.report_path).with_suffix('.json').read_text(encoding='utf-8'))['rows'][0]['verdict'] == 'same edits'
     finally:
         replay.close()
     app.processEvents()

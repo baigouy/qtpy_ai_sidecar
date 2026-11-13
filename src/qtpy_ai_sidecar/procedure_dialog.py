@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from pathlib import Path
 
 from qtpy.QtCore import Qt
@@ -280,17 +281,34 @@ class ChatReplay:
     what it gave then and now, and shows the model's recorded answer. For seeing again
     how a chat went, on the application as it is now, without the model."""
 
-    def __init__(self, dock, path, apply=True):
-        from qtpy.QtWidgets import QFrame
+    RECORDED, LIVE = 'recorded', 'live'
+
+    def __init__(self, dock, path, apply=True, mode=RECORDED):
+        from qtpy.QtWidgets import QFrame, QComboBox
         self.dock, self.path = dock, str(path)
         self.turns = pumped(lambda: P.load_turns(self.path, dock.engine.adapter))   # a long log: seconds
         self.index, self.session, self.document = 0, None, (None, None)
+        self.pending, self.playing_all, self.confirmed, self.rows = None, False, False, []
+        self.report_path = None
+        dock.completed.connect(self._live_done)
         self.bar = QFrame(dock.widget())
         self.bar.setObjectName('replayBar')
         row = QHBoxLayout(self.bar)
         row.setContentsMargins(6, 4, 6, 4)
         self.label = QLabel('', self.bar)
         row.addWidget(self.label, 1)
+        # the recorded answers, or each request sent to the model again and its new answer
+        # compared with the recorded one: does the MCP documentation do better, does the
+        # model answer the same way (user 2026-11-13)
+        self.mode = QComboBox(self.bar)
+        self.mode.addItem('Recorded answers', self.RECORDED)
+        self.mode.addItem('Ask the model again (live)', self.LIVE)
+        self.mode.setToolTip('Recorded: the answers of the chat, its edits run again, no model.\n'
+                             'Live: each request sent to the model in use (API calls), its new answer and '
+                             'edits compared with the recorded ones; a report is saved at the end.')
+        self.mode.setCurrentIndex(1 if mode == self.LIVE else 0)
+        self.mode.currentIndexChanged.connect(lambda _i: self.apply.setVisible(not self.live()))
+        row.addWidget(self.mode)
         self.apply = QCheckBox('Apply the edits', self.bar)
         self.apply.setChecked(apply)
         self.apply.setToolTip('Run the edits of each turn on the application (untick to only read the chat)')
@@ -317,17 +335,27 @@ class ChatReplay:
             root.insertWidget(at, self.bar)
         else:
             root.addWidget(self.bar)
-        dock.add_message('assistant', f'**Replay of {Path(self.path).name}**: {len(self.turns)} request(s). '
-                                      'Each turn shows what you asked, runs the edits made then on the '
-                                      'application as it is now (with *Apply the edits*), and shows the '
-                                      'model\'s answer then. The model is not called.')
+        self.apply.setVisible(not self.live())
+        dock.add_message('assistant', f'**Replay of {Path(self.path).name}**: {len(self.turns)} request(s).\n\n'
+                                      '- *Recorded answers*: each turn shows what you asked, runs the edits made '
+                                      'then (with *Apply the edits*) and shows the model\'s answer then; the '
+                                      'model is not called.\n'
+                                      '- *Ask the model again (live)*: each request is sent to the model in use '
+                                      '(API calls); its new answer and edits are compared with the recorded '
+                                      'ones, and a report is saved at the end. Start from the same document '
+                                      'as the recorded chat.')
         self.update_label()
+
+    def live(self):
+        return self.mode.currentData() == self.LIVE
 
     def update_label(self):
         done = self.index >= len(self.turns)
-        self.label.setText('Replay finished' if done else f'Replay · turn {self.index + 1} of {len(self.turns)}')
-        self.next_button.setEnabled(not done)
-        self.all_button.setEnabled(not done)
+        self.label.setText(('Replay finished' + (f' · report: {Path(self.report_path).name}' if self.report_path else ''))
+                           if done else f'Replay · turn {self.index + 1} of {len(self.turns)}')
+        self.next_button.setEnabled(not done and self.pending is None)
+        self.all_button.setEnabled(not done and self.pending is None)
+        self.mode.setEnabled(self.index == 0 and self.pending is None)
 
     def _run(self, step):
         if self.session is None:
@@ -342,10 +370,111 @@ class ChatReplay:
             self.label.setText(text)
         QApplication.processEvents()
 
-    def next(self):
+    # -- live: the request sent to the model again, its answer compared ---------------------
+    def _confirm_live(self):
+        if self.confirmed:
+            return True
+        config = self.dock.engine.config
+        model = ' / '.join(str(x) for x in (getattr(config, 'provider', ''), getattr(config, 'model', '')) if x)
+        answer = QMessageBox.question(
+            self.dock, 'Ask the model again',
+            f'The {len(self.turns) - self.index} recorded request(s) will be sent to {model or "the model in use"}, '
+            'one by one, as if you typed them: API calls, and the model edits the open document.\n\n'
+            'Start from the same document as the recorded chat for a fair comparison. Go on?')
+        self.confirmed = answer == QMessageBox.StandardButton.Yes
+        return self.confirmed
+
+    def _send_live(self, turn):
+        if self.dock.busy:
+            self.dock.add_message('assistant', 'The chat is busy: wait for its reply, then press Next turn.')
+            return False
+        journal = Path(self.dock.engine.journal.path)
+        marker = len(P.read_events(journal)) if journal.exists() else 0
+        self.pending = (turn, marker, time.monotonic())
+        self.index += 1
+        self.label.setText(f'Replay · the model answers request {self.index} of {len(self.turns)}…')
+        self.update_label()
+        self.dock.input.setPlainText(turn.request)
+        self.dock.send()
+        if not self.dock.busy:                 # answered at once (or refused): no completed signal
+            self._live_done()
+        return True
+
+    def _live_done(self):
+        if self.pending is None:
+            return
+        turn, marker, started = self.pending
+        self.pending = None
+        seconds = time.monotonic() - started
+        journal = Path(self.dock.engine.journal.path)
+        events = P.read_events(journal)[marker:] if journal.exists() else []
+        adapter = self.dock.engine.adapter
+        now_steps = P.load_steps(journal, adapter, events)
+        now_answers = [str(e.get('value')) for e in events if e.get('kind') == 'assistant' and e.get('value')]
+        cmp = P.compare(adapter, turn.calls(), now_steps)
+        then_answer = (turn.answers() or [''])[-1]
+        quote = lambda text: '\n'.join('> ' + line for line in (text[:700] or '(none)').splitlines())
+        lines = [f'**Compared with the recorded chat: {cmp["verdict"]}**',
+                 f'- edits then: {"; ".join(cmp["then"]) or "none"}',
+                 f'- edits now: {"; ".join(cmp["now"]) or "none"}',
+                 f'- calls: then {cmp["calls_then"]} · now {cmp["calls_now"]}'
+                 + (f' ({cmp["failed_now"]} failed)' if cmp['failed_now'] else '')
+                 + f' · time: then {turn.seconds:.0f} s · now {seconds:.0f} s',
+                 '', 'Answer then:', quote(then_answer)]
+        self.dock.add_message('assistant', '\n'.join(lines))
+        self.rows.append({'turn': self.index, 'request': turn.request, **cmp, 'seconds_then': round(turn.seconds, 1),
+                          'seconds_now': round(seconds, 1), 'answer_then': then_answer,
+                          'answer_now': now_answers[-1] if now_answers else ''})
         if self.index >= len(self.turns):
+            self.write_report()
+        self.update_label()
+        if self.playing_all and self.index < len(self.turns):
+            from qtpy.QtCore import QTimer
+            QTimer.singleShot(300, self.next)
+        elif self.index >= len(self.turns):
+            self.playing_all = False
+
+    def write_report(self, folder=None):
+        """The comparison of every turn, as Markdown and JSON next to the chat logs."""
+        if not self.rows:
+            return None
+        from datetime import datetime
+        config = self.dock.engine.config
+        folder = Path(folder or Path(self.dock.engine.journal.path).parent / 'replays')
+        folder.mkdir(parents=True, exist_ok=True)
+        stem = f'{Path(self.path).stem}_vs_{datetime.now():%Y%m%d_%H%M%S}'
+        model = f'{getattr(config, "provider", "")} {getattr(config, "model", "")}'.strip()
+        same = sum(1 for r in self.rows if r['verdict'] == 'same edits')
+        md = [f'# Replay of {Path(self.path).name}', '',
+              f'Model now: {model or "?"} · {datetime.now():%Y-%m-%d %H:%M} · '
+              f'{same} of {len(self.rows)} request(s) with the same edits', '',
+              '| # | Request | Result | Calls then → now | Time then → now (s) |', '|---|---|---|---|---|']
+        for r in self.rows:
+            req = r['request'].replace('|', '\\|').replace('\n', ' ')[:80]
+            md.append(f'| {r["turn"]} | {req} | {r["verdict"]} | {r["calls_then"]} → {r["calls_now"]}'
+                      f'{" (" + str(r["failed_now"]) + " failed)" if r["failed_now"] else ""} | '
+                      f'{r["seconds_then"]:.0f} → {r["seconds_now"]:.0f} |')
+        for r in self.rows:
+            md += ['', f'## {r["turn"]}. {r["request"][:120]}', '', f'**{r["verdict"]}**', '',
+                   'Edits then: ' + ('; '.join(r['then']) or 'none'), '', 'Edits now: ' + ('; '.join(r['now']) or 'none'),
+                   '', 'Answer then:', '', r['answer_then'] or '(none)', '', 'Answer now:', '', r['answer_now'] or '(none)']
+        (folder / (stem + '.md')).write_text('\n'.join(md) + '\n', encoding='utf-8')
+        (folder / (stem + '.json')).write_text(json.dumps({'chat': self.path, 'model': model, 'rows': self.rows},
+                                                          indent=1, ensure_ascii=False), encoding='utf-8')
+        self.report_path = str(folder / (stem + '.md'))
+        self.dock.add_message('assistant', f'**Replay finished**: {same} of {len(self.rows)} request(s) gave the same '
+                                           f'edits. Report: {self.report_path}')
+        return self.report_path
+
+    def next(self):
+        if self.index >= len(self.turns) or self.pending is not None:
             return False
         turn = self.turns[self.index]
+        if self.live():
+            if not self._confirm_live():
+                self.playing_all = False
+                return False
+            return self._send_live(turn)
         self._busy(True, f'Replay · running turn {self.index + 1} of {len(self.turns)}…')
         try:
             self._play(turn)
@@ -390,10 +519,21 @@ class ChatReplay:
         return f'- {text}: then {then} · now {now}'
 
     def play_all(self):
+        if self.live():
+            self.playing_all = True            # each reply starts the next request
+            self.next()
+            return
         while self.next():
             pass
 
     def close(self):
+        self.playing_all = False
+        if self.rows and self.report_path is None:
+            self.write_report()                # a live replay ended early keeps its comparison
+        try:
+            self.dock.completed.disconnect(self._live_done)
+        except (TypeError, RuntimeError):
+            pass
         if self.session is not None:
             self.session.close()
             self.session = None
@@ -403,8 +543,9 @@ class ChatReplay:
             self.dock.chat_replay = None
 
 
-def replay_chat(dock, path=None, apply=True):
-    """The chat panel's Procedures > Replay a chat…: a recorded chat, turn by turn."""
+def replay_chat(dock, path=None, apply=True, mode=ChatReplay.RECORDED):
+    """The chat panel's Procedures > Replay a chat…: a recorded chat, turn by turn, with
+    the recorded answers or (mode 'live') each request asked to the model again."""
     if path is None:
         path, _ = QFileDialog.getOpenFileName(dock, 'Replay a chat', str(Path(dock.engine.journal.path).parent),
                                               'Chat logs (*.jsonl *.zip)')
@@ -413,7 +554,7 @@ def replay_chat(dock, path=None, apply=True):
     previous = getattr(dock, 'chat_replay', None)
     if previous is not None:
         previous.close()
-    dock.chat_replay = ChatReplay(dock, path, apply)
+    dock.chat_replay = ChatReplay(dock, path, apply, mode)
     return dock.chat_replay
 
 
