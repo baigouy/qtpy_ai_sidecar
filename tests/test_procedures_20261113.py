@@ -117,6 +117,48 @@ def test_steps_run_through_the_applications_mcp_servers(tmp_path):
         asyncio.run(P.run_step(hub, P.Step('', 1, 'nope', {})))
 
 
+def test_a_chat_is_replayed_in_the_chat_panel_turn_by_turn(tmp_path):
+    """'I dropped it but I don't see the stuff entered in the chat nor the model answer'
+    (user, 2026-11-13): the replay shows each request, runs its edits, lists the calls
+    (then / now) and the model's answer then."""
+    from qtpy.QtWidgets import QApplication
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.widgets import AssistantDock
+    app = QApplication.instance() or QApplication([])
+    chat = tmp_path / 'talk.jsonl'
+    lines = _chat(tmp_path).read_text(encoding='utf-8').splitlines()
+    lines.insert(5, _ev('assistant', 'Done: all panels rotated 25°.'))      # after the first turn's calls
+    chat.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    turns = P.load_turns(chat, PyFiguresAdapter('unused'))
+    assert [t.request for t in turns][:2] == ['rotate all by 25', 'black backgrounds']
+    assert [k for k, _ in turns[0].items] == ['call', 'call', 'assistant', 'call'] and turns[2].undone
+    hub = Hub()
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
+    dock.engine.hub_factory = lambda servers: hub
+    dock.engine.adapter = PyFiguresAdapter('unused')
+    dock.engine.adapter.context = lambda: {}
+    shown = []
+    real = dock.add_message
+    dock.add_message = lambda role, text: (shown.append((role, text)), real(role, text))[1]
+    replay = dock.procedure_action('replay', str(chat))
+    try:
+        assert replay.next()
+        roles = [r for r, _ in shown[1:]]
+        assert roles[0] == 'user' and shown[1][1] == 'rotate all by 25'
+        assert any('Done: all panels rotated' in t for _, t in shown)
+        assert any('transform_image' in t and 'now ok' in t for _, t in shown)
+        assert any('find_pyfigures_tools' in t and 'not run (read)' in t for _, t in shown)
+        assert len(hub.calls) == 1                                     # only the edit ran
+        replay.play_all()
+        assert replay.index == len(turns) and replay.label.text() == 'Replay finished'
+        assert any('undone in the chat' in t for _, t in shown)
+        # the red letters were undone with the Undo button, the crop by the chat: not run
+        assert not any(c[1].get('tool_name') == 'edit_panel_letters' for c in hub.calls)
+    finally:
+        replay.close()
+    app.processEvents()
+
+
 def test_the_chat_panels_procedures_menu(tmp_path, monkeypatch):
     """Save this chat → run it → step through it, from the chat panel, any application."""
     from qtpy.QtWidgets import QApplication

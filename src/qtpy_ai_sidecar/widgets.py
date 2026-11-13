@@ -431,6 +431,8 @@ class AssistantDock(QDockWidget):
         self.procedures_button = QPushButton(qta.icon('fa5s.list-ol'), '')
         self.procedures_button.setToolTip('Procedures: save this chat\'s edits, run them again, step through a chat')
         procedures_menu = QMenu(self.procedures_button)
+        procedures_menu.addAction('Replay a chat (turn by turn)…', lambda: self.procedure_action('replay'))
+        procedures_menu.addSeparator()
         procedures_menu.addAction('Save this chat as a procedure…', lambda: self.procedure_action('save'))
         procedures_menu.addAction('Run a procedure…', lambda: self.procedure_action('run'))
         procedures_menu.addAction('Step through a chat or procedure…', lambda: self.procedure_action('step'))
@@ -605,13 +607,15 @@ class AssistantDock(QDockWidget):
         self.add_message('assistant', 'What would you like to do in ' + config.application + '?')
 
     def procedure_action(self, which, path=None):
-        """Procedures menu: 'save' this chat, 'run' a procedure, 'step' through one."""
+        """Procedures menu: 'replay' a chat turn by turn, 'save' this chat, 'run' a
+        procedure, 'step' through one."""
         from . import procedure_dialog as D
         if self.busy and which != 'save':
             QMessageBox.information(self, 'Procedures', 'Wait for the current reply (or stop it) first.')
             return None
         try:
-            return {'save': D.save_this_chat, 'run': D.run_procedure, 'step': D.step_through}[which](self, path)
+            return {'save': D.save_this_chat, 'run': D.run_procedure, 'step': D.step_through,
+                    'replay': D.replay_chat}[which](self, path)
         except Exception as exc:
             QMessageBox.warning(self, 'Procedures', f'{type(exc).__name__}: {exc}')
             return None

@@ -245,6 +245,125 @@ class ProcedureDialog(QDialog):
         super().closeEvent(event)
 
 
+# -- a recorded chat replayed in the chat panel, turn by turn --------------------------------
+class ChatReplay:
+    """Plays a recorded chat back in the chat panel: each turn shows the request, runs
+    the edits the model made then (through the application's MCP servers; reads, failed
+    calls and replies undone with their Undo button are not run), lists every call with
+    what it gave then and now, and shows the model's recorded answer. For seeing again
+    how a chat went, on the application as it is now, without the model."""
+
+    def __init__(self, dock, path, apply=True):
+        from qtpy.QtWidgets import QFrame
+        self.dock, self.path = dock, str(path)
+        self.turns = P.load_turns(self.path, dock.engine.adapter)
+        self.index, self.session, self.document = 0, None, (None, None)
+        self.bar = QFrame(dock.widget())
+        self.bar.setObjectName('replayBar')
+        row = QHBoxLayout(self.bar)
+        row.setContentsMargins(6, 4, 6, 4)
+        self.label = QLabel('', self.bar)
+        row.addWidget(self.label, 1)
+        self.apply = QCheckBox('Apply the edits', self.bar)
+        self.apply.setChecked(apply)
+        self.apply.setToolTip('Run the edits of each turn on the application (untick to only read the chat)')
+        row.addWidget(self.apply)
+        self.next_button = QPushButton('Next turn ▶', self.bar)
+        self.next_button.clicked.connect(lambda _c=False: self.next())
+        row.addWidget(self.next_button)
+        self.all_button = QPushButton('Play all', self.bar)
+        self.all_button.clicked.connect(lambda _c=False: self.play_all())
+        row.addWidget(self.all_button)
+        stop = QPushButton('End replay', self.bar)
+        stop.clicked.connect(lambda _c=False: self.close())
+        row.addWidget(stop)
+        dock.widget().layout().addWidget(self.bar)
+        dock.add_message('assistant', f'**Replay of {Path(self.path).name}**: {len(self.turns)} request(s). '
+                                      'Each turn shows what you asked, runs the edits made then on the '
+                                      'application as it is now (with *Apply the edits*), and shows the '
+                                      'model\'s answer then. The model is not called.')
+        self.update_label()
+
+    def update_label(self):
+        done = self.index >= len(self.turns)
+        self.label.setText('Replay finished' if done else f'Replay · turn {self.index + 1} of {len(self.turns)}')
+        self.next_button.setEnabled(not done)
+        self.all_button.setEnabled(not done)
+
+    def _run(self, step):
+        if self.session is None:
+            self.session = HubSession(self.dock.engine.config.servers, self.dock.engine.hub_factory)
+            self.document = current_document(self.dock.engine.adapter)
+        return self.session.call(lambda hub: P.run_step(hub, step, self.document))
+
+    def next(self):
+        if self.index >= len(self.turns):
+            return False
+        turn = self.turns[self.index]
+        self.index += 1
+        self.dock.add_message('user', turn.request)
+        lines = []
+        for kind, item in turn.items:
+            if kind == 'assistant':
+                if lines:
+                    self.dock.add_message('assistant', '\n'.join(lines))
+                    lines = []
+                self.dock.add_message('assistant', item)
+            elif kind == 'error':
+                lines.append(f'- ⚠ then: {item[:300]}')
+            else:
+                lines.append(self._call_line(item, turn))
+        if lines:
+            self.dock.add_message('assistant', '\n'.join(lines))
+        if turn.undone:
+            self.dock.add_message('assistant', '*(This reply was undone in the chat: its edits were not replayed.)*')
+        self.update_label()
+        return True
+
+    def _call_line(self, step, turn):
+        text = '`' + P.describe(self.dock.engine.adapter, step)[:160].replace('`', "'") + '`'
+        then = 'failed' if step.recorded_error else 'ok'
+        runs = (self.apply.isChecked() and step.role in ('edit', 'undo', 'redo')
+                and not step.recorded_error and not turn.undone)
+        if not runs:
+            why = step.role if step.role != 'edit' else ('failed then' if step.recorded_error else
+                                                         'undone' if turn.undone else 'not applied')
+            return f'- {text}: then {then} · not run ({why})'
+        try:
+            self._run(step)
+            now = 'ok'
+        except Exception as exc:
+            now = f'**failed**: {str(exc)[:200]}'
+        return f'- {text}: then {then} · now {now}'
+
+    def play_all(self):
+        while self.next():
+            pass
+
+    def close(self):
+        if self.session is not None:
+            self.session.close()
+            self.session = None
+        self.bar.hide()
+        self.bar.deleteLater()
+        if getattr(self.dock, 'chat_replay', None) is self:
+            self.dock.chat_replay = None
+
+
+def replay_chat(dock, path=None, apply=True):
+    """The chat panel's Procedures > Replay a chat…: a recorded chat, turn by turn."""
+    if path is None:
+        path, _ = QFileDialog.getOpenFileName(dock, 'Replay a chat', str(Path(dock.engine.journal.path).parent),
+                                              'Chat logs (*.jsonl *.zip)')
+        if not path:
+            return None
+    previous = getattr(dock, 'chat_replay', None)
+    if previous is not None:
+        previous.close()
+    dock.chat_replay = ChatReplay(dock, path, apply)
+    return dock.chat_replay
+
+
 # -- the chat panel's Procedures menu -------------------------------------------------------
 def save_this_chat(dock, path=None):
     """The current chat's edits as a procedure, next to the document by default."""

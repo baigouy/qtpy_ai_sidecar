@@ -122,6 +122,39 @@ def load_steps(path, adapter=None) -> list[Step]:
     return steps
 
 
+@dataclass
+class Turn:
+    """One request of a chat and what followed it, in order: ('assistant', text),
+    ('call', Step) and ('error', text) items."""
+    request: str
+    items: list = field(default_factory=list)
+    undone: bool = False
+
+
+def load_turns(path, adapter=None) -> list[Turn]:
+    """The conversation of a chat log / debug zip, request by request: the model's
+    texts and its calls (each with its role and what it gave then)."""
+    turns, by_call = [], {}
+    steps = iter(load_steps(path, adapter))
+    for event in read_events(path):
+        kind, value = event.get('kind'), event.get('value')
+        if kind == 'user':
+            turns.append(Turn(str(value)))
+        elif not turns:
+            continue
+        elif kind == 'assistant' and str(value or '').strip():
+            turns[-1].items.append(('assistant', str(value)))
+        elif kind == 'error':
+            turns[-1].items.append(('error', str(value)))
+        elif kind == 'tool_call' and isinstance(value, dict) and value.get('name'):
+            step = next(steps, None)
+            if step is not None:
+                turns[-1].items.append(('call', step))
+    for turn in turns:
+        turn.undone = any(s.turn_undone for kind, s in turn.items if kind == 'call')
+    return turns
+
+
 def kept_steps(steps) -> list[Step]:
     """The edits that stayed: not the reads or skipped calls, not the failed calls, not a
     reply undone with its Undo button, not an edit the chat undid (a redo puts it back)."""

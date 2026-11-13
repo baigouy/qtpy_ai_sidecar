@@ -89,6 +89,7 @@ Readability checks and PyFigures-specific editing policies remain in the origina
 
 The **Procedures** button of the chat panel (list icon) works for any connected application:
 
+- **Replay a chat (turn by turn)…** plays a chat log or debug zip back in the chat panel: *Next turn* shows the request, runs the edits the model made then (*Apply the edits*; reads, failed calls and undone replies are not run), lists every call with what it gave then and now, and shows the model's answer then. *Play all* plays the rest. The model is not called.
 - **Save this chat as a procedure…** keeps the MCP calls that changed the application, in order, as a JSON file (next to the document when the application's state names one). Left out: reads and searches, failed calls, a reply undone with its Undo button, an edit the chat undid itself (a redo puts it back).
 - **Run a procedure…** runs every step on the application as it is now, through its MCP servers, without the model; it stops at the first failed step.
 - **Step through a chat or procedure…** lists the calls of a chat log, a debug-export zip or a procedure, with what each gave in the chat (*Then*) and now (*Now*); edit a call's arguments before running it, run up to a step, or save the steps as a procedure. A tool for debugging an application's MCP tools.
