@@ -24,7 +24,7 @@ VIEW_TOOLS = frozenset({'search_local', 'search_external', 'show_paper', 'set_su
                         'open_papers'})
 # change files: watches, exports, the PDF index, downloads, tags / notes, saved reviews
 DATA_TOOLS = frozenset({'manage_watch', 'export_results', 'library', 'download_papers', 'tag_papers',
-                        'note_paper', 'screen_papers', 'saved_reviews'})
+                        'note_paper', 'screen_papers', 'saved_reviews', 'share_library'})
 TOOLS = READ_ONLY_TOOLS | VIEW_TOOLS | DATA_TOOLS
 
 
@@ -113,6 +113,8 @@ class LitsearchAdapter:
             '"references". search_local(paper=L2) searches inside one paper. read_paper(P#, full_text=True) '
             'reads an open-access article in full. show_figure returns a figure from a local PDF; with only a '
             'query, the most relevant figure in the whole library. '
+            'SHARING: share_library(action="export"|"import", path) moves tags, notes, watches and saved reviews '
+            'between computers in one JSON file (ask before overwriting or importing); the PDFs are not included. '
             'LIBRARY: library "list" the indexed papers (external results already indexed carry in_library), '
             '"duplicates", "index" a folder and "stop" it (background jobs: say they started; never claim a '
             'running job is done; jobs show progress), "remove" papers only when the user asks, "import" a '

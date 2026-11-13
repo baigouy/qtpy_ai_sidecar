@@ -95,10 +95,11 @@ def test_tools_are_classified_and_unknown_ones_left_to_their_server():
     assert adapter.is_read_only_call('library', {'action': 'duplicates'}) is True
     assert adapter.is_read_only_call('saved_reviews', {}) is True
     assert adapter.is_read_only_call('saved_reviews', {'action': 'open', 'name': 'x'}) is False
+    assert adapter.is_read_only_call('share_library', {'action': 'export', 'path': 'x.json'}) is False
     assert adapter.is_read_only_call('screen_papers', {'review': 'r'}) is True
     assert adapter.is_read_only_call('screen_papers', {'review': 'r', 'papers': ['P1']}) is False
     assert adapter.is_read_only_call('some_other_server_tool', {}) is None
-    assert len(L.TOOLS) == 22      # within the 24 passed to the model directly
+    assert len(L.TOOLS) == 23      # within the 24 passed to the model directly
 
 
 def test_no_undo_is_offered():
