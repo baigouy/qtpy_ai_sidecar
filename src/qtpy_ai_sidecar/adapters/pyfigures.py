@@ -86,7 +86,7 @@ class PyFiguresAdapter:
         if summary.get('empty'):     # a short state lets the model answer without any tool step
             return {'figure_summary': summary, 'native_gui_available': result.get('native_gui_available'),
                     'revision': result.get('revision'), 'dirty': result.get('dirty')}
-        context = {key: result.get(key) for key in ('figure_summary', 'selection', 'verified_letter_specification', 'panel_references', 'text_annotations', 'roi_annotations', 'insets', 'last_canvas_click', 'annotation_editor_status', 'native_gui_jobs', 'native_gui_available', 'revision', 'dirty')}
+        context = {key: result.get(key) for key in ('figure_summary', 'document', 'selection', 'verified_letter_specification', 'panel_references', 'text_annotations', 'roi_annotations', 'insets', 'last_canvas_click', 'annotation_editor_status', 'native_gui_jobs', 'native_gui_available', 'revision', 'dirty')}
         if result.get('annotation_editor_open'):
             context['annotation_editor']=self.request('inspect_annotation_objects')
         return context
@@ -675,9 +675,39 @@ class PyFiguresAdapter:
         target = 'panel **' + ref + '**' if not re.fullmatch(r'[\d/]+', ref) else 'the panel'
         return f'Done: {target} is uncropped, its whole image is shown again (crop 0 on every side). Verified in the open figure.'
 
+    _MORE_TO_DO = (r'\b(?:and|then|also|after(?:wards)?|before|plus|but|except|unless|if|check|verify|show|preview|'
+                   r'et|puis|ensuite|aussi)\b|[;:]|,|\.\s+\S|\?')
+
+    def _batch_completion(self, tool_name, arguments, result, text):
+        """One instruction done as one batch, every item applied and read back by the
+        figure: the reply is written here (2026-11-13: "rotate all images by 25 degrees"
+        was done in 2 s, then an inspect and a re-read made the user wait 45 s)."""
+        import re
+        if tool_name != 'use_pyfigures_tool' or not arguments.get('batch') or result.get('is_error'):
+            return None
+        if re.search(self._MORE_TO_DO, text.strip().rstrip('.!'), re.I):
+            return None                        # more than one thing asked: the model goes on
+        try:
+            body = json.loads(result.get('content', ''))
+        except (ValueError, TypeError):
+            return None
+        total = body.get('batch_total')
+        if not body.get('verified') or body.get('errors') or not total or body.get('batch_done') != total:
+            return None
+        name = str(arguments.get('tool_name', 'the operation')).replace('_', ' ')
+        shared = arguments.get('arguments') or {}
+        refs = [str(i.get('panel_ref')) for i in arguments['batch'] if isinstance(i, dict) and i.get('panel_ref')]
+        where = ('panels **' + '**, **'.join(refs) + '**') if len(refs) == total else f'{total} items'
+        how = ', '.join(f'{k}={v}' for k, v in shared.items() if k not in ('panel_ref', 'pyf_path'))
+        return (f'Done: {name}' + (f' ({how})' if how else '') + f' on {where}, in one step. '
+                'Each one was read back in the open figure.')
+
     def verified_completion(self, tool_name, arguments, result, state, text):
         import re
         if re.search(r'\b(?:select|highlight|pick)\b',text,re.I):return None
+        batched = self._batch_completion(tool_name, arguments, result, text)
+        if batched:
+            return batched
         name = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
         if name == 'swap_rows' and not result.get('is_error'):
             match = re.fullmatch(r'\s*(?:please\s+)?(?:swap|exchange|switch)\s+rows?\s+(\d+)\s+(?:and|with)\s+(?:row\s+)?(\d+)[.!? ]*', text, re.I)

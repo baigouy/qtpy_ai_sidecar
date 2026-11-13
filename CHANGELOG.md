@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- PyFigures adapter: one instruction done by one batch whose every item was applied and read back by the figure ("rotate all images by 25 degrees") is answered at once from that readback (it was done in 2 s, then an inspect of the whole figure and a re-read of each rotation kept the prompt busy 45 s). A request asking for more (and, then, commas…) goes back to the model.
+- PyFigures adapter: the open figure's file (path, name, folder) is in the state sent with each message: "export it with the same name as the pyf" searched nine times for it and gave up.
 - PyFigures adapter: a `use_pyfigures_tool` call with `batch=[...]` (the same operation on many items in one call) has every item checked by the same guards as a single call, each merged with the shared arguments.
 - PyFigures adapter: "again i made a mistake", "oops I pressed cancel" right after the chat opened a panel editor, or "open it again" / "reopen it" at any time, open that editor again at once (the reply had asked what the mistake was, then "I said open it again" went through a tool search). With other words in the message (undo, make it red…) the request goes to the model as before.
 - PyFigures adapter: "uncrop it", "remove the crop of e": when the host's readback says every side is 0, the reply is written from it, without another figure read and model call (the crop came off in 1.4 s, the answer took 34 s more).
