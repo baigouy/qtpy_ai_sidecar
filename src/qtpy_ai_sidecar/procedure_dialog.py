@@ -310,12 +310,14 @@ class ChatReplay:
         # model answer the same way (user 2026-11-13)
         self.mode = QComboBox(self.bar)
         self.mode.addItem('Recorded answers', self.RECORDED)
-        self.mode.addItem('Ask the model again (live)', self.LIVE)
+        self.mode.addItem('Ask the model again (live, costs API calls)', self.LIVE)
+        # red: unlike the recorded answers, every request costs a model call (user 2026-11-13)
+        self.mode.setItemData(1, QColor('#c62828'), Qt.ItemDataRole.ForegroundRole)
         self.mode.setToolTip('Recorded: the answers of the chat, its edits run again, no model.\n'
                              'Live: each request sent to the model in use (API calls), its new answer and '
                              'edits compared with the recorded ones; a report is saved at the end.')
         self.mode.setCurrentIndex(1 if mode == self.LIVE else 0)
-        self.mode.currentIndexChanged.connect(lambda _i: self.apply.setVisible(not self.live()))
+        self.mode.currentIndexChanged.connect(lambda _i: self._mode_changed())
         from qtpy.QtWidgets import QComboBox as _Combo
         self.mode.setSizeAdjustPolicy(_Combo.SizeAdjustPolicy.AdjustToContents)
         top.addWidget(self.mode)
@@ -346,7 +348,7 @@ class ChatReplay:
             root.insertWidget(at, self.bar)
         else:
             root.addWidget(self.bar)
-        self.apply.setVisible(not self.live())
+        self._mode_changed()
         dock.add_message('assistant', f'**Replay of {Path(self.path).name}**: {len(self.turns)} request(s).\n\n'
                                       '- *Recorded answers*: each turn shows what you asked, runs the edits made '
                                       'then (with *Apply the edits*) and shows the model\'s answer then; the '
@@ -359,6 +361,13 @@ class ChatReplay:
 
     def live(self):
         return self.mode.currentData() == self.LIVE
+
+    def _mode_changed(self):
+        live = self.live()
+        self.apply.setVisible(not live)
+        # the live mode costs model calls: shown in red so it is never picked unnoticed
+        self.mode.setStyleSheet('QComboBox { background:#c62828; color:white; font-weight:600; '
+                                'border-radius:4px; padding:2px 6px; }' if live else '')
 
     def update_label(self):
         done = self.index >= len(self.turns)

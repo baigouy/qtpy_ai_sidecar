@@ -201,6 +201,7 @@ def test_live_replay_asks_the_model_again_and_compares(tmp_path):
     dock.engine.turn = model_turn
     replay = dock.procedure_action('replay', str(chat))
     replay.mode.setCurrentIndex(1)                           # Ask the model again (live)
+    assert '#c62828' in replay.mode.styleSheet() and 'costs API calls' in replay.mode.currentText()
     replay.confirmed = True                                  # the question asked before the first request
     try:
         replay.play_all()
