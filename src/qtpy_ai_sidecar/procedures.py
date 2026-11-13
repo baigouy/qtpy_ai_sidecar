@@ -95,11 +95,11 @@ def read_events(path) -> list[dict]:
     return events
 
 
-def load_steps(path, adapter=None) -> list[Step]:
+def load_steps(path, adapter=None, events=None) -> list[Step]:
     """Every MCP call of the chat *path*, in order, with the request it answered."""
     steps, pending, undone, turns = [], [], set(), {}
     request, turn = '', 0
-    for event in read_events(path):
+    for event in (events if events is not None else read_events(path)):
         kind, value = event.get('kind'), event.get('value')
         if kind == 'user':
             request, turn = str(value), turn + 1
@@ -134,9 +134,9 @@ class Turn:
 def load_turns(path, adapter=None) -> list[Turn]:
     """The conversation of a chat log / debug zip, request by request: the model's
     texts and its calls (each with its role and what it gave then)."""
-    turns, by_call = [], {}
-    steps = iter(load_steps(path, adapter))
-    for event in read_events(path):
+    turns, events = [], read_events(path)          # read once: a chat log can be several MB
+    steps = iter(load_steps(path, adapter, events))
+    for event in events:
         kind, value = event.get('kind'), event.get('value')
         if kind == 'user':
             turns.append(Turn(str(value)))

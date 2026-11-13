@@ -19,6 +19,31 @@ from . import procedures as P
 _GREY, _RED, _GREEN = QColor(140, 140, 140), QColor(200, 40, 40), QColor(30, 140, 60)
 
 
+def pumped(fn, timeout=600):
+    """fn() on a worker thread while the Qt event loop keeps running: the application
+    may answer the sidecar on its GUI thread (PyFigures does), so waiting on that
+    thread froze the window (user 2026-11-13)."""
+    box = {}
+
+    def work():
+        try:
+            box['out'] = fn()
+        except BaseException as exc:
+            box['error'] = exc
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+    app = QApplication.instance()
+    waited = 0.0
+    while worker.is_alive() and waited < timeout:
+        if app is not None:
+            app.processEvents()
+        worker.join(0.02)
+        waited += 0.02
+    if 'error' in box:
+        raise box['error']
+    return box.get('out')
+
+
 class HubSession:
     """The application's MCP servers, opened once on a thread of their own and kept open
     while steps are run (opening them can start a server process)."""
@@ -49,7 +74,7 @@ class HubSession:
 
     def call(self, coroutine_fn, timeout=600):
         """coroutine_fn(hub) run on the session's loop; its result, keeping Qt responsive."""
-        self.ready.wait(60)
+        pumped(lambda: self.ready.wait(60))           # starting the servers can take seconds
         if self.error is not None or self.hub is None:
             raise RuntimeError(f'cannot reach the application: {self.error or "timed out"}')
         future = asyncio.run_coroutine_threadsafe(coroutine_fn(self.hub), self.loop)
@@ -68,8 +93,10 @@ class HubSession:
 
 def current_document(adapter):
     """(folder, name) of the application's open document, when its state gives one."""
+    if adapter is None or not hasattr(adapter, 'context'):
+        return None, None
     try:
-        doc = (adapter.context() or {}).get('document') or {}
+        doc = (pumped(adapter.context, timeout=30) or {}).get('document') or {}
     except Exception:
         return None, None
     return doc.get('folder'), doc.get('name')
@@ -256,7 +283,7 @@ class ChatReplay:
     def __init__(self, dock, path, apply=True):
         from qtpy.QtWidgets import QFrame
         self.dock, self.path = dock, str(path)
-        self.turns = P.load_turns(self.path, dock.engine.adapter)
+        self.turns = pumped(lambda: P.load_turns(self.path, dock.engine.adapter))   # a long log: seconds
         self.index, self.session, self.document = 0, None, (None, None)
         self.bar = QFrame(dock.widget())
         self.bar.setObjectName('replayBar')
@@ -308,10 +335,26 @@ class ChatReplay:
             self.document = current_document(self.dock.engine.adapter)
         return self.session.call(lambda hub: P.run_step(hub, step, self.document))
 
+    def _busy(self, busy, text=''):
+        for b in (self.next_button, self.all_button, self.apply):
+            b.setEnabled(not busy)
+        if busy:
+            self.label.setText(text)
+        QApplication.processEvents()
+
     def next(self):
         if self.index >= len(self.turns):
             return False
         turn = self.turns[self.index]
+        self._busy(True, f'Replay · running turn {self.index + 1} of {len(self.turns)}…')
+        try:
+            self._play(turn)
+        finally:
+            self._busy(False)
+            self.update_label()
+        return True
+
+    def _play(self, turn):
         self.index += 1
         self.dock.add_message('user', turn.request)
         lines = []
@@ -329,8 +372,6 @@ class ChatReplay:
             self.dock.add_message('assistant', '\n'.join(lines))
         if turn.undone:
             self.dock.add_message('assistant', '*(This reply was undone in the chat: its edits were not replayed.)*')
-        self.update_label()
-        return True
 
     def _call_line(self, step, turn):
         text = '`' + P.describe(self.dock.engine.adapter, step)[:160].replace('`', "'") + '`'
