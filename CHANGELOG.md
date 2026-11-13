@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.9 — 2026-11-13
 
 - Chat replay: setup turns (`"setup": true` on the user event, `Turn.setup`) run their recorded calls without the model, in the live mode too: a chat of every request ever made rebuilds the document each old chat started from before its requests.
 - Replay a chat in the chat panel, turn by turn (Procedures > Replay a chat…): the request, the edits made then run again, each call's result then and now, and the model's answer then; `procedures.load_turns`. Live mode (*Ask the model again*): each recorded request sent to the model in use, its edits compared with the recorded ones per turn (`procedures.compare`), report saved in `chats/replays/` (Markdown + JSON). The replay does not freeze the window (the application's state and the server start no longer wait on its GUI thread).
