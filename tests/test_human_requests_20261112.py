@@ -198,6 +198,16 @@ def _fake(state, opened, fail=None):
     return request
 
 
+def test_have_me_edit_the_position_manually_opens_the_last_panel_editor():
+    """'great now segment nuclei in d' ... 'not so bad, have me edit the position manually':
+    the model searched and opened it 35 s later (user chat 2026-11-13)."""
+    adapter, opened = PyFiguresAdapter('unused'), []
+    adapter.request = _fake(FIVE, opened)
+    assert adapter.preflight_manual_response('great now segment nuclei in d') is None
+    out = adapter.preflight_manual_response('not so bad, have me edit the position manually')
+    assert opened == [{'panel_ref': 'd', 'tab': 'annotations'}] and 'OK' in out['content']
+
+
 def test_i_wanna_edit_the_roi_in_b_opens_its_editor_at_once():
     """Two questions came before the editor opened (user chat 2026-11-12)."""
     adapter, opened = PyFiguresAdapter('unused'), []

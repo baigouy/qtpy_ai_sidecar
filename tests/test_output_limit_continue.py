@@ -68,6 +68,33 @@ def test_running_out_of_room_asks_to_continue(tmp_path):
 import pytest
 
 
+class Busy:
+    """Adds ROIs forever (placing ellipses by eye, one call each)."""
+    def __init__(self):
+        self.n = 0
+        self.notes = []
+
+    async def complete(self, messages, tools, cancel, emit, final_only=False):
+        self.n += 1
+        self.notes.append(next((m['content'] for m in messages if m['role'] == 'system' and 'continue the same request' in m['content']), ''))
+        return {'role': 'assistant', 'content': '', 'tool_calls': [{'id': str(self.n), 'type': 'function',
+                'function': {'name': 'add_roi', 'arguments': '{"cell": %d}' % self.n}}]}, {}
+
+
+def test_the_step_limit_asks_to_continue(tmp_path):
+    """'great now segment nuclei in d' (2026-11-13): 32 steps of ellipses placed by eye,
+    then 'Tool-step limit reached' as an error."""
+    calls, model = [], Busy()
+    engine = Engine(Config(state_dir=str(tmp_path), max_steps=4), backend=model, hub_factory=lambda *a: Hub(calls))
+    events = []
+    asyncio.run(engine.turn('segment nuclei in d', lambda *a: events.append(a)))
+    replies = [v for k, v in events if k == 'assistant']
+    assert len(calls) == 4 and 'used all 4 steps' in replies[-1] and '- Continue' in replies[-1]
+    assert not any(k == 'error' for k, *_ in events) and 'step_limit' in engine.journal.path.read_text(encoding='utf-8')
+    asyncio.run(engine.turn('continue', lambda *a: None))
+    assert 'used all its tool steps' in model.notes[4]
+
+
 @pytest.mark.parametrize('text', ['Stop here', 'please make the letters bold', 'yes but make them yellow'])
 def test_another_message_after_the_limit_is_a_new_request(tmp_path, text):
     """The buttons never block: typing something else is as if "Stop here" was pressed."""

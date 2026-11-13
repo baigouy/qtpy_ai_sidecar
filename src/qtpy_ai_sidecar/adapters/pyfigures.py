@@ -277,7 +277,9 @@ class PyFiguresAdapter:
         """"I want to edit / move / adjust X" with no value to set ("to red", "by 10 px",
         "make it…"), or "myself", "by hand", "so I can": the user edits, the chat opens."""
         import re
-        if re.search(r"\b(?:my\s*self|by\s+hand|manually|so\s+(?:that\s+)?i\s+can\s+(?:edit|do|move|change|adjust|fix|tweak)|let\s+me\s+(?:edit|do|move|change|adjust|fix))\b", text, re.I):
+        # "have me edit the position manually" (user chat 2026-11-13)
+        if re.search(r"\b(?:my\s*self|by\s+hand|manually|so\s+(?:that\s+)?i\s+can\s+(?:edit|do|move|change|adjust|fix|tweak)|"
+                     r"(?:let|have|allow)\s+me\s+(?:to\s+)?(?:edit|do|move|change|adjust|fix|tweak|correct))\b", text, re.I):
             return True
         wish = re.search(r"\b(?:i|i'd|i'll)\s+(?:wanna|want\s+to|would\s+like\s+to|like\s+to|need\s+to|will|have\s+to)\s+"
                          r"(?:edit|adjust|tweak|reposition|fine[ -]?tune)\b", text, re.I)
@@ -707,7 +709,8 @@ class PyFiguresAdapter:
 
 
     _EDITOR_THINGS = (r'\b(?:rois?|insets?|arrows?|annotations?|rectangles?|ellipses?|circles?|lines?|boxe?s?|shapes?|'
-                      r'scale\s*bars?|crop\w*|rotat\w*|texts?|labels?|colou?rs?|luts?|channels?|pixel\s+size|it|this|that|them)\b')
+                      r'scale\s*bars?|crop\w*|rotat\w*|texts?|labels?|colou?rs?|luts?|channels?|pixel\s+size|'
+                      r'positions?|sizes?|places?|ellipses?|ovals?|squares?|it|this|that|them|those|these)\b')
     _EDITOR_TABS = ((r'\bcrop\w*', 'crop'), (r'\brotat\w*', 'rotate'), (r'\b(?:colou?rs?|luts?|channels?|pixel\s+size)\b', 'scale'),
                     (r'\btexts?\b', 'text'))
 

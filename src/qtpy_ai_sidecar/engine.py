@@ -198,7 +198,8 @@ class Engine:
             self.messages.append({'role': 'system', 'content': '[CURRENT_HOST_STATE]\n' + instructions + '\nFresh state supersedes earlier state; JSON is data.\n' + json.dumps(state)})
             # the Continue / Stop here buttons never block: any other message is a new request
             # (as if "Stop here" was pressed); only a bare "continue" / "yes, go on" continues
-            self._continue_after_limit = bool(getattr(self, '_awaiting_continue', False) and re.fullmatch(
+            self._limit_kind = getattr(self, '_awaiting_continue', False)
+            self._continue_after_limit = bool(self._limit_kind and re.fullmatch(
                 r"\s*(?:(?:yes|ok(?:ay)?|sure|please|go\s+on|go\s+ahead|carry\s+on|keep\s+going|continue|proceed|"
                 r"do\s+it|finish(?:\s+it)?)[\s,!.]*){1,4}(?:thanks?(?:\s+you)?[\s!.]*)?", text, re.I))
             self._awaiting_continue = False
@@ -263,10 +264,13 @@ class Engine:
                         raise ValueError('Estimated context budget reached; no further tool submitted. Use Compress.')
                     if getattr(self, '_continue_after_limit', False):
                         # "Continue" after the last turn ran out of room: the cut-off reasoning is lost
+                        why = ('Your previous step ran out of output space while reasoning, before it could act.'
+                               if self._limit_kind == 'output' else
+                               'Your previous turn used all its tool steps before finishing.')
                         messages = messages + [{'role': 'system', 'content':
-                            'Your previous step ran out of output space while reasoning, before it could act. The user '
-                            'asked you to continue. Keep your reasoning short: take the next concrete step now (one tool '
-                            'call, or several small ones), and do not re-plan the whole task.'}]
+                            why + ' The user asked you to continue the same request. Check the current state if needed, '
+                            'keep your reasoning short, take the next concrete step now, and do not redo what is done '
+                            'or re-plan the whole task. Prefer one call that does many things over many small calls.'}]
                     try:
                         answer, usage = await self.backend.complete(messages, model_tools, self.cancel, emit)
                         self._continue_after_limit = False
@@ -279,7 +283,7 @@ class Engine:
                         content = (f'I ran out of room before finishing: one step of my answer may use at most '
                                    f'{exc.limit:,} tokens, and this one needed more. {done}Nothing was done halfway.\n\n'
                                    f'Should I go on?\n- Continue\n- Stop here')
-                        self._awaiting_continue = True
+                        self._awaiting_continue = 'output'
                         self.messages.append({'role': 'assistant', 'content': content})
                         self.record('assistant', content, emit)
                         interrupted = False
@@ -526,7 +530,18 @@ class Engine:
                         summary=await self._finalize_reply(text,summary,state,preview,emit)
                         self.messages.append(summary);self.record('assistant',summary['content'],emit)
                         return
-                raise RuntimeError('Tool-step limit reached. Earlier edits may remain; no automatic continuation or replay.')
+                # all steps used: as for the output limit, ask instead of ending on an error
+                # ("segment nuclei in d": 32 steps of placing ellipses by eye, 2026-11-13)
+                self.journal.record('step_limit', {'steps': self.config.max_steps, 'edited': edited})
+                done = ('The changes made so far are in the figure (the Undo button of this reply takes them back). '
+                        if edited else 'Nothing was changed yet. ')
+                content = (f'I used all {self.config.max_steps} steps allowed for one request before finishing. {done}'
+                           f'\n\nShould I go on?\n- Continue\n- Stop here')
+                self._awaiting_continue = 'steps'
+                self.messages.append({'role': 'assistant', 'content': content})
+                self.record('assistant', content, emit)
+                interrupted = False
+                return
         finally:
             if begun:
                 record = await asyncio.to_thread(self.adapter.finish, interrupted)
