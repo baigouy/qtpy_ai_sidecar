@@ -429,3 +429,18 @@ def test_edits_with_a_value_or_not_of_one_panel_go_to_the_model(text):
                                   'make it bigger so I can see it', 'I want to adjust the inset size by 20%'])
 def test_an_edit_with_its_value_is_still_made(text):
     call(text, 'roi_to_inset', {'panel_ref': 'B', 'annotation_index': 6})
+
+
+def test_each_item_of_a_batch_passes_the_guards():
+    """use_pyfigures_tool(batch=[...]) runs many items in one call (2026-11-13: 26 recolours,
+    one slow step each); a guard still sees every item merged with the shared arguments."""
+    adapter = PyFiguresAdapter('unused')
+    text = 'crop #5 so that the burnt in scale bar gets hidden'
+    blind = {'tool_name': 'transform_image', 'arguments': {'panel_ref': '#5'},
+             'batch': [{'crop_left': 0}, {'crop_bottom': 320}]}
+    with pytest.raises(ValueError, match='CROP_NEEDS_PANEL_PREVIEW'):
+        adapter.validate_tool_call('use_pyfigures_tool', blind, FIVE, text)
+    removal = {'tool_name': 'remove_rois', 'arguments': {}, 'batch': [{'panel_ref': 'e'}, {'panel_ref': 'd'}]}
+    with pytest.raises(ValueError, match='REMOVAL_NOT_REQUESTED'):
+        adapter.validate_tool_call('use_pyfigures_tool', removal, FIVE, 'make the ROIs of e thicker')
+    adapter.validate_tool_call('use_pyfigures_tool', removal, FIVE, 'remove all the boxes in e and d')

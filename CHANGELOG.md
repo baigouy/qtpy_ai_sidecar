@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- PyFigures adapter: a `use_pyfigures_tool` call with `batch=[...]` (the same operation on many items in one call) has every item checked by the same guards as a single call, each merged with the shared arguments.
 - PyFigures adapter: "again i made a mistake", "oops I pressed cancel" right after the chat opened a panel editor, or "open it again" / "reopen it" at any time, open that editor again at once (the reply had asked what the mistake was, then "I said open it again" went through a tool search). With other words in the message (undo, make it red…) the request goes to the model as before.
 - PyFigures adapter: "uncrop it", "remove the crop of e": when the host's readback says every side is 0, the reply is written from it, without another figure read and model call (the crop came off in 1.4 s, the answer took 34 s more).
 - PyFigures adapter: a crop chosen from what the image shows ("crop #5 so that the burnt in scale bar gets hidden", "crop g to the nuclei") is refused until the model has looked at that panel with `preview_panel` (its whole source with pixel rulers) in the same request; it had looked at the whole figure and cut 320 px blind. Crops with the user's numbers, "the same crop as d" and uncrops are not affected.

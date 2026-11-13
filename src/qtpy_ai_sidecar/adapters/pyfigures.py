@@ -289,6 +289,17 @@ class PyFiguresAdapter:
         return not re.search(r"\b(?:to|into|by|with)\s+\S|\b(?:make|set|put|turn|use|change|move|add|remove|delete)\b|\d", rest, re.I)
 
     def validate_tool_call(self, tool_name, arguments, state, text):
+        """Each item of a batch (one call, many items) passes the same guards as a
+        single call would: the shared arguments merged with that item."""
+        batch = arguments.get('batch') if tool_name == 'use_pyfigures_tool' else None
+        if not batch or not isinstance(batch, list):
+            return self._validate_one(tool_name, arguments, state, text)
+        base = arguments.get('arguments') or {}
+        for item in batch:
+            merged = {**base, **item} if isinstance(item, dict) else base
+            self._validate_one(tool_name, {**arguments, 'arguments': merged, 'batch': None}, state, text)
+
+    def _validate_one(self, tool_name, arguments, state, text):
         import re
         selection = state.get('selection') or {}
         panels = selection.get('selected_panels') or []
