@@ -80,6 +80,36 @@ class PyFiguresAdapter:
         return None  # Other connected services need their own explicit MCP hint.
 
 
+    # -- procedures (qtpy_ai_sidecar.procedures): what a replayed chat keeps -------------
+    _PROCEDURE_SKIP = {'select_live_objects', 'open_annotation_editor', 'open_annotation_properties',
+                       'show_me_where', 'show_me_how', 'close_guidance', 'open_native_menu', 'use_native_gui',
+                       'native_gui_keys', 'native_gui_gesture', 'native_gui_drop_files',
+                       # the procedure tools themselves: a procedure does not save procedures
+                       'save_chat_procedure', 'run_procedure', 'run_procedure_here', 'list_chat_steps'}
+
+    def procedure_role(self, tool_name, arguments):
+        """edit / read / undo / redo / skip for a call of a replayed chat."""
+        op, args = (arguments.get('tool_name', ''), arguments.get('arguments') or {}) \
+            if tool_name == 'use_pyfigures_tool' else (tool_name, arguments or {})
+        if op == 'undo_redo':
+            return 'redo' if str(args.get('action', 'undo')) == 'redo' else 'undo'
+        if op in self._PROCEDURE_SKIP:
+            return 'skip'
+        if op.startswith(('get_', 'list_', 'inspect_', 'describe_', 'check_', 'preview_', 'explain_', 'find_',
+                          'audit_', 'search_', 'review_')) or args.get('dry_run') \
+                or self.is_read_only_call('use_pyfigures_tool', {'tool_name': op}) is True:
+            return 'read'
+        return 'edit'
+
+    @staticmethod
+    def describe_call(tool_name, arguments):
+        if tool_name != 'use_pyfigures_tool':
+            return tool_name + ' ' + json.dumps(arguments, ensure_ascii=False)
+        shown = {k: v for k, v in (arguments.get('arguments') or {}).items() if k != 'pyf_path'}
+        text = str(arguments.get('tool_name', '')) + ' ' + json.dumps(shown, ensure_ascii=False)
+        batch = arguments.get('batch')
+        return text + (f' × {len(batch)}' if batch else '')
+
     def context(self):
         result = self.request('inspect')
         summary = result.get('figure_summary') or {}

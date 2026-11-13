@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Procedures (any application): the chat panel's **Procedures** button saves this chat's edits as a procedure (not its reads, failed calls or undone edits), runs a procedure through the application's MCP servers without the model, and steps through a chat log, debug zip or procedure one call at a time (Then / Now, editable arguments). Module `qtpy_ai_sidecar.procedures`; adapter hooks `procedure_role` and `describe_call` (PyFigures adapter implements both).
 - PyFigures adapter: one instruction done by one batch whose every item was applied and read back by the figure ("rotate all images by 25 degrees") is answered at once from that readback (it was done in 2 s, then an inspect of the whole figure and a re-read of each rotation kept the prompt busy 45 s). A request asking for more (and, then, commas…) goes back to the model.
 - PyFigures adapter: the open figure's file (path, name, folder) is in the state sent with each message: "export it with the same name as the pyf" searched nine times for it and gave up.
 - PyFigures adapter: a `use_pyfigures_tool` call with `batch=[...]` (the same operation on many items in one call) has every item checked by the same guards as a single call, each merged with the shared arguments.

@@ -11,7 +11,8 @@ from qtpy.QtCore import Qt, Signal, QTimer, QSize, QRect, QPoint
 from qtpy.QtGui import QImage, QPixmap, QFont, QIcon, QIconEngine, QPainter
 from qtpy.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QFrame, QLabel, QTextBrowser, QPlainTextEdit, QPushButton, QProgressBar,
-    QFileDialog, QToolButton, QMenu, QCheckBox, QSizePolicy, QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QSlider)
+    QFileDialog, QToolButton, QMenu, QCheckBox, QSizePolicy, QDialog, QFormLayout, QSpinBox, QComboBox, QDialogButtonBox, QSlider,
+    QMessageBox)
 import qtawesome as qta
 from .engine import Engine
 from .config import DEFAULT_NOTICE, DEFAULT_REMOTE_NOTICE
@@ -426,6 +427,15 @@ class AssistantDock(QDockWidget):
         export.setToolTip('Export this conversation for debugging')
         export.clicked.connect(self.export)
         top.addWidget(export)
+        # this chat's edits saved and run again without the model (qtpy_ai_sidecar.procedures)
+        self.procedures_button = QPushButton(qta.icon('fa5s.list-ol'), '')
+        self.procedures_button.setToolTip('Procedures: save this chat\'s edits, run them again, step through a chat')
+        procedures_menu = QMenu(self.procedures_button)
+        procedures_menu.addAction('Save this chat as a procedure…', lambda: self.procedure_action('save'))
+        procedures_menu.addAction('Run a procedure…', lambda: self.procedure_action('run'))
+        procedures_menu.addAction('Step through a chat or procedure…', lambda: self.procedure_action('step'))
+        self.procedures_button.setMenu(procedures_menu)
+        top.addWidget(self.procedures_button)
         self.settings_button = QPushButton(qta.icon('fa5s.cog'), '')
         self.settings_button.setToolTip('Model performance, thinking and preview settings')
         self.settings_button.clicked.connect(self.settings)
@@ -593,6 +603,18 @@ class AssistantDock(QDockWidget):
         self.timer.setInterval(250)
         self.timer.timeout.connect(self.tick)
         self.add_message('assistant', 'What would you like to do in ' + config.application + '?')
+
+    def procedure_action(self, which, path=None):
+        """Procedures menu: 'save' this chat, 'run' a procedure, 'step' through one."""
+        from . import procedure_dialog as D
+        if self.busy and which != 'save':
+            QMessageBox.information(self, 'Procedures', 'Wait for the current reply (or stop it) first.')
+            return None
+        try:
+            return {'save': D.save_this_chat, 'run': D.run_procedure, 'step': D.step_through}[which](self, path)
+        except Exception as exc:
+            QMessageBox.warning(self, 'Procedures', f'{type(exc).__name__}: {exc}')
+            return None
 
     def emit(self, kind, value):
         if not self.closed:

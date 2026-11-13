@@ -85,6 +85,21 @@ The PyFigures prototype must be restarted to pick up its recent redo fixes. Use 
 
 Readability checks and PyFigures-specific editing policies remain in the original prototype/server for now; they are not universal features silently imposed on other applications. Interrupted tool transport marks the outcome uncertain and blocks subsequent requests until the human inspects and acknowledges. The core does not automatically replay work or promise arbitrary selective undo. Tool-step and output limits stop further submission and report completed edits may remain.
 
+## Procedures: a chat's edits, saved and run again
+
+The **Procedures** button of the chat panel (list icon) works for any connected application:
+
+- **Save this chat as a procedure…** keeps the MCP calls that changed the application, in order, as a JSON file (next to the document when the application's state names one). Left out: reads and searches, failed calls, a reply undone with its Undo button, an edit the chat undid itself (a redo puts it back).
+- **Run a procedure…** runs every step on the application as it is now, through its MCP servers, without the model; it stops at the first failed step.
+- **Step through a chat or procedure…** lists the calls of a chat log, a debug-export zip or a procedure, with what each gave in the chat (*Then*) and now (*Now*); edit a call's arguments before running it, run up to a step, or save the steps as a procedure. A tool for debugging an application's MCP tools.
+
+An application adapter may implement `procedure_role(name, arguments)` (edit, read, undo, redo or skip) and `describe_call(name, arguments)`; without them, names starting with get_/list_/inspect_/find_… read. Paths under the document's folder become `{folder}` / `{name}`, filled with the document a procedure runs on. Module: `qtpy_ai_sidecar.procedures` (no Qt). The file format:
+
+```json
+{"procedure": 1, "application": "PyFigures",
+ "steps": [{"request": "rotate all by 25", "call": "use_pyfigures_tool", "arguments": {}}]}
+```
+
 ## litsearch
 
 [litsearch](https://github.com/baigouy/litsearch) (literature search over a local PDF index, PubMed, bioRxiv and arXiv) docks this panel in its own window: install both packages in one environment (`pip install -e path/to/qtpy_ai_sidecar -e "path/to/litsearch[gui,sidecar]"`), run `python -m litsearch.gui` and choose **View > Chat assistant** (Ctrl+Shift+A, or the button beside the tabs). The entry is absent when this package is not installed.
