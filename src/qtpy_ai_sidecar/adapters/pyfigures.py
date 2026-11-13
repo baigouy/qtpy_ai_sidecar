@@ -350,6 +350,16 @@ class PyFiguresAdapter:
                              f'preview_panel(panel_ref="{ref}") first: it shows that panel\'s whole source image with '
                              f'pixel rulers and its current crop. Read the region\'s edges off the rulers, then crop once. '
                              f'Nothing was changed.')
+        if (operation in ('add_roi_rect', 'add_roi_ellipse', 'add_roi_polygon', 'add_arrow')
+                and re.search(r'\b(?:cells?|nucle(?:us|i)|embryos?|objects?|blobs?|spots?|particles?|beads?)\b', text, re.I)
+                and getattr(self, '_panel_previewed_for', None) != text):
+            # "draw ROIs over every cell in e": two boxes placed by eye from the whole figure,
+            # both off target (user chat 2026-11-13)
+            ref = args.get('panel_ref') or '<the panel>'
+            raise ValueError(f'LOOK_AT_THE_PANEL_FIRST: ROIs on objects must come from the panel\'s own pixels. For '
+                             f'every / each object call detect_objects(panel_ref="{ref}") once (it boxes them all); for '
+                             f'a few named ones call preview_panel(panel_ref="{ref}") and read their coordinates off '
+                             f'its rulers (region=[x0, y0, x1, y1] zooms). Nothing was changed.')
         if operation == 'open_annotation_editor' and args.get('panel_ref'):
             # the model opened it: "I made a mistake" / "open it again" next reopens it
             self._last_editor = (str(args['panel_ref']), args.get('tab') if args.get('tab') in

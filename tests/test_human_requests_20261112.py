@@ -304,6 +304,19 @@ def test_a_crop_chosen_from_the_image_needs_the_panel_preview_first(text):
         adapter.validate_tool_call('use_pyfigures_tool', CROP_320, FIVE, text + ' please')
 
 
+def test_rois_on_cells_need_a_look_at_the_panel():
+    """'can you draw ROIs over every cell in e': two boxes placed by eye from the whole
+    figure, both off target (user chat 2026-11-13)."""
+    adapter, text = PyFiguresAdapter('unused'), 'cna you draw ROIs over every cell in e'
+    box = {'tool_name': 'add_roi_rect', 'arguments': {'panel_ref': 'e', 'x': 35, 'y': 98, 'width': 64, 'height': 64}}
+    with pytest.raises(ValueError, match=r'LOOK_AT_THE_PANEL_FIRST.*detect_objects\(panel_ref="e"\)'):
+        adapter.validate_tool_call('use_pyfigures_tool', box, FIVE, text)
+    adapter.validate_tool_call('use_pyfigures_tool', {'tool_name': 'detect_objects', 'arguments': {'panel_ref': 'e'}}, FIVE, text)
+    adapter.validate_tool_call('use_pyfigures_tool', {'tool_name': 'preview_panel', 'arguments': {'panel_ref': 'e'}}, FIVE, text)
+    adapter.validate_tool_call('use_pyfigures_tool', box, FIVE, text)            # after the look: fine
+    adapter.validate_tool_call('use_pyfigures_tool', box, FIVE, 'add a red box at 35, 98, 64 x 64 in e')
+
+
 @pytest.mark.parametrize('text', ['crop 320 px from the bottom of #5', 'uncrop it', 'crop e by 10 on each side',
                                   'give e the same crop as d'])
 def test_a_crop_with_its_numbers_needs_no_preview(text):
