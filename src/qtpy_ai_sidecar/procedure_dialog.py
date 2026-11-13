@@ -270,6 +270,11 @@ class ChatReplay:
         row.addWidget(self.apply)
         self.next_button = QPushButton('Next turn ▶', self.bar)
         self.next_button.clicked.connect(lambda _c=False: self.next())
+        # green, the bar's main button: users should not miss it (user 2026-11-13)
+        self.next_button.setStyleSheet(
+            'QPushButton { background:#2e7d32; color:white; font-weight:600; border-radius:4px; padding:4px 10px; }'
+            'QPushButton:hover { background:#388e3c; }'
+            'QPushButton:disabled { background:#a5c8a7; color:#f1f1f1; }')
         row.addWidget(self.next_button)
         self.all_button = QPushButton('Play all', self.bar)
         self.all_button.clicked.connect(lambda _c=False: self.play_all())
