@@ -142,6 +142,8 @@ def test_a_chat_is_replayed_in_the_chat_panel_turn_by_turn(tmp_path):
     dock.add_message = lambda role, text: (shown.append((role, text)), real(role, text))[1]
     replay = dock.procedure_action('replay', str(chat))
     try:
+        root = dock.widget().layout()                     # the bar sits just above the message box
+        assert root.indexOf(replay.bar) == root.indexOf(dock.composer_frame) - 1
         assert replay.next()
         roles = [r for r, _ in shown[1:]]
         assert roles[0] == 'user' and shown[1][1] == 'rotate all by 25'

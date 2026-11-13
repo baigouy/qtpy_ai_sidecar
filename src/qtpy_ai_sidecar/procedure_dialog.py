@@ -277,7 +277,14 @@ class ChatReplay:
         stop = QPushButton('End replay', self.bar)
         stop.clicked.connect(lambda _c=False: self.close())
         row.addWidget(stop)
-        dock.widget().layout().addWidget(self.bar)
+        # just above the message box, where the eye is (it was below it, user 2026-11-13)
+        root = dock.widget().layout()
+        composer = getattr(dock, 'composer_frame', None)
+        at = root.indexOf(composer) if composer is not None else -1
+        if at >= 0:
+            root.insertWidget(at, self.bar)
+        else:
+            root.addWidget(self.bar)
         dock.add_message('assistant', f'**Replay of {Path(self.path).name}**: {len(self.turns)} request(s). '
                                       'Each turn shows what you asked, runs the edits made then on the '
                                       'application as it is now (with *Apply the edits*), and shows the '
