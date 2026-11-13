@@ -2,6 +2,8 @@
 refused what the user had asked for or accepted.
 "is it colour blind safe?" -> the assistant proposes magenta and green ->
 "fix it": set_lut MAGENTA was refused as "not named by the request"."""
+import json
+
 import pytest
 
 from qtpy_ai_sidecar.adapters.pyfigures import PyFiguresAdapter
@@ -258,6 +260,31 @@ def test_a_late_mistake_is_not_a_reopen():
     adapter.preflight_manual_response('I wanna edit the ROI of the inset in b')
     adapter._turns_since_editor = 5
     assert adapter.preflight_manual_response('I made a mistake') is None and len(opened) == 1
+
+
+UNCROPPED = {'is_error': False, 'content': json.dumps({
+    'result': 'Image 1 in group [1]: crop_left=0, crop_right=0, crop_top=0, crop_bottom=0.', 'document_changed': True})}
+UNCROP_CALL = {'tool_name': 'transform_image',
+               'arguments': {'crop_bottom': 0, 'crop_left': 0, 'crop_right': 0, 'crop_top': 0, 'panel_ref': 'e'}}
+
+
+@pytest.mark.parametrize('text', ['uncrop it', 'please remove the crop of panel e', 'reset the crop', 'Uncrop e.'])
+def test_uncrop_is_answered_from_the_readback(text):
+    """The crop was removed in 1.4 s, then a figure read and a 34 s model answer (user chat
+    2026-11-13): the readback already says every side is 0."""
+    out = PyFiguresAdapter('unused').verified_completion('use_pyfigures_tool', UNCROP_CALL, UNCROPPED, FIVE, text)
+    assert out and 'panel **e** is uncropped' in out
+
+
+@pytest.mark.parametrize('text', ['uncrop it and make it bigger', 'crop e by 10 pixels', 'uncrop all panels except b'])
+def test_other_crop_requests_still_get_the_model_answer(text):
+    assert PyFiguresAdapter('unused').verified_completion('use_pyfigures_tool', UNCROP_CALL, UNCROPPED, FIVE, text) is None
+
+
+def test_uncrop_not_verified_gets_the_model_answer():
+    half = {'is_error': False, 'content': json.dumps({'result': 'crop_left=0, crop_right=0, crop_top=10, crop_bottom=0.',
+                                                      'document_changed': True})}
+    assert PyFiguresAdapter('unused').verified_completion('use_pyfigures_tool', UNCROP_CALL, half, FIVE, 'uncrop it') is None
 
 
 @pytest.mark.parametrize('text', ['open the export dialog', "don't open the editor, move the ROI in b up"])

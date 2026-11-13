@@ -3,6 +3,7 @@
 ## Unreleased
 
 - PyFigures adapter: "again i made a mistake", "oops I pressed cancel" right after the chat opened a panel editor, or "open it again" / "reopen it" at any time, open that editor again at once (the reply had asked what the mistake was, then "I said open it again" went through a tool search). With other words in the message (undo, make it red…) the request goes to the model as before.
+- PyFigures adapter: "uncrop it", "remove the crop of e": when the host's readback says every side is 0, the reply is written from it, without another figure read and model call (the crop came off in 1.4 s, the answer took 34 s more).
 
 ## 0.1.8 — 2026-11-13
 

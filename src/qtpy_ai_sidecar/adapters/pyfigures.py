@@ -598,6 +598,32 @@ class PyFiguresAdapter:
         name = found[0]
         return name, colors.get(name, name)
 
+    _UNCROP = (r"\s*(?:please\s+|(?:can|could)\s+you\s+)?(?:un-?crop|remove\s+(?:the\s+)?crop(?:ping)?|"
+               r"reset\s+(?:the\s+)?crop(?:ping)?|undo\s+the\s+crop(?:ping)?|no\s+crop)\b"
+               r"(?:\s+(?:it|this|that|them|of|from|on|panel|image|picture|the|[a-z]|please|again))*[\s.!?]*")
+
+    def _uncrop_completion(self, name, arguments, result, text):
+        """"uncrop it": the host's readback already says every crop is 0, so the reply is
+        written here instead of after another read and model call (user chat 2026-11-13:
+        the crop was removed in 1.4 s, then a figure read and a 34 s answer)."""
+        import re
+        if name != 'transform_image' or result.get('is_error') or not re.fullmatch(self._UNCROP, text, re.I):
+            return None
+        args = arguments.get('arguments', {}) if 'arguments' in arguments else arguments
+        sides = ('crop_left', 'crop_right', 'crop_top', 'crop_bottom')
+        if set(args) - set(sides) - {'panel_ref'} or any(args.get(s) not in (0, None) for s in sides) or not args.get('panel_ref'):
+            return None
+        try:
+            body = json.loads(result.get('content', ''))
+        except (ValueError, TypeError):
+            return None
+        said = str(body.get('result', ''))
+        if not body.get('document_changed') or any(f'{s}=0' not in said for s in sides):
+            return None
+        ref = str(args['panel_ref'])
+        target = 'panel **' + ref + '**' if not re.fullmatch(r'[\d/]+', ref) else 'the panel'
+        return f'Done: {target} is uncropped, its whole image is shown again (crop 0 on every side). Verified in the open figure.'
+
     def verified_completion(self, tool_name, arguments, result, state, text):
         import re
         if re.search(r'\b(?:select|highlight|pick)\b',text,re.I):return None
@@ -614,6 +640,9 @@ class PyFiguresAdapter:
                         return f"Rows {int(match[1])} and {int(match[2])} swapped. {mode} Image order within each row and letter styling preserved; verified in the open figure." 
                 except (ValueError, TypeError):
                     pass
+        uncropped = self._uncrop_completion(name, arguments, result, text)
+        if uncropped:
+            return uncropped
         request = self._color_request(text)
         if not request or result.get('is_error'):
             return None
