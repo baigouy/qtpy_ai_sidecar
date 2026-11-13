@@ -330,6 +330,27 @@ def test_bulk_roi_removal_needs_words_that_ask_for_it(text, allowed):
             PyFiguresAdapter('unused').validate_tool_call('use_pyfigures_tool', removal, FIVE, text)
 
 
+@pytest.mark.parametrize('text', ['move the smallest inset in b by 100 px to the right',
+                                  'move the smallest inset in b by 100px to the right', 'shift the inset of b a bit left'])
+def test_moving_an_inset_by_a_distance_is_answered_at_once(text):
+    """Twice the model searched eight times for an inset offset and stopped
+    (user chats 2026-11-13): an inset sits in a corner; say so and offer the rest."""
+    adapter = PyFiguresAdapter('unused')
+    adapter.request = _fake(FIVE, [])
+    out = adapter.preflight_manual_response(text)
+    assert out and 'cannot be moved by a distance' in out['content'] and 'panel **b**' in out['content']
+    assert '- Move the ROI it shows instead' in out['content']
+    assert ('top right' in out['content']) == ('right' in text)
+
+
+@pytest.mark.parametrize('text', ['move the inset of b to the bottom left', 'move the inset to the other corner',
+                                  'move the ROI of the inset in b 100 px to the right', 'make the inset in b bigger'])
+def test_inset_requests_it_can_do_go_to_the_model(text):
+    adapter = PyFiguresAdapter('unused')
+    adapter.request = _fake(FIVE, [])
+    assert adapter.preflight_manual_response(text) is None
+
+
 def test_rois_on_cells_need_a_look_at_the_panel():
     """'can you draw ROIs over every cell in e': two boxes placed by eye from the whole
     figure, both off target (user chat 2026-11-13)."""

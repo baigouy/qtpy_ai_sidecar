@@ -839,6 +839,40 @@ class PyFiguresAdapter:
         return {'content': content, 'evidence': {'operation': 'open_annotation_editor', 'panel_ref': ref, 'tab': tab,
                                                  'operation_executed': False, 'self_edit': True}}
 
+    def _inset_cannot_move(self, request):
+        """"move the smallest inset in b by 100 px to the right": an inset sits in a
+        corner of its panel and has no free position; twice the model searched eight
+        times for an offset and stopped (user chats 2026-11-13). Say so at once and
+        offer what can be done."""
+        import re
+        if not re.search(r'\b(?:move|shift|nudge|slide|push|drag|displace)\w*\b', request, re.I) \
+                or not re.search(r'\binsets?\b', request, re.I):
+            return None
+        # a distance; a bare direction ("move the inset up") may mean another corner
+        if not re.search(r'\d+\s*(?:px|pixels?|%|mm)?|\b(?:a\s+bit|slightly|a\s+little|a\s+tad|further|closer)\b',
+                         request, re.I):
+            return None
+        if re.search(r'\b(?:to|into|in)\s+(?:the\s+)?(?:other\s+)?(?:top|bottom|upper|lower)[\s-]*(?:left|right)\b|\bcorner\b|'
+                     r'\b(?:roi|box|rectangle|region)\b', request, re.I):
+            return None          # another corner, or the ROI it shows: the model can do it
+        state = None
+        try:
+            state = self.request('inspect')
+        except Exception:
+            pass
+        ref = self._named_panel(request, state or {}) if state else None
+        name = f'panel **{ref}**' if ref else 'the panel'
+        right = re.search(r'\bright\b', request, re.I)
+        left = re.search(r'\bleft\b', request, re.I)
+        corner = 'top right' if right else 'top left' if left else 'another corner'
+        content = (f'An inset cannot be moved by a distance: it always sits in a corner of its panel, flush with the '
+                   f'edges. What I can do for the inset of {name}:\n'
+                   f'- Put it in the **{corner}** corner\n'
+                   f'- Move the ROI it shows instead (the inset then shows the new region)\n'
+                   f'- Make it smaller or bigger\n'
+                   f'- Open the panel editor so you see it yourself')
+        return {'content': content, 'evidence': {'operation_executed': False, 'inset_has_no_free_position': True}}
+
     def preflight_manual_response(self, request):
         """Resolve a pure control-location question from reviewed help before model discovery."""
         import re
@@ -856,6 +890,9 @@ class PyFiguresAdapter:
         opened = self._open_editor_for_self_edit(request)
         if opened:
             return opened
+        fixed = self._inset_cannot_move(request)
+        if fixed:
+            return fixed
         if not re.match(r'^\s*where\s+(?:is|are)\b', request, re.I):
             return None
         # Mixed questions/actions must retain the normal conversational/tool path.
