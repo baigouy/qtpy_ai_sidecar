@@ -220,6 +220,57 @@ def test_live_replay_asks_the_model_again_and_compares(tmp_path):
     app.processEvents()
 
 
+def test_setup_turns_rebuild_the_document_without_the_model(tmp_path):
+    """A chat of every request ever made starts each old chat from the figure it had
+    (user, 2026-11-13: 'build the fig and then run all steps without failures'). A setup
+    turn ("setup": true) runs its recorded calls, also in a live replay: the model is
+    asked only the real requests."""
+    import time
+    from qtpy.QtWidgets import QApplication
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.widgets import AssistantDock
+    app = QApplication.instance() or QApplication([])
+    setup = lambda: json.dumps({'kind': 'user', 'value': 'Setup: rebuild the figure', 'setup': True})
+    lines = [setup(), _use('create_figure', {'mode': 'groups', 'num_groups': 1}), OK,
+             _use('add_image', {'group_path': [0]}, [{'filename': 'a.tif'}, {'filename': 'b.tif'}]), OK,
+             _ev('user', 'rotate all by 25'), _use('transform_image', {'rotation': 25}, [{'panel_ref': 'a'}]), OK,
+             setup(), _use('create_figure', {'mode': 'canvas'}), OK,
+             _ev('user', 'black backgrounds'), _use('set_image_property', {'property_name': 'fill_color', 'value': '0'}), OK]
+    chat = tmp_path / 'all.jsonl'
+    chat.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    turns = P.load_turns(chat, PyFiguresAdapter('unused'))
+    assert [t.setup for t in turns] == [True, False, True, False]
+    hub = Hub()
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path / 'state')))
+    dock.engine.hub_factory = lambda servers: hub
+    dock.engine.adapter = PyFiguresAdapter('unused')
+    dock.engine.adapter.context = lambda: {}
+    asked = []
+
+    async def model_turn(text, emit, preview=False):
+        asked.append(text)
+        dock.engine.journal.record('user', text)
+        emit('assistant', 'Done now: ' + text)
+    dock.engine.turn = model_turn
+    replay = dock.procedure_action('replay', str(chat))
+    replay.mode.setCurrentIndex(1)                           # live
+    replay.confirmed = True
+    try:
+        replay.play_all()
+        deadline = time.monotonic() + 20
+        while replay.index < len(turns) or replay.pending is not None:
+            assert time.monotonic() < deadline
+            app.processEvents()
+            time.sleep(0.02)
+        assert asked == ['rotate all by 25', 'black backgrounds']
+        ran = [c[1].get('tool_name') for c in hub.calls]
+        assert ran == ['create_figure', 'add_image', 'create_figure']   # the setup calls only
+        assert len(replay.rows) == 2 and replay.report_path
+    finally:
+        replay.close()
+    app.processEvents()
+
+
 def test_the_chat_panels_procedures_menu(tmp_path, monkeypatch):
     """Save this chat → run it → step through it, from the chat panel, any application."""
     from qtpy.QtWidgets import QApplication

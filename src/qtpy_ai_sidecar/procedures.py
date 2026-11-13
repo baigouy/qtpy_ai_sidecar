@@ -130,6 +130,9 @@ class Turn:
     items: list = field(default_factory=list)
     undone: bool = False
     seconds: float = 0.0                # from the request to the last event of the turn
+    # a setup turn (user event with "setup": true) puts the document in a known state:
+    # its recorded calls always run, also in a live replay, and the model is not asked
+    setup: bool = False
 
     def calls(self):
         return [s for kind, s in self.items if kind == 'call']
@@ -173,7 +176,7 @@ def load_turns(path, adapter=None) -> list[Turn]:
     for event in events:
         kind, value = event.get('kind'), event.get('value')
         if kind == 'user':
-            turns.append(Turn(str(value)))
+            turns.append(Turn(str(value), setup=bool(event.get('setup'))))
             start = _when(event)
             continue
         if not turns:

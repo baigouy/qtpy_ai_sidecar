@@ -490,7 +490,7 @@ class ChatReplay:
         if self.index >= len(self.turns) or self.pending is not None:
             return False
         turn = self.turns[self.index]
-        if self.live():
+        if self.live() and not turn.setup:
             if not self._confirm_live():
                 self.playing_all = False
                 return False
@@ -501,11 +501,18 @@ class ChatReplay:
         finally:
             self._busy(False)
             self.update_label()
+        if self.live() and self.playing_all and self.index < len(self.turns):
+            from qtpy.QtCore import QTimer       # a setup turn in a live run: no reply starts the next
+            QTimer.singleShot(300, self.next)
+        elif self.index >= len(self.turns):
+            self.playing_all = False
+            if self.rows:
+                self.write_report()
         return True
 
     def _play(self, turn):
         self.index += 1
-        self.dock.add_message('user', turn.request)
+        self.dock.add_message('user', ('⚙ Setup (not sent to the model): ' if turn.setup else '') + turn.request)
         lines = []
         for kind, item in turn.items:
             if kind == 'assistant':
@@ -525,7 +532,7 @@ class ChatReplay:
     def _call_line(self, step, turn):
         text = '`' + P.describe(self.dock.engine.adapter, step)[:160].replace('`', "'") + '`'
         then = 'failed' if step.recorded_error else 'ok'
-        runs = (self.apply.isChecked() and step.role in ('edit', 'undo', 'redo')
+        runs = ((self.apply.isChecked() or turn.setup) and step.role in ('edit', 'undo', 'redo')
                 and not step.recorded_error and not turn.undone)
         if not runs:
             why = step.role if step.role != 'edit' else ('failed then' if step.recorded_error else
