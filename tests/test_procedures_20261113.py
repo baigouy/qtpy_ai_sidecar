@@ -145,6 +145,13 @@ def test_a_chat_is_replayed_in_the_chat_panel_turn_by_turn(tmp_path):
     try:
         root = dock.widget().layout()                     # the bar sits just above the message box
         assert root.indexOf(replay.bar) == root.indexOf(dock.composer_frame) - 1
+        # in a narrow chat panel the mode menu stays in sight ("where is ask the model again live?")
+        dock.resize(380, 700)
+        dock.show()
+        app.processEvents()
+        mode = replay.mode
+        assert mode.isVisible() and mode.width() >= mode.sizeHint().width() - 2
+        assert mode.mapTo(replay.bar, mode.rect().topRight()).x() <= replay.bar.width()
         assert replay.next()
         roles = [r for r, _ in shown[1:]]
         assert roles[0] == 'user' and shown[1][1] == 'rotate all by 25'
