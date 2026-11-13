@@ -727,7 +727,13 @@ class PyFiguresAdapter:
         name = str(arguments.get('tool_name', 'the operation')).replace('_', ' ')
         shared = arguments.get('arguments') or {}
         refs = [str(i.get('panel_ref')) for i in arguments['batch'] if isinstance(i, dict) and i.get('panel_ref')]
-        where = ('panels **' + '**, **'.join(refs) + '**') if len(refs) == total else f'{total} items'
+        panels = list(dict.fromkeys(refs))     # 81 ROIs listed "panels b, b, b, ..." (replay, 2026-11-13)
+        if len(refs) == total and len(panels) == total:
+            where = 'panels **' + '**, **'.join(panels) + '**'
+        elif panels:
+            where = f'{total} items in panel{"s" if len(panels) > 1 else ""} **' + '**, **'.join(panels) + '**'
+        else:
+            where = f'{total} items'
         how = ', '.join(f'{k}={v}' for k, v in shared.items() if k not in ('panel_ref', 'pyf_path'))
         return (f'Done: {name}' + (f' ({how})' if how else '') + f' on {where}, in one step. '
                 'Each one was read back in the open figure.')

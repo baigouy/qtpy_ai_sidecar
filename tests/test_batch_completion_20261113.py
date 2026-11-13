@@ -36,6 +36,15 @@ def test_more_than_one_thing_asked_goes_back_to_the_model(text):
     assert _reply(text) is None
 
 
+def test_many_items_name_each_panel_once():
+    """81 ROIs were listed 'panels b, b, b, b, ...' (live replay, 2026-11-13)."""
+    call = {'tool_name': 'set_roi_properties', 'arguments': {'stroke': 0.65},
+            'batch': [{'panel_ref': 'b', 'annotation_index': i} for i in range(3)]
+                     + [{'panel_ref': 'd', 'annotation_index': i} for i in range(2)]}
+    out = _reply('make all strokes 0.65', call=call)
+    assert out and '5 items in panels **b**, **d**' in out and out.count('**b**') == 1
+
+
 def test_failed_partial_or_unverified_batches_go_back_to_the_model():
     assert _reply('rotate all by 25', _result(done=4, errors=[{'item': 5}])) is None
     assert _reply('rotate all by 25', _result(verified=False)) is None
