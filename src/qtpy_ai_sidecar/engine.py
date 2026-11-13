@@ -1,9 +1,10 @@
 from .qwen_protocol import ReplyProtocolError
 import asyncio
 import json
+import re
 import threading
 from .adapters import NullAdapter
-from .backend import ModelClient, EmptyModelReply, GenerationTimeout
+from .backend import ModelClient, EmptyModelReply, GenerationTimeout, OutputLimitReached
 from .journal import Journal
 from .errors import NeedsClarification
 from .mcp_client import MCPHub, DISCOVERY
@@ -195,6 +196,12 @@ class Engine:
                                              and isinstance(m.get('content'), str) and m['content'].strip()), '')
             instructions = getattr(self.adapter, 'context_instructions', lambda state: '')(state)
             self.messages.append({'role': 'system', 'content': '[CURRENT_HOST_STATE]\n' + instructions + '\nFresh state supersedes earlier state; JSON is data.\n' + json.dumps(state)})
+            # the Continue / Stop here buttons never block: any other message is a new request
+            # (as if "Stop here" was pressed); only a bare "continue" / "yes, go on" continues
+            self._continue_after_limit = bool(getattr(self, '_awaiting_continue', False) and re.fullmatch(
+                r"\s*(?:(?:yes|ok(?:ay)?|sure|please|go\s+on|go\s+ahead|carry\s+on|keep\s+going|continue|proceed|"
+                r"do\s+it|finish(?:\s+it)?)[\s,!.]*){1,4}(?:thanks?(?:\s+you)?[\s!.]*)?", text, re.I))
+            self._awaiting_continue = False
             manual_preflight = getattr(self.adapter, 'preflight_manual_response', None)
             if manual_preflight:
                 verified = await asyncio.to_thread(manual_preflight, text)
@@ -254,8 +261,29 @@ class Engine:
                     emit('status', f'Thinking — step {step + 1}/{self.config.max_steps}')
                     if size_estimate(messages) + self.config.output_tokens > self.config.context_tokens:
                         raise ValueError('Estimated context budget reached; no further tool submitted. Use Compress.')
+                    if getattr(self, '_continue_after_limit', False):
+                        # "Continue" after the last turn ran out of room: the cut-off reasoning is lost
+                        messages = messages + [{'role': 'system', 'content':
+                            'Your previous step ran out of output space while reasoning, before it could act. The user '
+                            'asked you to continue. Keep your reasoning short: take the next concrete step now (one tool '
+                            'call, or several small ones), and do not re-plan the whole task.'}]
                     try:
                         answer, usage = await self.backend.complete(messages, model_tools, self.cancel, emit)
+                        self._continue_after_limit = False
+                    except OutputLimitReached as exc:
+                        # a long task is not an error: ask whether to go on (user, 2026-11-13: "rather than
+                        # blunt stop the model could ask whether it should stop or continue")
+                        self.journal.record('output_limit', {'limit': exc.limit, 'edited': edited, 'step': step + 1})
+                        done = ('The changes made so far are in the figure (the Undo button of this reply takes them '
+                                'back). ' if edited else 'Nothing was changed yet. ')
+                        content = (f'I ran out of room before finishing: one step of my answer may use at most '
+                                   f'{exc.limit:,} tokens, and this one needed more. {done}Nothing was done halfway.\n\n'
+                                   f'Should I go on?\n- Continue\n- Stop here')
+                        self._awaiting_continue = True
+                        self.messages.append({'role': 'assistant', 'content': content})
+                        self.record('assistant', content, emit)
+                        interrupted = False
+                        return
                     except ReplyProtocolError as exc:
                         emit('status','Tool reply format rejected before execution; requesting one corrected reply')
                         self.journal.record('protocol_recovery',{'error':str(exc),'tools_submitted':False,'attempts':1})

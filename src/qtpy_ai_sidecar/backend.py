@@ -20,6 +20,13 @@ class EmptyModelReply(RuntimeError):
     pass
 
 
+class OutputLimitReached(RuntimeError):
+    """One reply needed more than the output limit; nothing of it was executed."""
+    def __init__(self, message, limit):
+        super().__init__(message)
+        self.limit = limit
+
+
 RATE_LIMIT_RETRIES = 3
 SERVER_RETRIES = 5                       # ~60 s in all for a provider's 5xx outage
 SERVER_ERRORS = (500, 502, 503, 504)
@@ -259,7 +266,8 @@ class ModelClient:
             if finish is None:
                 raise RuntimeError('Incomplete model stream; no partial tool call executed')
             if finish == 'length':
-                raise RuntimeError(f'Model reached its {max_tokens or self.config.output_tokens}-token output limit. No partial tool call executed. Earlier edits may remain.')
+                limit = max_tokens or self.config.output_tokens
+                raise OutputLimitReached(f'Model reached its {limit}-token output limit. No partial tool call executed. Earlier edits may remain.', limit)
             raw_qwen = self.runtime is not None and self.runtime.raw_qwen
             if raw_qwen:
                 if calls:
