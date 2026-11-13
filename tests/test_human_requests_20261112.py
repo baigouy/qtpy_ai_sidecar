@@ -338,9 +338,14 @@ def test_moving_an_inset_by_a_distance_is_answered_at_once(text):
     adapter = PyFiguresAdapter('unused')
     adapter.request = _fake(FIVE, [])
     out = adapter.preflight_manual_response(text)
-    assert out and 'cannot be moved by a distance' in out['content'] and 'panel **b**' in out['content']
-    assert '- Move the ROI it shows instead' in out['content']
+    assert out and 'Do you mean the ROI' in out['content'] and 'panel **b**' in out['content']
+    first = out['content'].split('\n- ')[1]
+    assert 'the ROI of the' in first and 'inset' in first
+    # the first choice, sent back, is a request about the ROI: it goes to the model
+    assert adapter.preflight_manual_response(first.split(' (the inset')[0]) is None
     assert ('top right' in out['content']) == ('right' in text)
+    from qtpy_ai_sidecar.widgets import choices
+    assert len(choices(out['content'])) == 3
 
 
 @pytest.mark.parametrize('text', ['move the inset of b to the bottom left', 'move the inset to the other corner',

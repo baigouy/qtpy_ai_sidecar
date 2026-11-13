@@ -864,14 +864,20 @@ class PyFiguresAdapter:
         name = f'panel **{ref}**' if ref else 'the panel'
         right = re.search(r'\bright\b', request, re.I)
         left = re.search(r'\bleft\b', request, re.I)
-        corner = 'top right' if right else 'top left' if left else 'another corner'
-        content = (f'An inset cannot be moved by a distance: it always sits in a corner of its panel, flush with the '
-                   f'edges. What I can do for the inset of {name}:\n'
-                   f'- Put it in the **{corner}** corner\n'
-                   f'- Move the ROI it shows instead (the inset then shows the new region)\n'
-                   f'- Make it smaller or bigger\n'
-                   f'- Open the panel editor so you see it yourself')
-        return {'content': content, 'evidence': {'operation_executed': False, 'inset_has_no_free_position': True}}
+        corner = 'top right' if right else 'top left' if left else 'other'
+        # the user usually means the ROI the inset shows (user, 2026-11-13): first choice,
+        # worded as a request the model can run when clicked
+        roi_request = re.sub(r'\b(the\s+)?((?:smallest|smaller|largest|larger|biggest|bigger|first|second|left|right|'
+                             r'top|bottom|other|\w+est)\s+)?(insets?)\b',
+                             lambda m: 'the ROI of the ' + (m.group(2) or '') + m.group(3), request, count=1, flags=re.I)
+        roi_request = roi_request[:1].upper() + roi_request[1:]
+        content = (f'Do you mean the ROI that the inset of {name} shows, or the inset itself? An inset cannot be '
+                   f'moved by a distance: it always sits in a corner of its panel.\n'
+                   f'- {roi_request} (the inset then shows the new region)\n'
+                   f'- Put the inset in the {corner} corner\n'
+                   f'- Open the panel editor so I can do it myself')
+        return {'content': content, 'evidence': {'operation_executed': False, 'inset_has_no_free_position': True,
+                                                 'clarification': 'ROI or inset'}}
 
     def preflight_manual_response(self, request):
         """Resolve a pure control-location question from reviewed help before model discovery."""
