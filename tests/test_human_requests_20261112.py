@@ -287,6 +287,30 @@ def test_uncrop_not_verified_gets_the_model_answer():
     assert PyFiguresAdapter('unused').verified_completion('use_pyfigures_tool', UNCROP_CALL, half, FIVE, 'uncrop it') is None
 
 
+CROP_320 = {'tool_name': 'transform_image',
+            'arguments': {'crop_bottom': 320, 'crop_left': 0, 'crop_right': 0, 'crop_top': 0, 'panel_ref': '#5'}}
+
+
+@pytest.mark.parametrize('text', ['crop #5 so that the burnt in scale bar gets hidden', 'crop g to the nuclei',
+                                  'remove the black border of e'])
+def test_a_crop_chosen_from_the_image_needs_the_panel_preview_first(text):
+    """The model looked at the whole figure, then cut 320 px blind (user chat 2026-11-13)."""
+    adapter = PyFiguresAdapter('unused')
+    with pytest.raises(ValueError, match=r'CROP_NEEDS_PANEL_PREVIEW.*preview_panel\(panel_ref="#5"\)'):
+        adapter.validate_tool_call('use_pyfigures_tool', CROP_320, FIVE, text)
+    adapter.validate_tool_call('use_pyfigures_tool', {'tool_name': 'preview_panel', 'arguments': {'panel_ref': '#5'}}, FIVE, text)
+    adapter.validate_tool_call('use_pyfigures_tool', CROP_320, FIVE, text)       # after the look: fine
+    with pytest.raises(ValueError, match='CROP_NEEDS_PANEL_PREVIEW'):           # a new request needs a new look
+        adapter.validate_tool_call('use_pyfigures_tool', CROP_320, FIVE, text + ' please')
+
+
+@pytest.mark.parametrize('text', ['crop 320 px from the bottom of #5', 'uncrop it', 'crop e by 10 on each side',
+                                  'give e the same crop as d'])
+def test_a_crop_with_its_numbers_needs_no_preview(text):
+    call = UNCROP_CALL if text == 'uncrop it' else CROP_320
+    PyFiguresAdapter('unused').validate_tool_call('use_pyfigures_tool', call, FIVE, text)
+
+
 @pytest.mark.parametrize('text', ['open the export dialog', "don't open the editor, move the ROI in b up"])
 def test_other_dialogs_or_no_dialog_go_to_the_model(text):
     adapter = PyFiguresAdapter('unused')

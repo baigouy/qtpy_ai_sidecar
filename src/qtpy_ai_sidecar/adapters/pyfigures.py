@@ -340,6 +340,16 @@ class PyFiguresAdapter:
                                                           'edit_', 'apply_', 'arrange_', 'restyle_', 'reorder_', 'move_', 'crop_', 'rotate_', 'split_', 'merge_')):
             raise ValueError('HOW_TO_NO_EDIT: the user asked HOW to do this, not to do it. Answer with the human GUI steps '
                              '(explain_how / explain_live_interaction), then offer to do it. Nothing was changed or written.')
+        if operation == 'preview_panel':
+            self._panel_previewed_for = text
+        if operation == 'transform_image' and self._crop_needs_a_look(args, text) and getattr(self, '_panel_previewed_for', None) != text:
+            # "crop #5 so that the burnt in scale bar gets hidden": the model looked at the
+            # whole figure, then cut 320 px blind (user chat 2026-11-13)
+            ref = args.get('panel_ref') or '<the panel>'
+            raise ValueError(f'CROP_NEEDS_PANEL_PREVIEW: the crop values must come from the panel\'s own pixels. Call '
+                             f'preview_panel(panel_ref="{ref}") first: it shows that panel\'s whole source image with '
+                             f'pixel rulers and its current crop. Read the region\'s edges off the rulers, then crop once. '
+                             f'Nothing was changed.')
         if operation == 'open_annotation_editor' and args.get('panel_ref'):
             # the model opened it: "I made a mistake" / "open it again" next reopens it
             self._last_editor = (str(args['panel_ref']), args.get('tab') if args.get('tab') in
@@ -601,6 +611,18 @@ class PyFiguresAdapter:
     _UNCROP = (r"\s*(?:please\s+|(?:can|could)\s+you\s+)?(?:un-?crop|remove\s+(?:the\s+)?crop(?:ping)?|"
                r"reset\s+(?:the\s+)?crop(?:ping)?|undo\s+the\s+crop(?:ping)?|no\s+crop)\b"
                r"(?:\s+(?:it|this|that|them|of|from|on|panel|image|picture|the|[a-z]|please|again))*[\s.!?]*")
+
+    @staticmethod
+    def _crop_needs_a_look(args, text):
+        """A crop chosen from what the image shows ("so the scale bar is hidden", "to the
+        nuclei"), not from numbers the user gave or a crop removed."""
+        import re
+        sides = [args.get(s) for s in ('crop_left', 'crop_right', 'crop_top', 'crop_bottom')]
+        if not any(v for v in sides if isinstance(v, (int, float))):
+            return False                    # no crop or every side 0 (uncrop)
+        if re.search(r'\d+(?:\.\d+)?\s*(?:px|pixels?|%|percent)|\b(?:by|of)\s+\d+\b|\bsame\s+(?:crop|as)\b|\bcrop(?:ping)?\s+of\b', text, re.I):
+            return False                    # the user gave the numbers or another panel's crop
+        return bool(re.search(r'\bcrop\w*|\bcut\b|\btrim\w*|\bhide\b|\bhidden\b|\bget\s+rid\b|\bremove\b', text, re.I))
 
     def _uncrop_completion(self, name, arguments, result, text):
         """"uncrop it": the host's readback already says every crop is 0, so the reply is
