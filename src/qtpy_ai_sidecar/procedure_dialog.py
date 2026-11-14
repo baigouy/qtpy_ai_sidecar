@@ -498,6 +498,8 @@ class ChatReplay:
         self._busy(True, f'Replay · running turn {self.index + 1} of {len(self.turns)}…')
         try:
             self._play(turn)
+            if self.live() and turn.setup:
+                self._fresh_conversation()
         finally:
             self._busy(False)
             self.update_label()
@@ -509,6 +511,19 @@ class ChatReplay:
             if self.rows:
                 self.write_report()
         return True
+
+    def _fresh_conversation(self):
+        """A setup turn starts an old chat, which began with no earlier dialogue: the
+        model's conversation restarts (its system instructions kept). Otherwise a long
+        live replay fills the context and every later request stops at "context is
+        full"."""
+        engine = self.dock.engine
+        engine.messages = engine.messages[:1]
+        engine.journal.record('replay_fresh_conversation', 'Setup turn: earlier dialogue cleared for the next old chat')
+        try:
+            engine.context(self.dock.emit)
+        except Exception:
+            pass
 
     def _play(self, turn):
         self.index += 1

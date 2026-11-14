@@ -249,6 +249,7 @@ def test_setup_turns_rebuild_the_document_without_the_model(tmp_path):
 
     async def model_turn(text, emit, preview=False):
         asked.append(text)
+        dock.engine.messages.append({'role': 'user', 'content': text})
         dock.engine.journal.record('user', text)
         emit('assistant', 'Done now: ' + text)
     dock.engine.turn = model_turn
@@ -266,6 +267,10 @@ def test_setup_turns_rebuild_the_document_without_the_model(tmp_path):
         ran = [c[1].get('tool_name') for c in hub.calls]
         assert ran == ['create_figure', 'add_image', 'create_figure']   # the setup calls only
         assert len(replay.rows) == 2 and replay.report_path
+        # each old chat starts with no earlier dialogue (a long live replay otherwise
+        # fills the context: "context is full" for every later request)
+        said = [m['content'] for m in dock.engine.messages if m['role'] == 'user']
+        assert said == ['black backgrounds'] and dock.engine.messages[0]['role'] == 'system'
     finally:
         replay.close()
     app.processEvents()
