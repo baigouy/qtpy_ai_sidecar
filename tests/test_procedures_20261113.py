@@ -220,6 +220,16 @@ def test_live_replay_asks_the_model_again_and_compares(tmp_path):
     app.processEvents()
 
 
+def test_inner_arguments_sent_as_json_text_are_understood():
+    """Qwen3.5-9B sent use_pyfigures_tool's inner arguments as a JSON string: the live
+    replay's comparison raised AttributeError and "Play all" stalled at request 152."""
+    a = PyFiguresAdapter('unused')
+    assert a.procedure_role('use_pyfigures_tool', {'tool_name': 'set_scale_bar', 'arguments': '{"panel_ref": "b"}'}) == 'edit'
+    assert a.procedure_role('use_pyfigures_tool', {'tool_name': 'set_scale_bar', 'arguments': '{"dry_run": true}'}) == 'read'
+    assert a.procedure_role('use_pyfigures_tool', {'tool_name': 'get_figure', 'arguments': 'not json'}) == 'read'
+    assert a.procedure_role('use_pyfigures_tool', {'tool_name': 'undo_redo', 'arguments': ['odd']}) == 'undo'
+
+
 def test_setup_turns_rebuild_the_document_without_the_model(tmp_path):
     """A chat of every request ever made starts each old chat from the figure it had
     (user, 2026-11-13: 'build the fig and then run all steps without failures'). A setup

@@ -91,6 +91,14 @@ class PyFiguresAdapter:
         """edit / read / undo / redo / skip for a call of a replayed chat."""
         op, args = (arguments.get('tool_name', ''), arguments.get('arguments') or {}) \
             if tool_name == 'use_pyfigures_tool' else (tool_name, arguments or {})
+        if isinstance(args, str):     # a model sent the inner arguments as JSON text (Qwen3.5-9B, 2026-11-14)
+            try:
+                args = json.loads(args)
+            except ValueError:
+                args = {}
+        if not isinstance(args, dict):
+            args = {}
+        op = str(op or '')
         if op == 'undo_redo':
             return 'redo' if str(args.get('action', 'undo')) == 'redo' else 'undo'
         if op in self._PROCEDURE_SKIP:

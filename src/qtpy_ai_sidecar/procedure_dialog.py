@@ -429,9 +429,12 @@ class ChatReplay:
         journal = Path(self.dock.engine.journal.path)
         events = P.read_events(journal)[marker:] if journal.exists() else []
         adapter = self.dock.engine.adapter
-        now_steps = P.load_steps(journal, adapter, events)
         now_answers = [str(e.get('value')) for e in events if e.get('kind') == 'assistant' and e.get('value')]
-        cmp = P.compare(adapter, turn.calls(), now_steps)
+        try:
+            cmp = P.compare(adapter, turn.calls(), P.load_steps(journal, adapter, events))
+        except Exception as exc:          # one odd call must not stall a "Play all" for good
+            cmp = {'verdict': f'not compared ({type(exc).__name__}: {str(exc)[:120]})', 'then': [], 'now': [],
+                   'calls_then': len(turn.calls()), 'calls_now': 0, 'failed_now': 0}
         then_answer = (turn.answers() or [''])[-1]
         quote = lambda text: '\n'.join('> ' + line for line in (text[:700] or '(none)').splitlines())
         lines = [f'**Compared with the recorded chat: {cmp["verdict"]}**',
