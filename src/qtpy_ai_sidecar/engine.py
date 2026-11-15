@@ -63,6 +63,18 @@ class Engine:
     OLD_RESULT_CHARS = 1500
     KEEP_RECENT_DISCOVERY = 2
 
+    def _learn_token_ratio(self, sent, usage):
+        """The server's own count of the prompt just sent, against our estimate: the
+        estimate (3 characters a token) can be low, and llama.cpp then cut replies at
+        its context end although the estimate said they fitted (Qwen3.8-27B, 2026-11-15)."""
+        real = (usage or {}).get('prompt_tokens') if isinstance(usage, dict) else None
+        if isinstance(real, int) and real > 0:
+            self._token_ratio = max(1.0, real / size_estimate(sent))
+
+    def _tokens(self, messages):
+        """size_estimate, corrected by what the server reported (never below it)."""
+        return int(size_estimate(messages) * getattr(self, '_token_ratio', 1.0))
+
     # Optionally compact only once the context is filling (config compact_from); the default 0
     # compacts always, which tested best overall.
     def _tight(self, extra=()):
@@ -192,7 +204,7 @@ class Engine:
             self.adapter.vision = self._sees_images      # adapters word their guidance by it
         except AttributeError:
             pass
-        if size_estimate(self._outgoing()) + self.config.output_tokens > self.config.context_tokens:
+        if self._tokens(self._outgoing()) + self.config.output_tokens > self.config.context_tokens:
             raise ValueError('Estimated context is full. Use Compress before sending more; no edit submitted.')
         self.messages.append({'role': 'user', 'content': text})
         begun = False
@@ -273,7 +285,7 @@ class Engine:
                     tight = self._tight(guidance)
                     self.context(emit, messages)
                     emit('status', f'Thinking — step {step + 1}/{self.config.max_steps}')
-                    if size_estimate(messages) + self.config.output_tokens > self.config.context_tokens:
+                    if self._tokens(messages) + self.config.output_tokens > self.config.context_tokens:
                         raise ValueError('Estimated context budget reached; no further tool submitted. Use Compress.')
                     if getattr(self, '_continue_after_limit', False):
                         # "Continue" after the last turn ran out of room: the cut-off reasoning is lost
@@ -287,6 +299,7 @@ class Engine:
                     try:
                         answer, usage = await self.backend.complete(messages, model_tools, self.cancel, emit)
                         self._continue_after_limit = False
+                        self._learn_token_ratio(messages, usage)
                     except OutputLimitReached as exc:
                         # a long task is not an error: ask whether to go on (user, 2026-11-13: "rather than
                         # blunt stop the model could ask whether it should stop or continue")

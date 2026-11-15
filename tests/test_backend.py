@@ -57,6 +57,34 @@ def test_truncated_tool_call_never_returned(endpoint):
         asyncio.run(ModelClient(Config(base_url=url, provider='compatible')).complete([], [], threading.Event(), lambda *args: None))
 
 
+def test_a_full_server_context_is_not_called_the_output_limit(endpoint):
+    """llama.cpp stopped after 55 tokens ('length'): its context was full. The chat said
+    'one step may use at most 8,192 tokens' and offered Continue (2026-11-15)."""
+    from qtpy_ai_sidecar.backend import ContextFull, OutputLimitReached
+    url, _, chunks = endpoint
+    chunks.extend([{'choices': [{'delta': {'content': 'I will now'}, 'finish_reason': 'length'}]},
+                   {'choices': [], 'usage': {'prompt_tokens': 65480, 'completion_tokens': 55}}])
+    config = Config(base_url=url, provider='compatible', context_tokens=65536, output_tokens=8192)
+    with pytest.raises(ContextFull, match='Use Compress'):
+        asyncio.run(ModelClient(config).complete([], [], threading.Event(), lambda *args: None))
+    chunks[1]['usage']['completion_tokens'] = 8192          # a reply that really is that long
+    with pytest.raises(OutputLimitReached):
+        asyncio.run(ModelClient(config).complete([], [], threading.Event(), lambda *args: None))
+
+
+def test_the_context_check_learns_the_servers_token_count(tmp_path):
+    from qtpy_ai_sidecar.engine import Engine, size_estimate
+    engine = Engine(Config(state_dir=str(tmp_path)), backend=object())
+    sent = [{'role': 'user', 'content': 'x' * 3000}]
+    assert engine._tokens(sent) == size_estimate(sent)
+    engine._learn_token_ratio(sent, {'prompt_tokens': 2 * size_estimate(sent)})
+    assert engine._tokens(sent) == 2 * size_estimate(sent)
+    engine._learn_token_ratio(sent, {'prompt_tokens': 1})        # never below the estimate
+    assert engine._tokens(sent) == size_estimate(sent)
+    engine._learn_token_ratio(sent, {})
+    assert engine._tokens(sent) == size_estimate(sent)
+
+
 def test_raw_markup_not_executed(endpoint):
     url, _, chunks = endpoint
     chunks.append({'choices': [{'delta': {'content': '<tool_call>edit'}, 'finish_reason': 'stop'}]})

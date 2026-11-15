@@ -20,6 +20,10 @@ class EmptyModelReply(RuntimeError):
     pass
 
 
+class ContextFull(ValueError):
+    """The server stopped a reply because prompt + reply filled its context window."""
+
+
 class OutputLimitReached(RuntimeError):
     """One reply needed more than the output limit; nothing of it was executed."""
     def __init__(self, message, limit):
@@ -267,6 +271,14 @@ class ModelClient:
                 raise RuntimeError('Incomplete model stream; no partial tool call executed')
             if finish == 'length':
                 limit = max_tokens or self.config.output_tokens
+                written = (usage or {}).get('completion_tokens')
+                if isinstance(written, int) and written < 0.9 * limit:
+                    # stopped after 55 tokens of 8,192: the server's context was full, not the
+                    # output limit (Qwen3.8-27B, llama.cpp -c 65536, 2026-11-15; the chat said
+                    # "one step may use at most 8,192 tokens" and "Continue" did nothing)
+                    prompt = (usage or {}).get('prompt_tokens')
+                    raise ContextFull(f'The conversation filled the model\'s context ({prompt} + {written} tokens'
+                                      f' of {self.config.context_tokens}). No partial tool call executed. Use Compress.')
                 raise OutputLimitReached(f'Model reached its {limit}-token output limit. No partial tool call executed. Earlier edits may remain.', limit)
             raw_qwen = self.runtime is not None and self.runtime.raw_qwen
             if raw_qwen:
