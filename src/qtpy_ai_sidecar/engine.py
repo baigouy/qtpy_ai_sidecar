@@ -149,7 +149,8 @@ class Engine:
         try:
             try:
                 summary,_=await self.backend.complete(prompt,[],self.cancel,emit,final_only=True)
-            except TextOnlyToolCall as exc:
+            except (TextOnlyToolCall, RawToolMarkup) as exc:
+                # a tool call written as text (<tool_call>) is the same thing (Qwen3.8-27B, 2026-11-16)
                 # with tools disabled, Mistral Large 4 still answered the stop
                 # message with a tool call: the turn ended on an error instead
                 # of an explanation (2026-11-06). Ask once more, plainly.
@@ -158,7 +159,7 @@ class Engine:
                                'Answer in plain text only, now.'}]
                 summary,_=await self.backend.complete(again,[],self.cancel,emit,final_only=True)
             return summary
-        except TextOnlyToolCall as exc:
+        except (TextOnlyToolCall, RawToolMarkup) as exc:
             self.record('text_only_tool_call',{'error':str(exc),'tools_submitted':False},emit)
             if fallback:
                 return {'role':'assistant','content':fallback}
