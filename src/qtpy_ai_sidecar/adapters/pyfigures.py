@@ -551,6 +551,14 @@ class PyFiguresAdapter:
             # After "blorple" was refused the model chose PURPLE itself: a colour table
             # must be one the user named.
             spoken=text.lower().replace('grey','gray')
+            # "use the default matplotlib lut" (2026-11-16): a library's default colour table
+            # is named by naming the library; it is not "default colours" (the file's own):
+            # MATPLOTLIB_viridis was refused three times and the turn ended
+            library_default=None
+            for library,lut in ((r'matplot ?lib|mpl|pyplot|python',' viridis'),(r'fiji|image ?j',' gray')):
+                if re.search(rf'\bdefault\b[^.?!]{{0,15}}\b(?:{library})\b|\b(?:{library})(?:\'s)?\b[^.?!]{{0,15}}\bdefault\b',spoken):
+                    library_default=lut
+                    spoken+=lut
             inverted_words=re.search(r'\b(?:invert\w*|inverse|revers\w*|negative)\b',spoken)
             def stem(name):
                 # "reversed viridis" names MATPLOTLIB_viridis_r, "inverted gray" GRAY_INVERTED
@@ -579,11 +587,30 @@ class PyFiguresAdapter:
                 or re.search(r'\b(?:luts?|colou?r ?tables?)\b[^.?!]{0,30}?\b(?:off|removed|gone|reset)\b',spoken) \
                 or re.search(r'\b(?:default|restor\w*|original|natural|normal|own|real|true)\b[^.?!]{0,30}?\b(?:luts?|colou?rs?|channels?)\b'
                              r'|\b(?:luts?|colou?rs?)\b[^.?!]{0,30}?\b(?:unnatural|weird|strange|odd|wrong|off|fake|garish|ugly)\b',spoken)
+            if library_default and not re.search(r'\b(?:remov\w*|reset\w*|clear\w*|delete\w*|get rid of|without|original|natural|normal|own)\b',spoken):
+                removing=None             # "default" named the library's map, not the file's colours
             # "the colors look unnatural can this be fixed" (2026-11-12): going back to the image
             # file's own colours (NONE) is the expected fix, and what the refusal offers
             offered_default=re.search(r"image's own colours",str(state.get('_last_reply') or ''))
+            # "default LUTs" on a 2-3 channel image also means red, green, blue for many people
+            # (user, 2026-11-16): the plain RGB order is accepted, as is the file's own (NONE)
+            plain_rgb=bool(removing) and 2<=len(args['luts'])<=3 and [stem(l) if isinstance(l,str) else None
+                                                                    for l in args['luts']]==['red','green','blue'][:len(args['luts'])]
+            # ... and when the file's own colours are not those, "default" alone could be either: ask
+            own_colours=[stem(c) if isinstance(c,str) else None for c in shown]
+            if (removing and 2<=len(args['luts'])<=3 and len(own_colours)==len(args['luts'])
+                    and own_colours!=['red','green','blue'][:len(own_colours)]
+                    and re.search(r'\bdefault\b',spoken)
+                    and not re.search(r'\b(?:original|own|file|acquisition|natural|normal|remov\w*|reset\w*|clear\w*|'
+                                      r'delete\w*|get rid of|without|red|green|blue|rgb)\b',spoken)
+                    and all(isinstance(l,str) and stem(l) in ('none','default','red','green','blue') for l in args['luts'])):
+                from ..errors import NeedsClarification
+                # bold options: the chat makes them clickable, and either answer passes this guard
+                raise NeedsClarification('No LUT was changed. By "default" LUTs, do you mean **the image\'s own colours ('
+                                         + ', '.join(str(c).upper() for c in shown) + ')** or **red, green, blue**?')
             unnamed=[l for i,l in enumerate(args['luts']) if isinstance(l,str) and stem(l) and stem(l) not in spoken
                      and not (removing and stem(l) in ('default','none'))
+                     and not plain_rgb
                      and not (swapping and stem(l) in shown_names)
                      and not (i<len(current) and isinstance(current[i],str) and stem(current[i])==stem(l))]
             # "try GRAY" (2026-11-05): after a one-LUT warning the model put GRAY on every

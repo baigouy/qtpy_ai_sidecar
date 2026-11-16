@@ -144,6 +144,18 @@ class Engine:
                 return {**answer,'content':verified['content']}
         return answer
 
+    def _offer_continue(self, summary, kind):
+        """A turn stopped before finishing ends with the Continue / Stop here
+        choices (clickable in the chat), as the output and step limits do: the
+        stopped replies only said 'Say "continue"' in the text (user,
+        2026-11-16: "sad that continue is no longer clickable")."""
+        content = (summary.get('content') or '').rstrip()
+        content = re.sub(r'\s*Say "continue" and I will go on[^.]*(?:, or ask again in other words)?\.', '', content)
+        if not re.search(r'^- Continue\s*$', content, re.M):
+            content += '\n\nShould I go on?\n- Continue\n- Stop here'
+        self._awaiting_continue = kind
+        return {**summary, 'content': content}
+
     async def _stopped_text_summary(self,prompt,emit,fallback=None):
         from .backend import TextOnlyToolCall
         try:
@@ -295,6 +307,9 @@ class Engine:
                         # "Continue" after the last turn ran out of room: the cut-off reasoning is lost
                         why = ('Your previous step ran out of output space while reasoning, before it could act.'
                                if self._limit_kind == 'output' else
+                               'Your previous turn was stopped (repeated searches or refusals) before finishing; '
+                               'use what it found, and if an operation was refused, follow what its error says.'
+                               if self._limit_kind == 'stopped' else
                                'Your previous turn used all its tool steps before finishing.')
                         messages = messages + [{'role': 'system', 'content':
                             why + ' The user asked you to continue the same request. Check the current state if needed, '
@@ -539,10 +554,13 @@ class Engine:
                         emit('status','The same call was refused three times; answering without further tools')
                         self.journal.record('rejected_call_loop_stopped',{'identical_refusals':3,'tools_enabled':False})
                         prompt=self._outgoing()+[{'role':'system','content':'The same tool call was refused three times with the same error. Tools are now disabled. Explain briefly what could not be done and why, from the error text, or ask the user what to change. Do not claim the refused operation ran.'}]
-                        summary=await self._stopped_text_summary(prompt,emit)
+                        summary=await self._stopped_text_summary(prompt,emit,fallback='I stopped: the application refused '
+                            'the same operation three times, so nothing more was changed. Edits already completed remain.')
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Repeated refused call stopped; no valid text summary returned')
                         summary=await self._finalize_reply(text,summary,state,preview,emit)
+                        summary=self._offer_continue(summary,'stopped')
                         self.messages.append(summary);self.record('assistant',summary['content'],emit)
+                        interrupted=False
                         return
                     if edited and check_streak >= CHECK_STOP:
                         # told to answer and still re-reading (Mistral Large 4 read 3 more values and
@@ -568,7 +586,9 @@ class Engine:
                         summary=await self._stopped_text_summary(prompt,emit)
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Search loop stopped; no valid text summary returned')
                         summary=await self._finalize_reply(text,summary,state,preview,emit)
+                        summary=self._offer_continue(summary,'stopped')
                         self.messages.append(summary);self.record('assistant',summary['content'],emit)
+                        interrupted=False
                         return
                     if discovery_stalled:
                         emit('status','Read-only request repeated; answering from earlier results without further tools')
