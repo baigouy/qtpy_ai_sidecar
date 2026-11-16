@@ -159,6 +159,20 @@ def test_an_answer_to_the_models_question_keeps_the_original_request(tmp_path):
     assert engine._guard_text('make panel e purple')=='make panel e purple'
 
 
+def test_an_extra_panel_over_the_asked_count_can_be_removed():
+    """'10 random images': Mistral added 11 and could not remove its own extra one (2026-11-16)."""
+    adapter=PyFiguresAdapter('unused')
+    eleven={'panel_references':[{'panel_id':str(i),'letters':[chr(97+i)]} for i in range(11)]}
+    ten={'panel_references':eleven['panel_references'][:10]}
+    request='build an image from 10 randomly selected images from: C:\\data'
+    adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='remove_image',arguments={'panel_ref':'k'}),eleven,request)
+    adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='remove_image',arguments={'panel_ref':'k'}),eleven,'a figure of ten pictures')
+    with pytest.raises(ValueError,match='REMOVAL_NOT_REQUESTED'):        # already at the count: no removal
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='remove_image',arguments={'panel_ref':'j'}),ten,request)
+    with pytest.raises(ValueError,match='REMOVAL_NOT_REQUESTED'):        # no count in the request
+        adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='remove_image',arguments={'panel_ref':'k'}),eleven,'make it nicer')
+
+
 @pytest.mark.parametrize('call',[('remove_group',{'group_path':[5]}),('delete_last_rows',{'count':1})])
 def test_one_picture_never_removes_a_row(call):
     adapter=PyFiguresAdapter('unused')

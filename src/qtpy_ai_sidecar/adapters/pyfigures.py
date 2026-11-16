@@ -310,6 +310,23 @@ class PyFiguresAdapter:
     _SELF_EDIT_OK = frozenset({'open_annotation_editor', 'open_annotation_properties', 'show_me_where', 'select_live_objects',
                                'explain_how', 'explain_live_interaction', 'undo_redo'})
 
+    _NUMBER_WORDS = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8,
+                     'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12, 'fifteen': 15, 'twenty': 20}
+
+    @classmethod
+    def _over_asked_count(cls, text, state):
+        """"build a figure from 10 random images": the model added 11, the guard refused
+        to remove its own extra panel and it ended asking the user (2026-11-16). A
+        removal that brings the figure toward the number asked for is allowed."""
+        import re
+        m = re.search(r'\b(\d{1,3}|' + '|'.join(cls._NUMBER_WORDS) + r')\b(?:\s+\w+){0,3}?\s+'
+                      r'(?:images?|panels?|pictures?|photos?|files?|micrographs?)\b', text, re.I)
+        if not m:
+            return False
+        asked = int(m[1]) if m[1].isdigit() else cls._NUMBER_WORDS[m[1].lower()]
+        panels = (state or {}).get('panel_references') or []
+        return len(panels) > asked
+
     @staticmethod
     def _wants_to_edit_himself(text):
         """"I want to edit / move / adjust X" with no value to set ("to red", "by 10 px",
@@ -428,7 +445,8 @@ class PyFiguresAdapter:
                              'them: open_annotation_editor(panel_ref=<the panel>) (or show_me_where), then let them work. '
                              'Nothing was changed.')
         if operation in ('delete_last_rows', 'remove_group', 'remove_image', 'ungroup_all_images', 'remove_label_row') and not re.search(
-                r'\b(?:delet\w*|remov\w*|drop|eras\w*|discard|get\s+rid|take\s+out|clear|cut|trim|lose|eliminat\w*|fewer|ungroup\w*|undo|keep\s+only|only\s+keep|just\s+keep)\b', text, re.I):
+                r'\b(?:delet\w*|remov\w*|drop|eras\w*|discard|get\s+rid|take\s+out|clear|cut|trim|lose|eliminat\w*|fewer|ungroup\w*|undo|keep\s+only|only\s+keep|just\s+keep)\b', text, re.I) \
+                and not (operation == 'remove_image' and self._over_asked_count(text, state)):
             # 'Put 0 pictures per row.' -> columns=0 refused, then delete_last_rows was accepted (24 -> 16 images)
             raise ValueError('REMOVAL_NOT_REQUESTED: the request does not ask to delete or remove anything. Never remove panels or rows as a '
                              'workaround for a refused or impossible edit; explain the problem and ask. Nothing was removed.')
