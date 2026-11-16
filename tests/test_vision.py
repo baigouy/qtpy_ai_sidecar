@@ -117,6 +117,38 @@ def test_auto_asks_the_local_server(monkeypatch):
     assert vision.detect(remote) is False                # auto never assumes a remote model sees
 
 
+def test_the_owned_llama_server_sees_with_the_projector_next_to_the_model(tmp_path, monkeypatch):
+    """It was always text-only: llama-server was started without --mmproj."""
+    import subprocess
+    from qtpy_ai_sidecar.runtime import OwnedLlama, vision_projector
+    folder = tmp_path / 'Qwen3.8-27B-GGUF'
+    folder.mkdir()
+    model = folder / 'Qwen3.8-27B-Q4_K_M.gguf'
+    model.write_bytes(b'x')
+    exe = tmp_path / 'llama-server.exe'
+    exe.write_bytes(b'x')
+    settings = {'executable': str(exe), 'model': str(model)}
+    cfg = Config(state_dir=str(tmp_path), provider='local', vision='auto', runtime=settings)
+    assert vision_projector(settings) is None and vision.detect(cfg) is False    # no projector: text only
+    projector = folder / 'mmproj-Qwen3.8-27B-BF16.gguf'
+    projector.write_bytes(b'x')
+    assert vision_projector(settings) == projector and vision.detect(cfg) is True
+    assert vision_projector(dict(settings, mmproj='off')) is None              # the user can turn it off
+    seen = []
+
+    class Stop(Exception):
+        pass
+
+    def popen(command, **kw):
+        seen.append(command)
+        raise Stop
+    monkeypatch.setattr(subprocess, 'Popen', popen)
+    import threading
+    with pytest.raises(Stop):
+        asyncio.run(OwnedLlama(cfg).ensure(threading.Event(), lambda *a: None))
+    assert seen[0][seen[0].index('--mmproj') + 1] == str(projector)
+
+
 def test_bad_setting_is_refused():
     with pytest.raises(ValueError):
         Config(state_dir='', vision='maybe')

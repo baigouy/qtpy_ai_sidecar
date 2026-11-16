@@ -4,7 +4,7 @@ import json
 import re
 import threading
 from .adapters import NullAdapter
-from .backend import ModelClient, EmptyModelReply, GenerationTimeout, OutputLimitReached
+from .backend import ModelClient, EmptyModelReply, GenerationTimeout, OutputLimitReached, RawToolMarkup
 from .journal import Journal
 from .errors import NeedsClarification
 from .mcp_client import MCPHub, DISCOVERY
@@ -332,6 +332,14 @@ class Engine:
                             answer,usage=await self.backend.complete(summary,[],self.cancel,emit,final_only=True)
                             if answer.get('tool_calls') or not answer.get('content'):
                                 raise RuntimeError('Tool format recovery failed; no rejected tool call executed')
+                    except RawToolMarkup as exc:
+                        # a tool call written as text: never run; one plain-text answer instead of an empty reply
+                        emit('status', 'The model wrote a tool call as text; asking it for a plain answer. Nothing was executed.')
+                        self.journal.record('raw_markup_recovery', {'tools_enabled': False, 'error': str(exc)})
+                        plain = messages + [{'role': 'system', 'content': 'Your previous reply wrote a tool call as text; it was NOT executed. Tools are not available for this reply. Answer the user in plain text, without any tool-call markup: say what was verified done, what you could not do and why, and what the user can do (or ask one short question). Do not claim anything that was not verified.'}]
+                        answer, usage = await self.backend.complete(plain, [], self.cancel, emit, final_only=True)
+                        if answer.get('tool_calls') or not answer.get('content'):
+                            raise RuntimeError('Plain-text recovery failed; no tool call executed')
                     except (EmptyModelReply, GenerationTimeout) as exc:
                         emit('status', 'Model reply missing or timed out; recovering a text-only summary. No tools or edits will be replayed.')
                         self.journal.record('reply_recovery', {'method': 'one text-only generation', 'tools_enabled': False, 'cause': type(exc).__name__, 'error': str(exc)})

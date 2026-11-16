@@ -42,13 +42,14 @@ def _lm_studio_reports_vision(base_url, model, timeout=1.5):
 
 def detect(config):
     """Whether images go to the model: config.vision 'on' / 'off', or 'auto'
-    (a local server that reports a vision model; the owned llama-server
-    runtime is started without a multimodal projector, so not that one)."""
+    (a local server that reports a vision model; the owned llama-server when
+    it loads the model's multimodal projector, mmproj*.gguf)."""
     mode = getattr(config, 'vision', 'auto')
     if mode != 'auto':
         return mode == 'on'
     if getattr(config, 'runtime', None):
-        return False
+        from .runtime import vision_projector
+        return vision_projector(config.runtime) is not None
     if urlsplit(config.base_url).hostname in ('127.0.0.1', 'localhost', '::1'):
         return bool(_lm_studio_reports_vision(config.base_url, config.model))
     if getattr(config, 'provider', '') in KNOWN_VISION_MODELS:

@@ -20,6 +20,12 @@ class EmptyModelReply(RuntimeError):
     pass
 
 
+class RawToolMarkup(RuntimeError):
+    """The reply wrote a tool call as text (<tool_call>...): with the tools turned
+    off after a loop, a 27B kept doing that and the chat showed an empty answer
+    (9 of 11 empty replies, live replay 2026-11-15). Nothing of it is executed."""
+
+
 class ContextFull(ValueError):
     """The server stopped a reply because prompt + reply filled its context window."""
 
@@ -294,7 +300,7 @@ class ModelClient:
             if not text and not calls:
                 raise EmptyModelReply('Model returned no final reply or tool calls; earlier edits may remain')
             if '<tool_call>' in text and not calls:
-                raise RuntimeError('Model emitted raw tool markup instead of structured tool calls. Check the server chat template; no markup executed.')
+                raise RawToolMarkup('Model emitted raw tool markup instead of structured tool calls. Check the server chat template; no markup executed.')
             if final_only and calls:
                 raise TextOnlyToolCall('Text-only recovery returned a tool call; nothing executed')
             message = {'role': 'assistant', 'content': text}

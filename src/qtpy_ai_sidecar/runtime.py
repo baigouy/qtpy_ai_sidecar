@@ -19,6 +19,28 @@ def reasoning_control(template):
     return None
 
 
+def vision_projector(settings):
+    """The multimodal projector the owned llama-server loads so the model sees
+    images: settings['mmproj'] when it names a file, none when it is '' / False /
+    'off', else ('auto', the default) an mmproj*.gguf next to the model, as LM
+    Studio and Hugging Face ship them. Without it every local model was text-only
+    and asked the user for coordinates it could have read from the preview."""
+    choice = settings.get('mmproj', 'auto')
+    if choice in ('', False, None, 'off', 'none'):
+        return None
+    if choice != 'auto':
+        path = Path(choice)
+        return path if path.is_file() else None
+    model = Path(settings.get('model') or '')
+    if not model.name:
+        return None
+    try:
+        found = sorted(model.parent.glob('mmproj*.gguf'))
+    except OSError:
+        return None
+    return found[0] if found else None
+
+
 class OwnedLlama:
     def __init__(self, config):
         self.config = config
@@ -61,6 +83,11 @@ class OwnedLlama:
                    '-np', '1', '-ngl', str(0 if settings.get('force_cpu') else settings.get('gpu_layers', 99))]
         if settings.get('force_cpu'):
             command += ['--device', 'none', '--no-op-offload', '--no-kv-offload']
+        projector = vision_projector(settings)
+        if projector is not None:            # the model can see the previews tools return
+            command += ['--mmproj', str(projector)]
+            if settings.get('force_cpu'):
+                command += ['--no-mmproj-offload']
         template = settings.get('chat_template')
         if self.raw_qwen:
             command += ['--skip-chat-parsing', '--reasoning-format', 'none']
