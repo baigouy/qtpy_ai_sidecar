@@ -159,14 +159,17 @@ class Engine:
                                'Answer in plain text only, now.'}]
                 summary,_=await self.backend.complete(again,[],self.cancel,emit,final_only=True)
             return summary
-        except (TextOnlyToolCall, RawToolMarkup) as exc:
-            self.record('text_only_tool_call',{'error':str(exc),'tools_submitted':False},emit)
+        except (TextOnlyToolCall, RawToolMarkup, GenerationTimeout, EmptyModelReply) as exc:
+            # the closing reply itself timed out (Mistral Large 4, 30 s cap, 2026-11-16): the turn
+            # ended on a bare error, no explanation and no offer to go on
+            self.record('text_only_tool_call' if isinstance(exc,(TextOnlyToolCall, RawToolMarkup))
+                        else 'stopped_summary_failed',{'error':str(exc),'tools_submitted':False},emit)
             if fallback:
                 return {'role':'assistant','content':fallback}
             return {'role':'assistant','content':
-                    "I stopped before finishing: I kept looking for another tool instead of answering. "
-                    "No further tool was run. Edits already completed remain; check the figure, and "
-                    "ask again in other words if it is not what you wanted."}
+                    "I stopped before finishing: I kept looking for another tool instead of acting. "
+                    "No further tool was run; edits already completed remain. Say \"continue\" and I will "
+                    "go on with the tools already found, or ask again in other words."}
         except ReplyProtocolError as exc:
             self.record('text_only_protocol_refusal',{'error':str(exc),'tools_submitted':False},emit)
             return {'role':'assistant','content':
@@ -561,7 +564,7 @@ class Engine:
                     if discovery_streak>=MAX_SEARCH_STREAK and not discovery_stalled:
                         emit('status','Many searches without progress; explaining instead of searching further')
                         self.journal.record('search_loop_stopped',{'searches':discovery_streak,'tools_enabled':False})
-                        prompt=self._outgoing()+[{'role':'system','content':f'You searched for tools {discovery_streak} times without a successful edit. Tools are now disabled. Tell the user plainly what you were trying to do, which operation refused or failed and why (quote the error), and what they can do or how they could rephrase. Do not claim anything was changed unless a tool result verified it.'}]
+                        prompt=self._outgoing()+[{'role':'system','content':f'You searched for tools {discovery_streak} times without a successful edit. Tools are now disabled. Tell the user plainly what you were trying to do, which operation refused or failed and why (quote the error), and what they can do or how they could rephrase. If a search found the operation that does it, name it and offer to run it when the user says "continue". Do not claim anything was changed unless a tool result verified it.'}]
                         summary=await self._stopped_text_summary(prompt,emit)
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Search loop stopped; no valid text summary returned')
                         summary=await self._finalize_reply(text,summary,state,preview,emit)

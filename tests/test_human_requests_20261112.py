@@ -444,3 +444,19 @@ def test_each_item_of_a_batch_passes_the_guards():
     with pytest.raises(ValueError, match='REMOVAL_NOT_REQUESTED'):
         adapter.validate_tool_call('use_pyfigures_tool', removal, FIVE, 'make the ROIs of e thicker')
     adapter.validate_tool_call('use_pyfigures_tool', removal, FIVE, 'remove all the boxes in e and d')
+
+
+def test_ten_random_images_from_a_folder():
+    """'build an image from 10 randomly selected images from: <folder>' (user, Mistral Large 4,
+    2026-11-16) - "it really sounded like a simple one": the model added 11 (one, then a
+    batch of 10), was refused the removal of its own extra panel, undid its layout twice
+    and ended asking the user. The extra panel over the asked count can now be removed."""
+    adapter = PyFiguresAdapter('unused')
+    text = 'build an image from 10 randomly selected images from:\nC:\\Users\\me\\Desktop\\test_images\\sample_images_FIJI'
+    eleven = {'panel_references': [{'panel_id': str(i), 'letters': [chr(97 + i)]} for i in range(11)]}
+    adapter.validate_tool_call('use_pyfigures_tool', {'tool_name': 'remove_image', 'arguments': {'panel_ref': 'k'}},
+                               eleven, text)
+    ten = {'panel_references': eleven['panel_references'][:10]}
+    with pytest.raises(ValueError, match='REMOVAL_NOT_REQUESTED'):
+        adapter.validate_tool_call('use_pyfigures_tool', {'tool_name': 'remove_image', 'arguments': {'panel_ref': 'j'}},
+                                   ten, text)

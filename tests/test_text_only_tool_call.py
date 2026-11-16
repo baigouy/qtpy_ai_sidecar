@@ -47,3 +47,14 @@ def test_a_tool_call_written_as_text_is_handled_alike(tmp_path):
     engine, model = _engine(tmp_path, [None, None], RawToolMarkup)
     out = asyncio.run(engine._stopped_text_summary([{'role': 'user', 'content': 'x'}], lambda *e: None))
     assert 'No further tool was run' in out['content']
+
+
+def test_a_timed_out_closing_reply_still_explains_and_offers_to_go_on(tmp_path):
+    """Mistral Large 4 searched eight times; the plain-text closing reply then
+    passed its 30 s cap and the turn ended on a bare timeout error, with no
+    explanation and no offer to continue (PyFigures chat, 2026-11-16)."""
+    from qtpy_ai_sidecar.backend import GenerationTimeout
+    engine, model = _engine(tmp_path, [None], GenerationTimeout)
+    out = asyncio.run(engine._stopped_text_summary([{'role': 'user', 'content': 'x'}], lambda *e: None))
+    assert 'continue' in out['content'] and 'No further tool was run' in out['content']
+    assert len(model.calls) == 1                 # a timeout is not asked again
