@@ -71,3 +71,27 @@ def test_online_provider_notice_only_when_data_leaves_the_computer(tmp_path, mon
     assert len(dock.notice.text().splitlines()) == 1
     dock.shutdown()
     dock.close()
+
+
+def test_undo_is_a_small_red_button_under_the_answer(tmp_path):
+    """'Document action: applied' took a bubble of its own and broke the flow
+    (the user, 2026-11-16): a red Undo under the answer instead."""
+    from qtpy.QtWidgets import QToolButton
+    app = QApplication.instance() or QApplication([])
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
+    dock.show()
+    before = dock.messages.count()
+    dock.receive('assistant', 'Done: 48 ROIs added.')
+    dock.receive('action', {'id': 'x1', 'status': 'applied', 'controls': ['undo']})
+    assert dock.messages.count() == before + 1            # no extra bubble
+    host = dock.last_assistant_layout
+    buttons = [host.itemAt(i).widget().findChildren(QToolButton) for i in range(host.count())
+               if host.itemAt(i).widget() is not None]
+    undo = [b for group in buttons for b in group if b.text() == 'Undo']
+    assert len(undo) == 1 and '#b3261e' in undo[0].styleSheet()
+    calls = []
+    dock.host_control = lambda action, ident=None: calls.append((action, ident))
+    undo[0].click()
+    assert calls == [('undo', 'x1')] and not undo[0].isVisible()
+    dock.receive('action', {'id': 'x2', 'status': 'no_change'})     # nothing shown
+    assert dock.messages.count() == before + 1

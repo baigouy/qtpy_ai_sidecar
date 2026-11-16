@@ -712,6 +712,11 @@ class AssistantDock(QDockWidget):
             self.clear_choices()
             self.last_assistant = value
             self.last_assistant_layout = self.add_message('assistant', value)
+        elif (kind == 'action' and value and not action_is_silent(value) and not value.get('preview')
+              and getattr(self, 'last_assistant_layout', None) is not None):
+            # a small red Undo under the answer it belongs to, not a bubble of its own
+            # ("Document action: applied" took a full bubble and broke the flow, the user)
+            self.add_action_buttons(self.last_assistant_layout, value)
         elif kind == 'action' and value and not action_is_silent(value):
             layout = self.add_message('assistant', 'Document action: ' + value.get('status', 'recorded'))
             for action in value.get('controls', []):
@@ -758,6 +763,45 @@ class AssistantDock(QDockWidget):
             first, second = Path(before).with_suffix('.png'), Path(after).with_suffix('.png')
             if first.is_file() and second.is_file():
                 layout.addWidget(Comparison(first, second))
+
+    ACTION_LABELS = {'undo': ('Undo', 'mdi.undo-variant', 'Undo the changes of this answer'),
+                     'redo': ('Redo', 'mdi.redo-variant', 'Redo the changes of this answer')}
+
+    def add_action_buttons(self, host, value):
+        """Compact buttons (Undo in red) at the bottom of the answer *host*."""
+        controls = value.get('controls') or []
+        if not controls:
+            return None
+        box = QFrame()
+        row = QHBoxLayout(box)
+        row.setContentsMargins(0, 2, 0, 0)
+        row.setSpacing(6)
+        for action in controls:
+            text, icon, tip = self.ACTION_LABELS.get(action, (action.capitalize(), None, action.capitalize()))
+            b = QToolButton()
+            b.setText(text)
+            b.setToolTip(f"{tip} (document action: {value.get('status', 'recorded')})")
+            red = action == 'undo'
+            colour = '#b3261e' if red else '#6b5a4a'
+            if icon:
+                try:
+                    b.setIcon(qta.icon(icon, color=colour))
+                    b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+                except Exception:
+                    pass
+            b.setStyleSheet(f'QToolButton {{ color: {colour}; border: 1px solid {colour}; border-radius: 4px; '
+                            f'padding: 2px 8px; background: transparent; }} '
+                            f'QToolButton:hover {{ background: {"#fdecea" if red else "#f3ece6"}; }}')
+
+            def clicked(_checked=False, a=action, ident=value.get('id')):
+                box.hide()                       # done: the next state brings its own button
+                self.host_control(a, ident)
+            b.clicked.connect(clicked)
+            row.addWidget(b)
+        row.addStretch(1)
+        host.addWidget(box)
+        self._schedule_tail()
+        return box
 
     def host_control(self, action, ident=None):
         self.clear_choices()
