@@ -23,6 +23,22 @@ from .adapters import NullAdapter
 PREVIEW_EDITS_PARKED = True
 
 
+def action_is_silent(value):
+    """Nothing changed and nothing to undo or cancel: no 'Document action:
+    no_change' line under the answer (it broke the flow of a question the
+    model asked, the user, 2026-11-16)."""
+    return value.get('status') == 'no_change' and not value.get('controls') and not value.get('preview')
+
+
+def snapshot_caption(sees_images):
+    """Caption of a figure snapshot in the chat: whether the model saw it too."""
+    if sees_images:
+        return 'Snapshot of the figure, also sent to the model (it sees this image)'
+    if sees_images is False:
+        return 'Snapshot of the figure, for you only (this model cannot see images)'
+    return 'Snapshot of the figure'
+
+
 class Composer(QPlainTextEdit):
     submitted = Signal()
 
@@ -696,7 +712,7 @@ class AssistantDock(QDockWidget):
             self.clear_choices()
             self.last_assistant = value
             self.last_assistant_layout = self.add_message('assistant', value)
-        elif kind == 'action' and value:
+        elif kind == 'action' and value and not action_is_silent(value):
             layout = self.add_message('assistant', 'Document action: ' + value.get('status', 'recorded'))
             for action in value.get('controls', []):
                 button = QPushButton(action.capitalize() + ' this message' if action in ('undo', 'redo') else action.capitalize() + ' draft')
@@ -708,7 +724,9 @@ class AssistantDock(QDockWidget):
             raw = base64.b64decode(value['data'])
             image = QImage.fromData(raw)
             if not image.isNull():
-                layout = self.add_message('assistant', 'Canvas snapshot, not a live view (the model cannot inspect these pixels)')
+                # said for every model, also those that see images (Mistral Large 4 does): wrong
+                sees = getattr(getattr(self, 'engine', None), '_sees_images', None)
+                layout = self.add_message('assistant', snapshot_caption(sees))
                 label = PreviewImage(image)
                 layout.addWidget(label)
         elif kind == 'status':

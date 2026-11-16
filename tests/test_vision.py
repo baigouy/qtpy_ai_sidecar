@@ -172,3 +172,19 @@ def test_the_setting_is_saved_with_the_performance_settings(tmp_path):
     cfg = Config(state_dir=str(tmp_path), vision='off')
     cfg.save_performance()
     assert json.loads((tmp_path / 'performance.json').read_text())['vision'] == 'off'
+
+
+def test_the_snapshot_caption_says_whether_the_model_sees_it():
+    """It said "the model cannot inspect these pixels" for every model, also
+    Mistral Large 4, which does get the image (2026-11-16)."""
+    from qtpy_ai_sidecar.widgets import snapshot_caption
+    assert "sees this image" in snapshot_caption(True)
+    assert "cannot see images" in snapshot_caption(False)
+    assert "cannot" not in snapshot_caption(None)
+
+
+def test_no_document_action_line_when_nothing_changed():
+    from qtpy_ai_sidecar.widgets import action_is_silent
+    assert action_is_silent({'status': 'no_change'})
+    assert not action_is_silent({'status': 'applied', 'controls': ['undo']})
+    assert not action_is_silent({'status': 'no_change', 'controls': ['undo']})
