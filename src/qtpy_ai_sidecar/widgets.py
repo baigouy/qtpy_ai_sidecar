@@ -32,6 +32,9 @@ VISION_CHOICES = {
     'none': ('Off (nothing visual: previews and descriptions withheld)', 'mdi6.eye-off-outline',
              'Model vision: off. Previews are shown to you only; the model gets no description of them.'),
 }
+THINKING_CHOICES = [('Default', 'default'), ('On', 'enabled'), ('Off', 'disabled')]
+THINKING_LEVELS = ('default', 'low', 'medium', 'high')
+VISION_COLOUR, THINKING_COLOUR, OFF_COLOUR = '#3d7ab8', '#9a5fb8', '#8a7d72'
 
 
 def action_is_silent(value):
@@ -223,16 +226,41 @@ class ModelPicker(QComboBox):
         # never its end (the version: -4, -flash, -2512…)
         self.view().setTextElideMode(Qt.TextElideMode.ElideMiddle)
         # the API key state, beside the picker: an icon (not a pixmap) so it is drawn
-        # sharp at any screen scale; display only, never clicked
+        # sharp at any screen scale; a click changes or deletes the connection's key
+        # (user, 2026-11-17: "can the api key also be changed there")
         self.key_label = QToolButton()
         self.key_label.setAutoRaise(True)
         self.key_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.key_label.setIconSize(QSize(16, 16))
-        self.key_label.setStyleSheet('QToolButton { border: none; padding: 0; }')
-        self.key_label.setAccessibleName('API key state')
+        self.key_label.setStyleSheet('QToolButton { border: none; padding: 0; }'
+                                     'QToolButton::menu-indicator { image: none; width: 0; }')
+        self.key_label.setAccessibleName('API key')
+        self.key_label.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.key_menu = QMenu(self.key_label)
+        self.change_key_action = self.key_menu.addAction('Change API key…', self.ask_for_key)
+        self.delete_key_action = self.key_menu.addAction('Delete the stored key', self.forget_key)
+        self.key_label.setMenu(self.key_menu)
         self.activated.connect(self.chosen)
         # a click or Tab gives it focus, never the mouse wheel passing over it
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def paintEvent(self, event):
+        # the closed picker shows the name only: what the model reads and whether it
+        # thinks are the eye and brain buttons beside it, which also hold the choices
+        # (user, 2026-11-17: "why did you duplicate the vision icon"); the open list
+        # keeps the badges to compare the models
+        from qtpy.QtWidgets import QStylePainter, QStyleOptionComboBox, QStyle
+        painter = QStylePainter(self)
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        option.currentIcon = QIcon()
+        option.iconSize = QSize(0, 0)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option)
+        painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, option)
+
+    def details(self):
+        """What the provider's list says of the current model ({} before it came)."""
+        return self.info.get(self.dock.engine.config.model, {})
 
     def wheelEvent(self, event):
         # Qt changes a combo box's value on a wheel turn over it, and emits activated:
@@ -309,6 +337,8 @@ class ModelPicker(QComboBox):
         self.blockSignals(False)
         self.show_key_state()
         self.loaded_for = self.connection()
+        self.dock.sync_vision_button()
+        self.dock.sync_thinking_controls()
 
     def fit(self):
         self.setMinimumContentsLength(min(30, max(8, len(self.currentText()))))
@@ -319,11 +349,18 @@ class ModelPicker(QComboBox):
         if self.has_key is None:
             icon, tip = qta.icon('fa5s.server', color='#72533e'), 'Local server: no API key needed'
         elif self.has_key:
-            icon, tip = qta.icon('fa5s.key', color='#3d8b40'), 'API key stored in the OS vault'
+            icon, tip = qta.icon('fa5s.key', color='#3d8b40'), 'API key stored in the OS vault. Click to change or delete it.'
         else:
-            icon, tip = qta.icon('fa5s.key', color='#c0392b'), 'No API key stored: add it with the plug button above'
+            icon, tip = qta.icon('fa5s.key', color='#c0392b'), 'No API key stored. Click to add it.'
+        env = getattr(self.dock.engine.config, 'api_key_env', '')
+        if env and self.has_key is not None:
+            tip = f'API key read from the environment variable {env}'
         self.key_label.setIcon(icon)
         self.key_label.setToolTip(tip)
+        # a local server needs no key; a key from an environment variable is changed there
+        self.key_label.setMenu(self.key_menu if self.has_key is not None and not env else None)
+        self.change_key_action.setText('Change API key…' if self.has_key else 'Add API key…')
+        self.delete_key_action.setEnabled(bool(self.has_key))
         self.setToolTip(f'Model · {model}\n{tip}')
         self.fit()
 
@@ -351,6 +388,46 @@ class ModelPicker(QComboBox):
 
     def chosen(self, index):
         self.dock.change_model(self.itemData(index))
+
+    def ask_for_key(self):
+        from qtpy.QtWidgets import QInputDialog, QLineEdit
+        config = self.dock.engine.config
+        key, ok = QInputDialog.getText(self, 'API key', f'New API key for {config.provider} '
+                                       f'({config.base_url}).\nIt is kept in the OS vault and never shown again.',
+                                       QLineEdit.EchoMode.Password)
+        if ok and key.strip():
+            self.replace_key(key)
+
+    def replace_key(self, key):
+        """Stores *key* for the current connection (the one it replaces is
+        overwritten); refused when it is plainly another provider's key."""
+        from .connection import wrong_key_check
+        from .credentials import set_key
+        config = self.dock.engine.config
+        try:
+            wrong_key_check(config, key)
+            set_key(config, key)
+        except Exception as exc:
+            self.dock.status.setText('API key not saved: ' + str(exc))
+            return False
+        self.dock.status.setText('API key saved for ' + config.provider)
+        self.sync()                               # lists the models the new key can use
+        return True
+
+    def forget_key(self):
+        from qtpy.QtWidgets import QMessageBox
+        config = self.dock.engine.config
+        if QMessageBox.question(self, 'API key', f'Delete the stored API key for {config.provider}? '
+                                'The chat cannot use this provider until a key is added again.') \
+                != QMessageBox.StandardButton.Yes:
+            return
+        from .credentials import delete_key
+        try:
+            delete_key(config)
+            self.dock.status.setText('API key deleted for ' + config.provider)
+        except Exception as exc:
+            self.dock.status.setText('API key not deleted: ' + str(exc))
+        self.sync()
 
 
 PICK_SCHEME = 'sidecar-pick'
@@ -566,39 +643,40 @@ class AssistantDock(QDockWidget):
         self.input.setFixedHeight(76)
         self.input.submitted.connect(self.send)
         composer_layout.addWidget(self.input)
-        thinking_row = QHBoxLayout()
+        # thinking: one brain button beside the model (it says whether the model thinks)
+        # holding the choices in its menu; the combo box, slider and label below keep
+        # the state and are never shown (user, 2026-11-17: one icon with the options,
+        # "maybe same is true for thinking too")
         self.thinking_controls = QWidget(self.composer_frame)
-        self.thinking_controls.setFixedWidth(190)
-        thinking_layout = QVBoxLayout(self.thinking_controls)
-        thinking_layout.setContentsMargins(0, 0, 0, 0)
-        thinking_layout.setSpacing(0)
-        self.thinking_mode = QComboBox()
-        for label, value in [('Default', 'default'), ('On', 'enabled'), ('Off', 'disabled')]:
+        self.thinking_controls.hide()
+        self.thinking_mode = QComboBox(self.thinking_controls)
+        for label, value in THINKING_CHOICES:
             self.thinking_mode.addItem('Thinking: ' + label, value)
-        thinking_row.addWidget(self.thinking_mode)
-        thinking_row.addStretch()
-        thinking_layout.addLayout(thinking_row)
-        strength_row = QHBoxLayout()
-        strength_row.setSpacing(10)
-
-        self.thinking_slider = QSlider(Qt.Orientation.Horizontal)
+        self.thinking_slider = QSlider(Qt.Orientation.Horizontal, self.thinking_controls)
         self.thinking_slider.setRange(0, 3)
-        self.thinking_slider.setMinimumWidth(70)
-        self.thinking_slider.setMaximumWidth(100)
-        self.thinking_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.thinking_slider.setTickInterval(1)
         self.thinking_slider.setAccessibleName('Thinking strength')
-        strength_row.addWidget(self.thinking_slider, 1)
-        self.thinking_value = QLabel()
-        self.thinking_value.setFont(body.font())
-        metrics = self.thinking_value.fontMetrics()
-        self.thinking_value.setFixedWidth(max(metrics.horizontalAdvance(v) for v in ('Default', 'Low', 'Medium', 'High')) + 8)
-        self.thinking_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        strength_row.addWidget(self.thinking_value)
-        thinking_layout.addLayout(strength_row)
+        self.thinking_value = QLabel(self.thinking_controls)
+        self.thinking_button = QToolButton()
+        self.thinking_button.setAccessibleName('Thinking')
+        self.thinking_button.setFixedSize(34, 34)
+        self.thinking_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        thinking_menu = QMenu(self.thinking_button)
+        thinking_menu.addSection('Thinking')
+        self.thinking_actions = {}
+        for label, value in THINKING_CHOICES:
+            action = thinking_menu.addAction(label)
+            action.setCheckable(True)
+            action.triggered.connect(lambda _checked=False, v=value: self.set_thinking(mode=v))
+            self.thinking_actions[value] = action
+        thinking_menu.addSection('Strength')          # a hint some models ignore (tooltip)
+        self.strength_actions = {}
+        for value in THINKING_LEVELS:
+            action = thinking_menu.addAction(value.capitalize())
+            action.setCheckable(True)
+            action.triggered.connect(lambda _checked=False, v=value: self.set_thinking(strength=v))
+            self.strength_actions[value] = action
+        self.thinking_button.setMenu(thinking_menu)
         self.sync_thinking_controls()
-        no_wheel(self.thinking_mode)
-        no_wheel(self.thinking_slider)
         self.thinking_mode.currentIndexChanged.connect(self.change_thinking)
         self.thinking_slider.valueChanged.connect(self.change_thinking)
         controls = QHBoxLayout()
@@ -619,7 +697,8 @@ class AssistantDock(QDockWidget):
         controls.addWidget(self.model_picker.key_label)
         controls.addWidget(self.model_picker)
         # what the model may learn of how things look, one click from the chat
-        # (user, 2026-11-17: it was only in the gear dialog)
+        # (user, 2026-11-17: it was only in the gear dialog); its icon also says
+        # whether the model reads images (the picker no longer repeats it)
         self.vision_button = QToolButton()
         self.vision_button.setAccessibleName('Model vision')
         self.vision_button.setFixedSize(34, 34)
@@ -634,7 +713,8 @@ class AssistantDock(QDockWidget):
         self.vision_button.setMenu(menu)
         controls.addWidget(self.vision_button)
         self.sync_vision_button()
-        controls.addWidget(self.thinking_controls)
+        controls.addWidget(self.thinking_button)
+        self.sync_thinking_controls()
         self.send_button = QPushButton(qta.icon('fa5s.arrow-up', color='#fffdf9'), '')
         self.send_button.setObjectName('composerSend')
         self.send_button.setAccessibleName('Send')
@@ -891,6 +971,7 @@ class AssistantDock(QDockWidget):
         self.send_button.setIcon(qta.icon('fa5s.stop', color='#fffdf9'))
         self.thinking_mode.setEnabled(False)
         self.thinking_slider.setEnabled(False)
+        self.thinking_button.setEnabled(False)
         self.compress.setEnabled(False)
         self.settings_button.setEnabled(False)
         self.connection_button.setEnabled(False)
@@ -928,6 +1009,7 @@ class AssistantDock(QDockWidget):
         self.send_button.setToolTip('Send')
         self.send_button.setIcon(qta.icon('fa5s.arrow-up', color='#fffdf9'))
         self.sync_thinking_controls()
+        self.sync_vision_button()            # the first message found out whether it reads images
         self.compress.setEnabled(True)
         self.settings_button.setEnabled(True)
         self.connection_button.setEnabled(True)
@@ -962,11 +1044,30 @@ class AssistantDock(QDockWidget):
     def tick(self):
         self.status.setText(self.activity_text + (f' · {time.monotonic() - self.started:.0f}s' if self.busy else ''))
 
+    def model_reads_images(self):
+        """True / False when known (the provider's list, or the check made at the
+        first message), None before."""
+        known = getattr(self.engine, '_sees_images', None)
+        if getattr(self.engine.config, 'vision', 'auto') == 'auto' and known is not None:
+            return known
+        listed = self.model_picker.details().get('vision') if hasattr(self, 'model_picker') else None
+        return listed
+
     def sync_vision_button(self):
+        if not hasattr(self, 'vision_button'):
+            return
         value = getattr(self.engine.config, 'vision', 'auto')
         _label, icon, tip = VISION_CHOICES.get(value, VISION_CHOICES['auto'])
-        self.vision_button.setIcon(qta.icon(icon, color='#3d7ab8' if value != 'none' else '#8a7d72'))
-        self.vision_button.setToolTip(tip)
+        reads = self.model_reads_images()
+        if value == 'auto' and reads is not None:
+            # what this model gets, shown by the icon
+            icon = VISION_CHOICES['on' if reads else 'text'][1]
+            tip = ('Model vision: automatic. This model reads images: previews are sent to it.' if reads else
+                   'Model vision: automatic. This model reads text only: it gets text descriptions.')
+        elif reads is not None:
+            tip += ' This model ' + ('reads images.' if reads else 'reads text only.')
+        self.vision_button.setIcon(qta.icon(icon, color=VISION_COLOUR if value != 'none' else OFF_COLOUR))
+        self.vision_button.setToolTip(tip + ' Click to change.')
         for v, action in self.vision_actions.items():
             action.setChecked(v == value)
 
@@ -1004,6 +1105,33 @@ class AssistantDock(QDockWidget):
         self.thinking_mode.setToolTip(tip)
         self.thinking_mode.blockSignals(False)
         self.thinking_slider.blockSignals(False)
+        if not hasattr(self, 'thinking_button'):
+            return
+        # the brain button: purple when the model thinks (or may), grey when off
+        details = self.model_picker.details() if hasattr(self, 'model_picker') else {}
+        thinks = bool(details.get('reasoning')) if details else None    # listed without it: does not think
+        off = config.thinking == 'disabled' and not strength_only
+        self.thinking_button.setEnabled(supported and not self.busy)
+        self.thinking_button.setIcon(qta.icon('mdi6.brain',
+                                              color=OFF_COLOUR if (off or thinks is False or not supported) else THINKING_COLOUR))
+        label = dict((v, l) for l, v in THINKING_CHOICES)[config.thinking]
+        state = f'Thinking: {label}' + ('' if off else f' · strength {config.thinking_strength.capitalize()}')
+        about = {True: ' This model thinks before answering.', False: ' This model does not think.'}.get(thinks, '')
+        self.thinking_button.setToolTip(state + '.' + about + ' ' + tip + ' Click to change.')
+        for v, action in self.thinking_actions.items():
+            action.setChecked(v == config.thinking)
+            if v == 'disabled':
+                action.setEnabled(not strength_only)
+        for v, action in self.strength_actions.items():
+            action.setChecked(v == config.thinking_strength)
+            action.setEnabled(self.thinking_slider.isEnabled() or (not self.busy and supported and strength_only))
+
+    def set_thinking(self, mode=None, strength=None):
+        if mode is not None:
+            self.thinking_mode.setCurrentIndex(max(0, self.thinking_mode.findData(mode)))
+        if strength is not None:
+            self.thinking_slider.setValue(THINKING_LEVELS.index(strength))
+        self.sync_thinking_controls()
 
     def change_thinking(self, *args):
         if self.busy:
@@ -1220,6 +1348,8 @@ class AssistantDock(QDockWidget):
         self.update_connection_label()
         self.model_picker.show_key_state()
         self.show_context()
+        self.sync_vision_button()
+        self.sync_thinking_controls()
         self.status.setText('Model: ' + model)
 
     def replace_engine(self, config):

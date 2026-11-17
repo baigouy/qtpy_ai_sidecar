@@ -149,6 +149,42 @@ def test_model_picker_in_composer_lists_switches_and_shows_key_state(tmp_path, m
     dock.close()
 
 
+def test_the_key_icon_changes_or_deletes_the_key(tmp_path, monkeypatch):
+    # user, 2026-11-17: "can the api key also be changed there if needed"
+    import keyring
+    from qtpy_ai_sidecar import connection, widgets
+    values = {}
+    Secure = type('WinVaultKeyring', (), {'__module__': 'keyring.backends.Windows',
+        'set_password': lambda s, service, ident, value: values.__setitem__((service, ident), value),
+        'get_password': lambda s, service, ident: values.get((service, ident)),
+        'delete_password': lambda s, service, ident: values.pop((service, ident))})
+    monkeypatch.setattr(keyring, 'get_keyring', lambda: Secure())
+    monkeypatch.setattr(connection, 'list_models', lambda c: (['openrouter/free'], {}))
+    app = QApplication.instance() or QApplication([])
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path), provider='openrouter',
+                                base_url='https://openrouter.ai/api/v1', model='openrouter/free'))
+    dock.show()
+    picker = dock.model_picker
+    assert picker.key_label.menu() is picker.key_menu and 'Click to add' in picker.key_label.toolTip()
+    assert picker.change_key_action.text() == 'Add API key…' and not picker.delete_key_action.isEnabled()
+    assert not picker.replace_key('gsk_groq-key')                 # another provider's key: refused
+    assert not values and 'not a key for openrouter' in dock.status.text()
+    assert picker.replace_key('sk-or-new')
+    assert list(values.values()) == ['sk-or-new'] and picker.has_key
+    assert picker.change_key_action.text() == 'Change API key…' and picker.delete_key_action.isEnabled()
+    assert 'sk-or-new' not in dock.status.text() and 'sk-or-new' not in picker.key_label.toolTip()
+    monkeypatch.setattr(widgets.QMessageBox, 'question', staticmethod(lambda *a, **k: widgets.QMessageBox.StandardButton.Yes))
+    picker.forget_key()
+    assert not values and picker.has_key is False
+    # a local server needs no key: the icon has no menu
+    dock.replace_engine(Config(application='Demo', state_dir=str(tmp_path), provider='compatible',
+                               base_url='http://127.0.0.1:1234/v1', model='m'))
+    assert picker.key_label.menu() is None
+    dock.shutdown()
+    dock.close()
+    app.processEvents()
+
+
 def test_server_usage_is_one_short_phrase_not_raw_json(tmp_path):
     """The provider's token report filled the context line with several lines
     of JSON, which vanished at the next update."""
@@ -336,13 +372,13 @@ def test_composer_integrates_editor_thinking_and_send(tmp_path):
     dock.resize(480, 850)
     dock.show()
     app.processEvents()
-    for widget in (dock.input,dock.thinking_mode,dock.thinking_slider,dock.send_button,dock.compress):
-        assert dock.composer_frame.isAncestorOf(widget)
-    assert dock.thinking_slider.geometry().right() < dock.thinking_value.geometry().left()
-    assert dock.thinking_value.width() >= dock.thinking_value.fontMetrics().horizontalAdvance('Default')
+    for widget in (dock.input,dock.thinking_button,dock.vision_button,dock.send_button,dock.compress):
+        assert dock.composer_frame.isAncestorOf(widget) and widget.isVisible()
+    # thinking is one brain button with a menu (2026-11-17), on the send button's row
+    assert not dock.thinking_mode.isVisible() and not dock.thinking_slider.isVisible()
+    assert abs(dock.thinking_button.geometry().center().y() - dock.send_button.geometry().center().y()) <= 2
     assert dock.send_button.text() == ''
     assert dock.send_button.accessibleName() == 'Send'
-    assert dock.thinking_slider.mapTo(dock.composer_frame, dock.thinking_slider.rect().topLeft()).y() > dock.thinking_mode.mapTo(dock.composer_frame, dock.thinking_mode.rect().topLeft()).y()
     dock.shutdown()
     dock.close()
 

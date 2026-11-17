@@ -144,6 +144,41 @@ def test_the_chat_has_a_vision_button(tmp_path):
     dock.close()
 
 
+def test_one_eye_and_one_brain_say_what_the_model_does(tmp_path):
+    # user, 2026-11-17: "why did you duplicate the vision icon can't you have one for
+    # saying there is vision and add options to it ??? maybe same is true for thinking"
+    from qtpy.QtWidgets import QApplication
+    from qtpy_ai_sidecar.widgets import AssistantDock
+    app = QApplication.instance() or QApplication([])
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path), provider='mistral',
+                                model='m-vision', base_url='https://api.mistral.ai/v1',
+                                thinking_backend='reasoning_effort'))
+    dock.show()
+    picker = dock.model_picker
+    picker.fill(['m-vision', 'm-text'], {'m-vision': {'vision': True, 'reasoning': True},
+                                         'm-text': {'vision': False}})
+    assert not picker.itemIcon(0).isNull()                 # the open list compares the models
+    # the closed picker draws the name only (no eye or brain beside the buttons'),
+    # through its own paintEvent
+    assert not picker.grab().isNull()
+    assert 'reads images' in dock.vision_button.toolTip() and 'previews are sent' in dock.vision_button.toolTip()
+    assert 'thinks before answering' in dock.thinking_button.toolTip()
+    dock.change_model('m-text')
+    assert 'text only' in dock.vision_button.toolTip()
+    assert 'does not think' in dock.thinking_button.toolTip()
+    # the brain's menu holds the choices that were a combo box and a slider
+    dock.thinking_actions['enabled'].trigger()
+    dock.strength_actions['high'].trigger()
+    assert dock.engine.config.thinking == 'enabled' and dock.engine.config.thinking_strength == 'high'
+    assert 'strength High' in dock.thinking_button.toolTip() and dock.strength_actions['high'].isChecked()
+    dock.thinking_actions['disabled'].trigger()
+    assert not dock.strength_actions['low'].isEnabled()
+    assert not dock.thinking_controls.isVisible()
+    assert json.loads((tmp_path / 'performance.json').read_text())['thinking'] == 'disabled'
+    dock.close()
+    app.processEvents()
+
+
 def test_the_mouse_wheel_never_changes_the_model(tmp_path):
     # chat log 2026-11-17: Mistral Large 4 became ministral-3b-latest between two
     # messages; Qt changes a combo box (and emits activated) on a wheel turn over it
@@ -161,7 +196,7 @@ def test_the_mouse_wheel_never_changes_the_model(tmp_path):
     for m in ('mistral-large-4', 'ministral-3b-latest', 'mistral-small'):
         picker.addItem(m, m)
     picker.blockSignals(False)
-    for widget in (picker, dock.thinking_mode, dock.thinking_slider):
+    for widget in (picker,):              # thinking is a menu button now (no wheel to turn)
         before = widget.currentIndex() if hasattr(widget, 'currentIndex') else widget.value()
         for delta in (-120, 120, -120):
             event = QWheelEvent(QPointF(5, 5), QPointF(widget.mapToGlobal(QPoint(5, 5))), QPoint(0, 0),

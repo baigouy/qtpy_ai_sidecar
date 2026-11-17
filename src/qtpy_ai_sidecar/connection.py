@@ -29,6 +29,15 @@ READS_IMAGES = '  (reads images)'
 KEY_PREFIXES = {'openrouter': 'sk-or-', 'anthropic': 'sk-ant-', 'groq': 'gsk_', 'nvidia': 'nvapi-'}
 
 
+def wrong_key_check(config, key, provider_name=None):
+    """Raises ValueError when *key* does not begin as the provider's keys do."""
+    from . import providers
+    prefix = KEY_PREFIXES.get(config.provider) or (providers.find(config.provider) or {}).get('key_prefix')
+    if key.strip() and prefix and not key.strip().startswith(prefix):
+        raise ValueError(f'This is not a key for {provider_name or config.provider} (its keys begin with '
+                         f'"{prefix}"). Choose the provider the key belongs to; nothing was saved.')
+
+
 def one_name_per_model(models, current=''):
     """Mistral lists every alias as a model of its own (mistral-medium had eight
     names): keep one entry per model, named by the current model when it is one
@@ -253,12 +262,8 @@ class ConnectionDialog(QDialog):
     def save(self):
         try:
             candidate = self.candidate()
-            from . import providers
-            prefix = KEY_PREFIXES.get(candidate.provider) or (providers.find(candidate.provider) or {}).get('key_prefix')
-            if self.key.text().strip() and prefix and not self.key.text().strip().startswith(prefix):
-                raise ValueError(f'This is not a key for {self.provider.currentText()} (its keys begin with '
-                                 f'"{prefix}"). Choose the provider the key belongs to; nothing was saved.')
             if self.key.text().strip():
+                wrong_key_check(candidate, self.key.text(), self.provider.currentText())
                 set_key(candidate, self.key.text())
                 self.key.clear()
             candidate.save_connection()
