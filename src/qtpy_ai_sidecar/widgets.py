@@ -1155,6 +1155,10 @@ class AssistantDock(QDockWidget):
         text = self.input.toPlainText().strip()
         if not text or self.busy:
             return
+        from . import terms
+        if not terms.accepted(self.engine.config, self):
+            self.status.setText('Not sent: the terms were not accepted.')    # the text stays in the box
+            return
         self.clear_choices()
         self.last_assistant = ''
         self.input.clear()

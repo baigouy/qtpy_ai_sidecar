@@ -17,6 +17,20 @@ def private_provider_list(tmp_path,monkeypatch):
     monkeypatch.setattr(providers,'path',lambda:tmp_path/'providers.json')
 
 
+@pytest.fixture(autouse=True)
+def terms_accepted(request, monkeypatch):
+    """The first message asks the user to accept the terms (a modal dialog):
+    accepted in tests, and never written to the user's own folder. Tests of
+    the dialog itself are marked real_terms."""
+    if request.node.get_closest_marker('real_terms') is None:
+        from qtpy_ai_sidecar import terms
+        monkeypatch.setattr(terms, 'accepted', lambda config, parent=None: True)
+
+
+def pytest_configure(config):
+    config.addinivalue_line('markers', 'real_terms: run the real terms acceptance')
+
+
 def pytest_sessionstart(session):
     from pathlib import Path
     marker=Path(__file__).resolve().parents[1]/'validation/pyfigures/CLAUDE_ACTIVE_RUN.json'
