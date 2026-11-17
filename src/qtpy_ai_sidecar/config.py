@@ -8,6 +8,7 @@ DEFAULT_NOTICE = 'Models can make mistakes. Check what they do.'
 DEFAULT_REMOTE_NOTICE = ('Online provider ({provider}, {host}): your messages, the content the chat reads '
                          'and any images are sent outside this computer, to that provider.')
 LOOPBACK_HOSTS = ('127.0.0.1', 'localhost', '::1')
+VISION_MODES = ('auto', 'on', 'text', 'none')
 
 
 @dataclass
@@ -40,9 +41,17 @@ class Config:
     # the line added when the provider is online (data leaves the computer);
     # empty = DEFAULT_REMOTE_NOTICE; never shown for a model on this computer
     remote_notice: str = ''
-    # images returned by tools (figure previews) sent to the model: 'auto' when
-    # the server reports a vision model, 'on', or 'off' (shown to the human only)
+    # what the model may learn of how things look: 'auto' (real images when the
+    # server reports a vision model, else text), 'on' (real images: preview
+    # pixels are sent to the model), 'text' (measured descriptions only: no
+    # pixels ever leave for the model), 'none' (nothing visual: previews and
+    # their descriptions are withheld). The old 'off' = 'text'.
     vision: str = 'auto'
+    # a numbered or bulleted list ending in a question becomes clickable follow-up
+    # buttons. Right for an app whose model offers options ("1. Remove h, f…  2. …"),
+    # wrong for one that answers with lists of findings (litsearch's paper summaries
+    # all became buttons, 2026-11-17); a host sets its default, the user can change it
+    list_choices: bool = True
 
     def __post_init__(self):
         if not 512 <= self.output_tokens < self.context_tokens:
@@ -51,8 +60,10 @@ class Config:
             raise ValueError('generation_timeout_seconds must be 10-3600')
         if isinstance(self.response_timeout_s, bool) or not isinstance(self.response_timeout_s, int) or not 10 <= self.response_timeout_s <= 3600:
             raise ValueError('response_timeout_s must be an integer from 10 to 3600')
-        if self.vision not in ('auto', 'on', 'off'):
-            raise ValueError("vision must be 'auto', 'on' or 'off'")
+        if self.vision == 'off':          # saved by earlier versions: images were never sent
+            self.vision = 'text'
+        if self.vision not in VISION_MODES:
+            raise ValueError("vision must be 'auto', 'on', 'text' or 'none'")
         if not 1 <= self.max_steps <= 50:
             raise ValueError('max_steps must be between 1 and 50')
         if not self.base_url.startswith(('http://', 'https://')):
@@ -102,7 +113,7 @@ class Config:
         preferences = config.storage() / 'performance.json'
         if preferences.exists():
             saved = json.loads(preferences.read_text(encoding='utf-8'))
-            for key in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps', 'vision'):
+            for key in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps', 'vision', 'list_choices'):
                 if key in saved:
                     setattr(config, key, saved[key])
             if config.runtime:
@@ -164,7 +175,7 @@ class Config:
             return {}
 
     def save_performance(self):
-        value = {k: getattr(self, k) for k in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps', 'vision')}
+        value = {k: getattr(self, k) for k in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps', 'vision', 'list_choices')}
         value.update({k: self.runtime[k] for k in ('gpu_layers', 'threads', 'force_cpu') if k in self.runtime})
         self.storage().mkdir(parents=True, exist_ok=True)
         (self.storage() / 'performance.json').write_text(json.dumps(value, indent=2), encoding='utf-8')

@@ -89,6 +89,36 @@ def test_the_same_refused_call_stops_after_three(tmp_path):
     assert 'rejected_call_loop_stopped' in engine.journal.path.read_text()
     assert any(k=='assistant' and 'refused' in v for k,v in events)
 
+def test_the_same_refusal_with_shuffled_arguments_stops_after_four(tmp_path):
+    # chat log 2026-11-17: ministral-3b varied its arguments on each of 20 calls refused
+    # with the same pydantic error; the three-identical-calls guard never fired
+    class Hub:
+        instructions=[]
+        def __init__(self,*a):
+            self.calls=0
+            self.tools={'id':('demo',None,SimpleNamespace(name='use_tool',annotations=SimpleNamespace(readOnlyHint=False)))}
+        async def __aenter__(self):return self
+        async def __aexit__(self,*a):pass
+        def model_tools(self):return []
+        def direct_ids(self):return {'use_tool':'id'}
+        def is_discovery(self,ident):return False
+        async def execute(self,ident,arguments,emit):
+            self.calls+=1
+            return {'is_error':True,'content':'Error executing tool use_tool: 1 validation error\ntool_name\n  Field required '
+                    f'[type=missing, input_value={arguments!r}, input_type=dict]'}
+    class Model:
+        calls=0
+        async def complete(self,messages,tools,cancel,emit,final_only=False):
+            self.calls+=1
+            if final_only:return {'role':'assistant','content':'The call was refused; nothing changed.'},{}
+            args=json.dumps({'arguments':{'panel_refs':['h'],'n':self.calls}})
+            return {'role':'assistant','content':'','tool_calls':[{'id':str(self.calls),'type':'function','function':{'name':'use_tool','arguments':args}}]},{}
+    model=Model();hub=Hub()
+    engine=Engine(Config(state_dir=str(tmp_path)),backend=model,hub_factory=lambda *a:hub)
+    asyncio.run(engine.turn('Remove h',lambda *a:None))
+    assert hub.calls==4
+    assert 'rejected_call_loop_stopped' in engine.journal.path.read_text()
+
 def test_searches_ask_for_compact_results_only_when_the_context_is_tight(tmp_path):
     def run(compact_from):
         class Hub:

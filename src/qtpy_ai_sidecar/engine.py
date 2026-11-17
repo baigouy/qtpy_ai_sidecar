@@ -1,6 +1,7 @@
 from .qwen_protocol import ReplyProtocolError
 import asyncio
 import json
+import os
 import re
 import threading
 from .adapters import NullAdapter
@@ -256,8 +257,14 @@ class Engine:
             begun = True
             self.messages = [m for m in self.messages if not (m['role'] == 'system' and m['content'].startswith('[ACTION_MODE]'))]
             self.messages = [m for m in self.messages if not (m['role'] == 'system' and m['content'].startswith('[VISION]'))]
-            if self._sees_images:
+            seen = vision.mode(self.config, self._sees_images)
+            if seen == 'images':
                 self.messages.append({'role': 'system', 'content': vision.SYSTEM_NOTE})
+            elif seen == 'none':
+                self.messages.append({'role': 'system', 'content': vision.NONE_NOTE})
+            # the application's MCP server (started below, per turn) leaves out its
+            # measured descriptions too when 'none'
+            os.environ[vision.ENV] = seen
             self.messages.append({'role': 'system', 'content': '[ACTION_MODE] ' + ('Edits affect an uncommitted draft. Report draft changes only; main document changes only after human Apply.' if preview else 'Edits affect the live application document.')})
             emit('status', 'Connecting application tools')
             async with self.hub_factory(self.config.servers) as hub:
@@ -523,12 +530,23 @@ class Engine:
                             signature=json.dumps([name,args,str(result.get('error'))[:500]],sort_keys=True,default=str)
                             rejected_results[signature]=rejected_results.get(signature,0)+1
                             rejected_loop=rejected_loop or rejected_results[signature]>=3
+                            # the same refusal with arguments shuffled each time: ministral-3b
+                            # sent tool_name in the wrong place 20 times, each call a little
+                            # different (chat log 2026-11-17); the error text says it is the same
+                            reason=re.sub(r'input_value=.*?input_type=\w+','',str(result.get('content') or result.get('error')))[:400]
+                            same_error=json.dumps(['same error',name,reason])
+                            rejected_results[same_error]=rejected_results.get(same_error,0)+1
+                            rejected_loop=rejected_loop or rejected_results[same_error]>=4
                         images=result.get('images') or []
                         if images:
                             result={k:v for k,v in result.items() if k!='images'}
                             if self._sees_images:
                                 result['content']=str(result.get('content','')).replace(vision.TEXT_ONLY,vision.ATTACHED)
                                 latest_image=(completion_tool or name, images[-1])
+                            elif getattr(self.config,'vision','auto')=='none':
+                                # the description that comes with a preview is withheld too
+                                result['content']=vision.WITHHELD
+                                result.pop('structured',None)
                         serialized = json.dumps(result, ensure_ascii=False)
                         self.journal.record('tool_result', result)
                         if len(serialized) > 24000:

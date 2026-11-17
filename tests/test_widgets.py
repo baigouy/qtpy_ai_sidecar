@@ -184,6 +184,38 @@ def test_completion_summary_is_not_choices():
     assert choices('Done:\n1. Color changed\n2. Layout preserved') == []
 
 
+def test_list_choices_can_be_turned_off(tmp_path):
+    """User, 2026-11-17 (litsearch): a paper summary ending with "Want me to read
+    the rest?" turned every finding of its list into a follow-up button."""
+    summary = ('One caveat: I read the first 32,000 characters. Want me to read the rest and extend the summary?\n\n'
+               '- **Ordered chiral twist:** myocytes twist about the anterior-posterior axis [L1].\n'
+               '- **Position-dependent shape:** cell orientation varies across the axis [L1].\n'
+               '- **Morphospace shift:** cells move from spherical to elongated [L1].')
+    assert len(choices(summary)) == 3                       # the default, right for PyFigures
+    assert choices(summary, lists=False) == []
+    # options written in the question itself still are buttons
+    assert choices('Should I **read the rest** or **stop here**?\n- a\n- b', lists=False) == \
+        ['read the rest', 'stop here']
+    import json
+    cfg = Config(application='Demo', state_dir=str(tmp_path), list_choices=False)
+    cfg.save_performance()
+    assert json.loads((cfg.storage() / 'performance.json').read_text())['list_choices'] is False
+    assert Config.from_dict({'application': 'Demo', 'state_dir': str(tmp_path)}).list_choices is False
+    app = QApplication.instance() or QApplication([])
+    dock = AssistantDock(Config(application='Demo2', state_dir=str(tmp_path), list_choices=False))
+    dock.receive('assistant', summary)
+    dock.finished()
+    assert not dock.choice_buttons
+    dock.close()
+
+
+def test_litsearch_has_no_list_choices():
+    import pytest
+    dock = pytest.importorskip('litsearch.sidecar.dock')
+    import inspect
+    assert '"list_choices": False' in inspect.getsource(dock.sidecar_config)
+
+
 def test_options_inside_the_question_are_choices():
     """User finding 2026-11-04: options written in the sentence were not
     clickable (only lists were)."""

@@ -97,13 +97,86 @@ def test_a_vision_model_sees_the_latest_preview_only(tmp_path):
     assert engine.adapter.vision is True
 
 
-def test_off_keeps_the_text_only_model_as_before(tmp_path):
-    engine, model, events = _run(tmp_path, 'off')
+def test_text_keeps_the_text_only_model_as_before(tmp_path, monkeypatch):
+    monkeypatch.delenv(vision.ENV, raising=False)
+    engine, model, events = _run(tmp_path, 'text')
     last = model.sent[-1]
     assert not _images(last)
-    assert all(vision.TEXT_ONLY in m['content'] for m in last if m.get('role') == 'tool')
-    assert not any(m.get('role') == 'system' and m['content'] == vision.SYSTEM_NOTE for m in last)
-    assert ('vision', {'images_sent_to_model': False, 'setting': 'off'}) in events
+    assert all(vision.TEXT_ONLY in m['content'] and 'Preview rendered.' in m['content']
+               for m in last if m.get('role') == 'tool')           # the description still goes
+    assert not any(m.get('role') == 'system' and m['content'] in (vision.SYSTEM_NOTE, vision.NONE_NOTE)
+                   for m in last)
+    assert ('vision', {'images_sent_to_model': False, 'setting': 'text'}) in events
+    import os
+    assert os.environ[vision.ENV] == 'text'
+
+
+def test_none_withholds_previews_and_their_descriptions(tmp_path, monkeypatch):
+    # user, 2026-11-17: "a security to prevent online model from seeing real images"
+    monkeypatch.delenv(vision.ENV, raising=False)
+    engine, model, events = _run(tmp_path, 'none')
+    last = model.sent[-1]
+    assert not _images(last)
+    tools = [m['content'] for m in last if m.get('role') == 'tool']
+    assert tools and all('Preview withheld' in t and 'Preview rendered.' not in t for t in tools)
+    assert any(m.get('role') == 'system' and m['content'] == vision.NONE_NOTE for m in last)
+    assert ('image', ) != events[0][:1]                  # the human still sees it (emitted by the hub)
+    import os
+    assert os.environ[vision.ENV] == 'none'              # the app's MCP server drops its descriptions
+    assert vision.detect(Config(state_dir='', vision='none')) is False
+
+
+def test_the_chat_has_a_vision_button(tmp_path):
+    # user, 2026-11-17: the setting was only in the gear dialog
+    from qtpy.QtWidgets import QApplication
+    from qtpy_ai_sidecar.widgets import AssistantDock, VISION_CHOICES
+    QApplication.instance() or QApplication([])
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
+    dock.show()
+    assert dock.vision_button.isVisible() and set(dock.vision_actions) == set(VISION_CHOICES)
+    assert dock.vision_actions['auto'].isChecked() and 'automatic' in dock.vision_button.toolTip()
+    dock.engine._sees_images = True
+    dock.vision_actions['none'].trigger()
+    assert dock.engine.config.vision == 'none' and dock.engine._sees_images is None
+    assert dock.vision_actions['none'].isChecked() and not dock.vision_actions['auto'].isChecked()
+    assert 'off' in dock.vision_button.toolTip()
+    assert json.loads((tmp_path / 'performance.json').read_text())['vision'] == 'none'   # kept
+    dock.close()
+
+
+def test_the_mouse_wheel_never_changes_the_model(tmp_path):
+    # chat log 2026-11-17: Mistral Large 4 became ministral-3b-latest between two
+    # messages; Qt changes a combo box (and emits activated) on a wheel turn over it
+    from qtpy.QtCore import QPoint, QPointF, Qt
+    from qtpy.QtGui import QWheelEvent
+    from qtpy.QtWidgets import QApplication
+    from qtpy_ai_sidecar.widgets import AssistantDock
+    app = QApplication.instance() or QApplication([])
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path), provider='mistral',
+                                model='mistral-large-4', base_url='https://api.mistral.ai/v1'))
+    dock.show()
+    picker = dock.model_picker
+    picker.blockSignals(True)
+    picker.clear()
+    for m in ('mistral-large-4', 'ministral-3b-latest', 'mistral-small'):
+        picker.addItem(m, m)
+    picker.blockSignals(False)
+    for widget in (picker, dock.thinking_mode, dock.thinking_slider):
+        before = widget.currentIndex() if hasattr(widget, 'currentIndex') else widget.value()
+        for delta in (-120, 120, -120):
+            event = QWheelEvent(QPointF(5, 5), QPointF(widget.mapToGlobal(QPoint(5, 5))), QPoint(0, 0),
+                                QPoint(0, delta), Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                                Qt.ScrollPhase.NoScrollPhase, False)
+            app.sendEvent(widget, event)
+        after = widget.currentIndex() if hasattr(widget, 'currentIndex') else widget.value()
+        assert after == before, widget
+    assert dock.engine.config.model == 'mistral-large-4'
+    dock.close()
+
+
+def test_the_old_off_setting_means_text(tmp_path):
+    assert Config(state_dir='', vision='off').vision == 'text'
+    assert vision.detect(Config(state_dir='', vision='text')) is False
 
 
 def test_auto_asks_the_local_server(monkeypatch):
@@ -169,9 +242,9 @@ def test_claude_receives_the_image_as_an_image_block():
 
 
 def test_the_setting_is_saved_with_the_performance_settings(tmp_path):
-    cfg = Config(state_dir=str(tmp_path), vision='off')
+    cfg = Config(state_dir=str(tmp_path), vision='none')
     cfg.save_performance()
-    assert json.loads((tmp_path / 'performance.json').read_text())['vision'] == 'off'
+    assert json.loads((tmp_path / 'performance.json').read_text())['vision'] == 'none'
 
 
 def test_the_snapshot_caption_says_whether_the_model_sees_it():

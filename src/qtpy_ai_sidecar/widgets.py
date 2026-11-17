@@ -7,7 +7,7 @@ import re
 import threading
 import time
 import sys
-from qtpy.QtCore import Qt, Signal, QTimer, QSize, QRect, QPoint
+from qtpy.QtCore import Qt, Signal, QTimer, QSize, QRect, QPoint, QObject, QEvent
 from qtpy.QtGui import QImage, QPixmap, QFont, QIcon, QIconEngine, QPainter
 from qtpy.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QFrame, QLabel, QTextBrowser, QPlainTextEdit, QPushButton, QProgressBar,
@@ -21,6 +21,17 @@ from .adapters import NullAdapter
 # "Preview edits before applying" is parked (hidden, never checked) until it
 # has been tested by hand (2026-11-03); set False to offer it again.
 PREVIEW_EDITS_PARKED = True
+# config.vision: menu label, icon, button tooltip
+VISION_CHOICES = {
+    'auto': ('Automatic: real images for vision models, else text', 'mdi6.eye-check-outline',
+             'Model vision: automatic (real images when the model reads them, else text descriptions)'),
+    'on': ('Real images (preview pixels are sent to the model)', 'mdi6.eye',
+           'Model vision: real images. Previews are sent to the model (to its provider when online).'),
+    'text': ('Text descriptions only (no image ever sent)', 'mdi6.text-box-outline',
+             'Model vision: text descriptions only (colours, contrast, placement). No image is sent.'),
+    'none': ('Off (nothing visual: previews and descriptions withheld)', 'mdi6.eye-off-outline',
+             'Model vision: off. Previews are shown to you only; the model gets no description of them.'),
+}
 
 
 def action_is_silent(value):
@@ -50,10 +61,14 @@ class Composer(QPlainTextEdit):
             super().keyPressEvent(event)
 
 
-def choices(text):
-    """Selectable only for a current explicit question, never completion summaries."""
+def choices(text, lists=True):
+    """Selectable only for a current explicit question, never completion summaries.
+    lists=False (config.list_choices): only the options written inside the
+    question itself, never the items of a list."""
     if '?' not in text:
         return []
+    if not lists:
+        return inline_choices(text)
     lines = text.splitlines()
     result = []
     last_item = -1
@@ -164,6 +179,28 @@ def badges(details):
         qta.icon('mdi6.brain', color='#9a5fb8') if details.get('reasoning') else None]))
 
 
+class _NoWheel(QObject):
+    """Keeps the mouse wheel from changing a composer control the pointer only
+    passes over while the chat is scrolled (the wheel goes to the chat instead)."""
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel:
+            event.ignore()
+            return True
+        return False
+
+
+NO_WHEEL = None
+
+
+def no_wheel(widget):
+    global NO_WHEEL
+    if NO_WHEEL is None:
+        NO_WHEEL = _NoWheel()
+    widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    widget.installEventFilter(NO_WHEEL)
+
+
 class ModelPicker(QComboBox):
     """The model of the current connection, chosen in the composer. The
     provider's model list is asked for in the background once the key is known
@@ -194,6 +231,14 @@ class ModelPicker(QComboBox):
         self.key_label.setStyleSheet('QToolButton { border: none; padding: 0; }')
         self.key_label.setAccessibleName('API key state')
         self.activated.connect(self.chosen)
+        # a click or Tab gives it focus, never the mouse wheel passing over it
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def wheelEvent(self, event):
+        # Qt changes a combo box's value on a wheel turn over it, and emits activated:
+        # scrolling the chat over the picker switched Mistral Large 4 to
+        # ministral-3b-latest between two messages, unseen (chat log 2026-11-17)
+        event.ignore()
 
     NO_KEY = '  (no API key)'
 
@@ -552,6 +597,8 @@ class AssistantDock(QDockWidget):
         strength_row.addWidget(self.thinking_value)
         thinking_layout.addLayout(strength_row)
         self.sync_thinking_controls()
+        no_wheel(self.thinking_mode)
+        no_wheel(self.thinking_slider)
         self.thinking_mode.currentIndexChanged.connect(self.change_thinking)
         self.thinking_slider.valueChanged.connect(self.change_thinking)
         controls = QHBoxLayout()
@@ -571,6 +618,22 @@ class AssistantDock(QDockWidget):
         self.model_picker.sync()
         controls.addWidget(self.model_picker.key_label)
         controls.addWidget(self.model_picker)
+        # what the model may learn of how things look, one click from the chat
+        # (user, 2026-11-17: it was only in the gear dialog)
+        self.vision_button = QToolButton()
+        self.vision_button.setAccessibleName('Model vision')
+        self.vision_button.setFixedSize(34, 34)
+        self.vision_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(self.vision_button)
+        self.vision_actions = {}
+        for value, (label, _icon, _tip) in VISION_CHOICES.items():
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.triggered.connect(lambda _checked=False, v=value: self.set_vision(v))
+            self.vision_actions[value] = action
+        self.vision_button.setMenu(menu)
+        controls.addWidget(self.vision_button)
+        self.sync_vision_button()
         controls.addWidget(self.thinking_controls)
         self.send_button = QPushButton(qta.icon('fa5s.arrow-up', color='#fffdf9'), '')
         self.send_button.setObjectName('composerSend')
@@ -875,7 +938,8 @@ class AssistantDock(QDockWidget):
         elapsed = time.monotonic() - self.started if self.started else 0
         self.status.setText(f'Finished · {elapsed:.1f}s')
         self.clear_choices()
-        for markdown in choices(self.last_assistant) if self.last_assistant_layout is not None else []:
+        lists = getattr(self.engine.config, 'list_choices', True)
+        for markdown in choices(self.last_assistant, lists) if self.last_assistant_layout is not None else []:
             # models write the options in Markdown (**bold** — …): shown formatted,
             # sent back and read aloud as plain text
             option = markdown_to_plain(markdown)
@@ -897,6 +961,22 @@ class AssistantDock(QDockWidget):
 
     def tick(self):
         self.status.setText(self.activity_text + (f' · {time.monotonic() - self.started:.0f}s' if self.busy else ''))
+
+    def sync_vision_button(self):
+        value = getattr(self.engine.config, 'vision', 'auto')
+        _label, icon, tip = VISION_CHOICES.get(value, VISION_CHOICES['auto'])
+        self.vision_button.setIcon(qta.icon(icon, color='#3d7ab8' if value != 'none' else '#8a7d72'))
+        self.vision_button.setToolTip(tip)
+        for v, action in self.vision_actions.items():
+            action.setChecked(v == value)
+
+    def set_vision(self, value):
+        config = self.engine.config
+        if value != getattr(config, 'vision', 'auto'):
+            config.vision = value
+            self.engine._sees_images = None          # asked again at the next message
+            config.save_performance()
+        self.sync_vision_button()
 
     def sync_thinking_controls(self):
         config = self.engine.config
@@ -989,12 +1069,21 @@ class AssistantDock(QDockWidget):
         steps.setToolTip('Bounded tool/reasoning steps per message; discovery and verification count too.')
         form.addRow('Maximum tool steps per message',steps)
         sees = QComboBox()
-        for label, value in (('Automatic (vision models)', 'auto'), ('Always', 'on'), ('Never', 'off')):
+        for value, (label, _icon, _tip) in VISION_CHOICES.items():
             sees.addItem(label, value)
         sees.setCurrentIndex(max(0, sees.findData(getattr(config, 'vision', 'auto'))))
-        sees.setToolTip('Send previews returned by tools to the model, so a vision model can check '
-                        'what it did. Automatic: when the local server reports a vision model.')
-        form.addRow('Show previews to the model', sees)
+        sees.setToolTip('What the model may learn of how your figure looks.\n'
+                        'Real images: previews are sent to the model, so a vision model can check what it did '
+                        '(with an online provider, your images leave this computer).\n'
+                        'Text descriptions: measured words only (colours, contrast, placement); no pixels are sent.\n'
+                        'Off: previews are shown to you only and the model gets no description of them.')
+        form.addRow('Model vision', sees)
+        list_buttons = QCheckBox('Turn listed options into follow-up buttons')
+        list_buttons.setChecked(getattr(config, 'list_choices', True))
+        list_buttons.setToolTip('When a reply ends with a question after a numbered or bulleted list, each '
+                                'item becomes a button that sends it back. Off: only options written in '
+                                'the question itself ("**this** or **that**?") become buttons.')
+        form.addRow(list_buttons)
         supported = config.thinking_backend != 'unsupported'
         note = QLabel('Thinking controls are unavailable for this backend.' if not supported else
             'Thinking strength is a template hint; some models ignore it. A token budget gives a firmer limit on compatible owned llama.cpp runtimes.')
@@ -1048,6 +1137,8 @@ class AssistantDock(QDockWidget):
             if sees.currentData() != getattr(config, 'vision', 'auto'):
                 config.vision = sees.currentData()
                 self.engine._sees_images = None          # asked again at the next message
+                self.sync_vision_button()
+            config.list_choices = list_buttons.isChecked()
             if config.runtime:
                 config.runtime.update(gpu_layers=gpu.value(), threads=threads.value(), force_cpu=force_cpu.isChecked())
                 close = getattr(self.engine.backend, 'close', None)

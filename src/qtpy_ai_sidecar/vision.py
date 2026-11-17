@@ -19,6 +19,21 @@ SYSTEM_NOTE = ('[VISION] Images returned by tools are attached for you to inspec
                'what a magnified region shows, colours and labels; fix what does not match.')
 ATTACHED = '[Image attached in the next message for you to inspect.]'
 TEXT_ONLY = '[Image shown to the human. This text-only model cannot inspect its pixels.]'
+# 'none': the user keeps everything visual from the model (user, 2026-11-17: "a
+# security to prevent online model from seeing real images")
+WITHHELD = ('[Preview withheld: the user turned off visual information for the model. It was shown '
+            'to the human only. Do not describe how anything looks; ask the human instead.]')
+NONE_NOTE = ('[VISION] The user turned off visual information for you: previews and their '
+             'descriptions are withheld. Do not call preview tools to judge looks, colours or '
+             'readability; say you cannot see it and ask the human.')
+ENV = 'QTPY_AI_SIDECAR_VISION'     # told to the application's MCP server: images, text or none
+
+
+def mode(config, sees_images):
+    """'images', 'text' or 'none': what reaches the model about how things look."""
+    if sees_images:
+        return 'images'
+    return 'none' if getattr(config, 'vision', 'auto') == 'none' else 'text'
 # cloud models known to take images ('auto' sends previews to these; their
 # model lists do not say): Groq console.groq.com/docs/vision; NVIDIA NIM's VL model
 KNOWN_VISION_MODELS = {'groq': ('qwen/qwen3.8-27b',),
@@ -46,7 +61,7 @@ def detect(config):
     it loads the model's multimodal projector, mmproj*.gguf)."""
     mode = getattr(config, 'vision', 'auto')
     if mode != 'auto':
-        return mode == 'on'
+        return mode == 'on'                # 'text' / 'none' (and the old 'off'): never
     if getattr(config, 'runtime', None):
         from .runtime import vision_projector
         return vision_projector(config.runtime) is not None
