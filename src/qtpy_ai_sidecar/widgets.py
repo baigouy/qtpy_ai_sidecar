@@ -1201,6 +1201,13 @@ class AssistantDock(QDockWidget):
         response_time.setValue(config.generation_timeout_seconds)
         response_time.setSuffix(' s')
         form.addRow('Maximum time per model response', response_time)
+        recovery_time = QSpinBox()
+        recovery_time.setRange(10, 600)
+        recovery_time.setValue(getattr(config, 'response_timeout_s', 60))
+        recovery_time.setSuffix(' s')
+        recovery_time.setToolTip('When a turn stalls, the model is asked for a short text answer (what was done, '
+                                 'what is left); this is how long it may take. Reasoning models need 30-60 s.')
+        form.addRow('Maximum time for a closing answer', recovery_time)
         steps = QSpinBox()
         steps.setRange(1,50)
         steps.setValue(config.max_steps)
@@ -1271,6 +1278,7 @@ class AssistantDock(QDockWidget):
             self.show_context()
             config.thinking_budget = budget.value()
             config.generation_timeout_seconds = response_time.value()
+            config.response_timeout_s = recovery_time.value()
             config.max_steps=steps.value()
             if sees.currentData() != getattr(config, 'vision', 'auto'):
                 config.vision = sees.currentData()

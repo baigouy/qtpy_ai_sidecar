@@ -31,7 +31,10 @@ class Config:
     thinking_budget: int = -1
     provider: str = 'local'
     generation_timeout_seconds: int = 120
-    response_timeout_s: int = 30  # Final-only recovery cap, owned by this model profile.
+    # the cap on a text-only answer asked for after a stalled turn (a summary, "what was
+    # done"): 30 s cut reasoning models off (Mistral Large 4 thinks 30-110 s); 60 s by
+    # default, set in the settings (user, 2026-11-18: "not more than 1 min, a parameter")
+    response_timeout_s: int = 60
     compact_history: bool = True  # false: send every earlier tool result in full (the behaviour before 2026-10-27)
     # Compact history and searches once the payload fills this share of the context; 0 = always (default).
     # 0.5 was tried on 2026-10-27: Qwen 9B never crossed it yet was no faster, and Qwen3.5-4B did worse.
@@ -113,9 +116,13 @@ class Config:
         preferences = config.storage() / 'performance.json'
         if preferences.exists():
             saved = json.loads(preferences.read_text(encoding='utf-8'))
-            for key in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps', 'vision', 'list_choices'):
+            for key in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'response_timeout_s', 'max_steps', 'vision', 'list_choices'):
                 if key in saved:
-                    setattr(config, key, saved[key])
+                    value = saved[key]
+                    if key == 'response_timeout_s' and (isinstance(value, bool) or not isinstance(value, int)
+                                                        or not 10 <= value <= 3600):
+                        continue                  # a hand-edited, invalid value: keep the profile's
+                    setattr(config, key, value)
             if config.runtime:
                 config.runtime = {**config.runtime, **{k: saved[k] for k in ('gpu_layers', 'threads', 'force_cpu') if k in saved}}
         connection = config.storage() / 'connection.json'
@@ -175,7 +182,7 @@ class Config:
             return {}
 
     def save_performance(self):
-        value = {k: getattr(self, k) for k in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'max_steps', 'vision', 'list_choices')}
+        value = {k: getattr(self, k) for k in ('context_tokens', 'output_tokens', 'thinking', 'thinking_strength', 'thinking_budget', 'generation_timeout_seconds', 'response_timeout_s', 'max_steps', 'vision', 'list_choices')}
         value.update({k: self.runtime[k] for k in ('gpu_layers', 'threads', 'force_cpu') if k in self.runtime})
         self.storage().mkdir(parents=True, exist_ok=True)
         (self.storage() / 'performance.json').write_text(json.dumps(value, indent=2), encoding='utf-8')

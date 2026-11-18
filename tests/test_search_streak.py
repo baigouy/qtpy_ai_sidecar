@@ -254,6 +254,58 @@ def test_reads_between_two_edits_are_not_cut_short(tmp_path):
     assert 'check_loop_stopped' not in engine.journal.path.read_text(encoding='utf-8')
 
 
+def test_looking_again_and_again_without_acting_is_stopped(tmp_path):
+    """'put an arrow at the dividing cell in A': 18 previews and no arrow (Mistral Large 4,
+    2026-11-18). At LOOK_NUDGE the model is told to act or ask; at LOOK_STOP tools go off
+    and it answers with what it found and one question."""
+    from qtpy_ai_sidecar.engine import LOOK_NUDGE, LOOK_STOP
+    nudged, asked, calls = [], [], []
+
+    class Looker:
+        n = 0
+
+        async def complete(self, messages, tools, cancel, emit, final_only=False):
+            if final_only or not tools:
+                asked.append(messages[-1]['content'])
+                return {'role': 'assistant', 'content': 'Is the dividing cell the bright one at the top left?'}, {}
+            nudged.append(any(m['role'] == 'system' and 'without changing anything' in m['content'] for m in messages))
+            self.n += 1
+            return {'role': 'assistant', 'content': '', 'tool_calls': [{'id': str(self.n), 'type': 'function', 'function': {
+                'name': 'preview', 'arguments': '{"region": %d}' % self.n}}]}, {}
+
+    class Hub:
+        instructions = []
+        tools = {'look': ('demo', None, SimpleNamespace(name='preview', annotations=SimpleNamespace(readOnlyHint=True)))}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        def model_tools(self):
+            return [{'type': 'function', 'function': {'name': 'preview'}}]
+
+        def direct_ids(self):
+            return {'preview': 'look'}
+
+        def is_read_only(self, ident):
+            return True
+
+        async def execute(self, ident, arguments, emit):
+            calls.append(ident)
+            return {'is_error': False, 'content': f'region {len(calls)}'}
+
+    engine = Engine(Config(state_dir=str(tmp_path)), backend=Looker(), hub_factory=lambda *a: Hub())
+    events = []
+    asyncio.run(engine.turn('put an arrow at the dividing cell in A', lambda *a: events.append(a)))
+    assert len(calls) == LOOK_STOP
+    assert nudged == [False] * LOOK_NUDGE + [True] * (LOOK_STOP - LOOK_NUDGE)
+    assert 'look_loop_stopped' in engine.journal.path.read_text(encoding='utf-8')
+    assert 'ONE concrete question' in asked[0] and 'Nothing was changed' in asked[0]
+    assert any(k == 'assistant' and 'dividing cell' in v for k, v in events)
+
+
 def test_reads_before_any_edit_are_not_cut_short(tmp_path):
     """A question ('which panels are red?') may read as much as it needs."""
     hub = _hub(lambda ident, n: {'is_error': False, 'content': f'catalog page {n}'})

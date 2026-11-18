@@ -22,6 +22,12 @@ CHECK_NUDGE = 2
 # reads in a row after which tools are switched off; one more than the nudge so a step that
 # genuinely needs a few reads before its next edit is not cut short
 CHECK_STOP = 4
+# looks (previews, reads) in a row before any edit: "an arrow at the dividing cell" was
+# 18 previews and no arrow; "rotate so the embryo is horizontal", 7 previews (Mistral
+# Large 4, 2026-11-18). At the nudge: act on a best estimate or ask one question; at the
+# stop, tools are switched off and the model answers with what it found.
+LOOK_NUDGE = 4
+LOOK_STOP = 8
 # "I'll rotate panel a to the right by 30 degrees:" and the turn ends with no call
 # (Qwen3.5-9B, 4 of the first 50 requests of a live replay, 2026-11-14)
 _PROMISE = re.compile(r"(?:\b(?:let me|i'll|i will|i'm going to|i am going to|now i|next i)\b(?!\s+know)[^.!?\n]*[.:…]?|:)\s*$", re.I)
@@ -179,10 +185,14 @@ class Engine:
                         else 'stopped_summary_failed',{'error':str(exc),'tools_submitted':False},emit)
             if fallback:
                 return {'role':'assistant','content':fallback}
+            # the reason is said as it is: this text also appeared when the closing answer only
+            # timed out, and then blamed a search loop that never happened (2026-11-18)
+            why = ('my closing answer did not come in time' if isinstance(exc, GenerationTimeout) else
+                   'my closing answer came back empty' if isinstance(exc, EmptyModelReply) else
+                   'my closing answer tried to run a tool instead of explaining')
             return {'role':'assistant','content':
-                    "I stopped before finishing: I kept looking for another tool instead of acting. "
-                    "No further tool was run; edits already completed remain. Say \"continue\" and I will "
-                    "go on with the tools already found, or ask again in other words."}
+                    f"I stopped before finishing ({why}). No further tool was run; edits already completed "
+                    "remain. Say \"continue\" and I will go on, or ask again in other words."}
         except ReplyProtocolError as exc:
             self.record('text_only_protocol_refusal',{'error':str(exc),'tools_submitted':False},emit)
             return {'role':'assistant','content':
@@ -275,6 +285,7 @@ class Engine:
                 discovery_streak=0     # searches since the last successful application call
                 edited=False           # an edit of this turn succeeded
                 check_streak=0         # successful reads since the last successful edit
+                look_streak=0          # successful reads in a row while nothing is edited yet
                 rejected_results={}   # the same refused call, unchanged: Muse repeated one 31 times
                 verification_repairs=0
                 promise_repairs=0
@@ -299,6 +310,13 @@ class Engine:
                             'do it, call it; otherwise answer the user in plain text: say that this is not available '
                             'as an operation, name the closest thing you can do, and offer to show where it is done '
                             'by hand in the application if that exists. Do not search again.'}]
+                    if not edited and look_streak >= LOOK_NUDGE:
+                        messages = messages + [{'role': 'system', 'content':
+                            f'You have looked {look_streak} times in a row without changing anything. Looking again '
+                            'will not show more. If the request is a question, answer it now from what you read. '
+                            'Otherwise decide now: either act with your best estimate (say it is an estimate '
+                            'the user can adjust, e.g. where you placed it), or ask the user ONE concrete question '
+                            '(which panel, which object, which value). Do not preview or read again first.'}]
                     if edited and check_streak >= CHECK_NUDGE:
                         messages = messages + [{'role': 'system', 'content':
                             'Each edit result above already reports the value read back from the application, and you have '
@@ -522,10 +540,12 @@ class Engine:
                             discovery_streak=0
                         if completion_tool and not discovery_call and not result.get('is_error'):
                             if not read_only:
-                                edited, check_streak = True, 0
+                                edited, check_streak, look_streak = True, 0, 0
                             elif edited:
                                 check_streak += 1
                                 emit('status', 'Changes applied; checking them (Stop keeps them)')
+                            else:
+                                look_streak += 1
                         if result.get('is_error'):
                             signature=json.dumps([name,args,str(result.get('error'))[:500]],sort_keys=True,default=str)
                             rejected_results[signature]=rejected_results.get(signature,0)+1
@@ -596,6 +616,23 @@ class Engine:
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Check loop stopped; no valid text summary returned')
                         summary=await self._finalize_reply(text,summary,state,preview,emit)
                         self.messages.append(summary);self.record('assistant',summary['content'],emit)
+                        return
+                    if not edited and look_streak >= LOOK_STOP:
+                        emit('status','Looked many times without acting; answering instead')
+                        self.journal.record('look_loop_stopped',{'reads_without_edit':look_streak,'tools_enabled':False})
+                        prompt=self._outgoing()+[{'role':'user','content':'(Automatic message from the application, not the user.) '
+                            f'You looked {look_streak} times without changing anything, and tools are now disabled. Answer '
+                            'the user now, in the language of their request: say what you found, what you would do (with '
+                            'your best estimate, e.g. a position), and ask ONE concrete question so they can confirm or '
+                            'correct it. Nothing was changed.'}]
+                        summary=await self._stopped_text_summary(prompt,emit,fallback='I looked at the figure several '
+                            'times without finding a sure way to do it, so nothing was changed. Tell me more precisely '
+                            'which panel or object you mean, or say "continue" and I will act on my best estimate.')
+                        if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Look loop stopped; no valid text summary returned')
+                        summary=await self._finalize_reply(text,summary,state,preview,emit)
+                        summary=self._offer_continue(summary,'stopped')
+                        self.messages.append(summary);self.record('assistant',summary['content'],emit)
+                        interrupted=False
                         return
                     if discovery_streak>=MAX_SEARCH_STREAK and not discovery_stalled:
                         emit('status','Many searches without progress; explaining instead of searching further')

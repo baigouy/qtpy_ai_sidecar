@@ -101,14 +101,18 @@ class ResponseProfileTests(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
-            (root/'performance.json').write_text(json.dumps({'response_timeout_s':999}),encoding='utf-8')
-            for configured,wanted in [({},30),({'response_timeout_s':120},120)]:
+            # an invalid saved value is ignored: the profile's (60 s by default since 2026-11-18)
+            (root/'performance.json').write_text(json.dumps({'response_timeout_s':9999}),encoding='utf-8')
+            for configured,wanted in [({},60),({'response_timeout_s':120},120)]:
                 profile=root/'profile.json'
                 profile.write_text(json.dumps({'state_dir':directory,**configured}),encoding='utf-8')
                 config=Config.load(profile)
                 self.assertEqual(config.response_timeout_s,wanted)
-                config.save_performance()
-                self.assertNotIn('response_timeout_s',json.loads((root/'performance.json').read_text(encoding='utf-8')))
+            # the user's setting (Settings > Maximum time for a closing answer) is saved and wins
+            config.response_timeout_s=45
+            config.save_performance()
+            self.assertEqual(json.loads((root/'performance.json').read_text(encoding='utf-8'))['response_timeout_s'],45)
+            self.assertEqual(Config.load(profile).response_timeout_s,45)
     def test_invalid_recovery_budgets_are_rejected(self):
         from qtpy_ai_sidecar.config import Config
         for value in (0,9,3601,True,'120'):
