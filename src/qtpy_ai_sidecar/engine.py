@@ -409,8 +409,17 @@ class Engine:
                         emit('status', 'Model reply missing or timed out; recovering a text-only summary. No tools or edits will be replayed.')
                         self.journal.record('reply_recovery', {'method': 'one text-only generation', 'tools_enabled': False, 'cause': type(exc).__name__, 'error': str(exc)})
                         summary_messages = messages + [{'role': 'system', 'content': 'The previous generation returned no visible final reply. Summarize ONLY verified results already in this conversation. Tools are disabled. Do not claim changes unless a verified result proves them. If inspection shows the requested state already existed, say so clearly. If work remains, explain that honestly; no edits have been replayed.'}]
-                        answer, usage = await self.backend.complete(summary_messages, [], self.cancel, emit, final_only=True)
-                        if answer.get('tool_calls') or not answer.get('content'):
+                        # the recovery reply itself may try a tool again (Mistral Large 4 after a 120 s
+                        # timeout on a preview image, 2026-11-18): the turn ended on a bare error. Ask
+                        # once more in plain words, else say what happened ourselves
+                        slow = ('the model took too long to answer' if isinstance(exc, GenerationTimeout)
+                                else 'the model returned an empty answer')
+                        answer = await self._stopped_text_summary(
+                            summary_messages, emit,
+                            fallback=(f"I stopped before finishing: {slow}. Nothing else was run; the edits already "
+                                      "made are kept. Say \"continue\" and I will go on from there."))
+                        usage = None
+                        if not answer.get('content'):
                             raise RuntimeError('Text-only recovery failed; no tool call executed')
                     if not answer.get('tool_calls'):
                         answer=await self._finalize_reply(text,answer,state,preview,emit)

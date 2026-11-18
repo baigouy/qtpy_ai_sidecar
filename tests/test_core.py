@@ -116,6 +116,26 @@ def test_empty_reply_recovers_without_replaying_edit(tmp_path):
     assert any(kind == 'assistant' and 'white' in value for kind,value in events)
 
 
+def test_timeout_then_a_tool_call_in_the_recovery_explains_instead_of_failing(tmp_path):
+    """Mistral Large 4, 2026-11-18: a reply timed out after a preview image, the text-only
+    recovery answered with a tool call, and the turn ended on a bare error."""
+    from qtpy_ai_sidecar.backend import GenerationTimeout, TextOnlyToolCall
+    class Model(ScriptedModel):
+        async def complete(self, messages, tools, cancel, emit, max_tokens=None, final_only=False):
+            if final_only:
+                raise TextOnlyToolCall('Text-only recovery returned a tool call; nothing executed')
+            if self.step == 1:
+                self.step += 1
+                raise GenerationTimeout('Model response exceeded 120s.')
+            return await super().complete(messages, tools, cancel, emit)
+    config = Config(state_dir=str(tmp_path/'state'), servers=servers(tmp_path/'doc.json'))
+    engine = Engine(config, backend=Model())
+    events = []
+    asyncio.run(engine.turn('Make all labels white', lambda *args: events.append(args)))
+    replies = [value for kind, value in events if kind == 'assistant']
+    assert replies and 'took too long' in replies[-1] and 'continue' in replies[-1]
+
+
 def test_taskgroup_error_exposes_leaf():
     import sys
     if sys.version_info < (3,11):
