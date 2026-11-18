@@ -323,6 +323,20 @@ class PyFiguresAdapter:
     _NUMBER_WORDS = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8,
                      'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12, 'fifteen': 15, 'twenty': 20}
 
+    @staticmethod
+    def _accepts_offered_removal(text, state):
+        """The last answer offered to remove panels ("tell me which one you want and I'll keep
+        only that plot and remove the other three") and the user picks: "I'll go for the box
+        plot finally" was refused twice, then asked to confirm (user chat 2026-11-18)."""
+        import re
+        offer = str((state or {}).get('_last_reply') or '')
+        if not re.search(r"\b(?:remov\w*|delet\w*|keep\s+only|only\s+keep|drop)\b[^.?!\n]*", offer, re.I):
+            return False
+        if not re.search(r"\b(?:which|pick|choose|tell\s+me|confirm|say)\b", offer, re.I):
+            return False                     # a removal it did not offer as a choice
+        # "no", "keep them all", "don't remove": not an acceptance
+        return not re.search(r"\b(?:no|nope|don['’]?t|do\s+not|never|keep\s+(?:them|all|both|every\w*)|none)\b", text, re.I)
+
     @classmethod
     def _over_asked_count(cls, text, state):
         """"build a figure from 10 random images": the model added 11, the guard refused
@@ -449,14 +463,17 @@ class PyFiguresAdapter:
             self._last_editor = (str(args['panel_ref']), args.get('tab') if args.get('tab') in
                                  ('annotations', 'crop', 'rotate', 'scale', 'text') else 'annotations')
             self._turns_since_editor = 0
-        if operation and not read_only and operation not in self._SELF_EDIT_OK and self._wants_to_edit_himself(text):
+        from qtpy_ai_sidecar.quoting import quotes_reply     # absolute: the adapter is also loaded on its own
+        if operation and not read_only and operation not in self._SELF_EDIT_OK and self._wants_to_edit_himself(text) \
+                and not quotes_reply(text, (state or {}).get('_last_reply', '')):     # a pasted option: its "manually" is ours
             # "i wanna edit smallest ROI inset in b" made a second inset (user chat 2026-11-12)
             raise ValueError('SELF_EDIT: the user wants to make this edit by hand, not have it made. Open the editor for '
                              'them: open_annotation_editor(panel_ref=<the panel>) (or show_me_where), then let them work. '
                              'Nothing was changed.')
         if operation in ('delete_last_rows', 'remove_group', 'remove_image', 'ungroup_all_images', 'remove_label_row') and not re.search(
                 r'\b(?:delet\w*|remov\w*|drop|eras\w*|discard|get\s+rid|take\s+out|clear|cut|trim|lose|eliminat\w*|fewer|ungroup\w*|undo|keep\s+only|only\s+keep|just\s+keep)\b', text, re.I) \
-                and not (operation == 'remove_image' and self._over_asked_count(text, state)):
+                and not (operation == 'remove_image' and self._over_asked_count(text, state)) \
+                and not self._accepts_offered_removal(text, state):
             # 'Put 0 pictures per row.' -> columns=0 refused, then delete_last_rows was accepted (24 -> 16 images)
             raise ValueError('REMOVAL_NOT_REQUESTED: the request does not ask to delete or remove anything. Never remove panels or rows as a '
                              'workaround for a refused or impossible edit; explain the problem and ask. Nothing was removed.')
