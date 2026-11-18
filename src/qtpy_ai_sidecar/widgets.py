@@ -574,6 +574,12 @@ class AssistantDock(QDockWidget):
         procedures_menu.addAction('Save this chat as a procedure…', lambda: self.procedure_action('save'))
         procedures_menu.addAction('Run a procedure…', lambda: self.procedure_action('run'))
         procedures_menu.addAction('Step through a chat or procedure…', lambda: self.procedure_action('step'))
+        # a demo video of part of a past chat, without the model: the application films it
+        # (its adapter's make_demo_video; PyFigures: pyfigures.assistant.chat_video)
+        if getattr(adapter, 'make_demo_video', None) is not None:
+            procedures_menu.addSeparator()
+            self.video_action = procedures_menu.addAction('Make a demo video from a chat…',
+                                                          lambda: self.procedure_action('video'))
         self.procedures_button.setMenu(procedures_menu)
         top.addWidget(self.procedures_button)
         self.settings_button = QPushButton(qta.icon('fa5s.cog'), '')
@@ -767,14 +773,14 @@ class AssistantDock(QDockWidget):
 
     def procedure_action(self, which, path=None):
         """Procedures menu: 'replay' a chat turn by turn, 'save' this chat, 'run' a
-        procedure, 'step' through one."""
+        procedure, 'step' through one, film part of a chat as a demo 'video'."""
         from . import procedure_dialog as D
-        if self.busy and which != 'save':
+        if self.busy and which not in ('save', 'video'):
             QMessageBox.information(self, 'Procedures', 'Wait for the current reply (or stop it) first.')
             return None
         try:
             return {'save': D.save_this_chat, 'run': D.run_procedure, 'step': D.step_through,
-                    'replay': D.replay_chat}[which](self, path)
+                    'replay': D.replay_chat, 'video': D.make_demo_video}[which](self, path)
         except Exception as exc:
             QMessageBox.warning(self, 'Procedures', f'{type(exc).__name__}: {exc}')
             return None

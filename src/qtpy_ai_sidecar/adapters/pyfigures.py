@@ -110,6 +110,14 @@ class PyFiguresAdapter:
         return 'edit'
 
     @staticmethod
+    def make_demo_video(dock, chat=None):
+        """Procedures > Make a demo video from a chat…: PyFigures' dialog
+        (pyfigures.gui.chat_video_dialog); the video is filmed off-screen by
+        pyfigures.assistant.chat_video, without the model."""
+        from pyfigures.gui.chat_video_dialog import open_dialog
+        return open_dialog(dock.window(), chat)
+
+    @staticmethod
     def describe_call(tool_name, arguments):
         if tool_name != 'use_pyfigures_tool':
             return tool_name + ' ' + json.dumps(arguments, ensure_ascii=False)

@@ -316,3 +316,33 @@ def test_the_chat_panels_procedures_menu(tmp_path, monkeypatch):
     finally:
         dialog.close()
     app.processEvents()
+
+
+def test_make_a_demo_video_from_the_procedures_menu(tmp_path):
+    """Procedures > Make a demo video from a chat… (2026-11-18): offered when the
+    application can film a chat (its adapter's make_demo_video), with this chat first."""
+    from qtpy.QtWidgets import QApplication
+    from qtpy_ai_sidecar.config import Config
+    from qtpy_ai_sidecar.widgets import AssistantDock
+    app = QApplication.instance() or QApplication([])
+    asked = []
+
+    class Films:
+        def make_demo_video(self, dock, chat=None):
+            asked.append(chat)
+            return 'dialog'
+    plain = AssistantDock(Config(application='Demo', state_dir=str(tmp_path / 'plain')))
+    assert not hasattr(plain, 'video_action')
+    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)), adapter=Films())
+    menu = dock.procedures_button.menu()
+    assert 'Make a demo video from a chat…' in [a.text() for a in menu.actions()]
+    assert dock.procedure_action('video') == 'dialog' and asked == [None]       # nothing asked yet
+    journal = dock.engine.journal.path
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text(_chat(tmp_path).read_text(encoding='utf-8'), encoding='utf-8')
+    dock.busy = True                       # a separate process: allowed while the model answers
+    dock.video_action.trigger()
+    assert asked[-1] == str(journal)
+    assert callable(PyFiguresAdapter.make_demo_video)
+    dock.busy = False
+    app.processEvents()

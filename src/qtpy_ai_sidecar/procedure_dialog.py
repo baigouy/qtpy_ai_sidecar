@@ -604,6 +604,18 @@ def replay_chat(dock, path=None, apply=True, mode=ChatReplay.RECORDED):
 
 
 # -- the chat panel's Procedures menu -------------------------------------------------------
+def make_demo_video(dock, path=None):
+    """Procedures > Make a demo video from a chat…: the application films part of a past
+    chat without the model (its adapter's ``make_demo_video(dock, chat)``, which offers
+    this chat first when it has a log)."""
+    hook = getattr(dock.engine.adapter, 'make_demo_video', None)
+    if hook is None:
+        raise ValueError(f'{dock.engine.config.application} cannot film a chat')
+    if path is None and Path(dock.engine.journal.path).exists():
+        path = str(dock.engine.journal.path)
+    return hook(dock, path)
+
+
 def save_this_chat(dock, path=None):
     """The current chat's edits as a procedure, next to the document by default."""
     journal = dock.engine.journal.path
