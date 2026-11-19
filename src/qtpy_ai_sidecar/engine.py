@@ -29,6 +29,24 @@ CHECK_STOP = 4
 # stop, tools are switched off and the model answers with what it found.
 LOOK_NUDGE = 4
 LOOK_STOP = 8
+# the reply to a blocked read or search once a loop was stopped: the call did not run
+_LOOKS_OFF = ('Not run: looking and searching are switched off for the rest of this request. Make the '
+              'edit now with your best estimate, or answer the user in plain text.')
+
+
+def _last_chance_note(kind):
+    """The message after a first loop stop: act or answer, instead of the turn ending on
+    "I stopped" (the model answered the tools-off summary with a tool call, 2026-11-19)."""
+    why = {'refused': 'The same call was refused three times with the same error. Do not send it again: '
+                      'change what its error says, use another operation, or answer.',
+           'look': 'You looked many times without changing anything. Previews and reads are now switched off.',
+           'search': 'You searched many times. Searches and reads are now switched off.',
+           'repeat': 'You asked again for results you already have. Reads and searches are now switched off.'}[kind]
+    return ('(Automatic message from the application, not the user.) ' + why + ' Now, in ONE step: either '
+            'make the edit the user asked for with the operation you already know (best estimate; say it is '
+            'one the user can adjust), or answer the user in plain text, in the language of their request, '
+            'with what you found and ONE concrete question. Do not claim anything was done that a tool '
+            'result does not show.')
 # "I'll rotate panel a to the right by 30 degrees:" and the turn ends with no call
 # (Qwen3.5-9B, 4 of the first 50 requests of a live replay, 2026-11-14)
 _PROMISE = re.compile(r"(?:\b(?:let me|i'll|i will|i'm going to|i am going to|now i|next i)\b(?!\s+know)[^.!?\n]*[.:…]?|:)\s*$", re.I)
@@ -319,6 +337,10 @@ class Engine:
                 promise_repairs=0
                 read_cache=TurnReadCache()
                 tool_steps=0
+                # the first loop stop of a request gives one last chance to act instead of ending:
+                # with every tool switched off, Mistral Large 4 answered with a tool call twice and
+                # the turn ended on "I stopped" (4 of 256 turns of a live replay, 2026-11-19)
+                last_chance=None       # None, or why reads/searches were switched off ('look', ...)
                 model_tools = hub.model_tools()
                 direct_ids = hub.direct_ids()
                 # Cached-only rounds consume no tool step; extra inference is still bounded.
@@ -480,6 +502,8 @@ class Engine:
                             self.record('tool_call', {'name': name, 'arguments': args}, emit)
                             if name == 'find_application_tools':
                                 discovery_call=True;read_only=True
+                                if last_chance in ('look', 'search', 'repeat'):
+                                    raise ValueError(_LOOKS_OFF)
                                 cache_key=read_cache.key('builtin:find_application_tools',args)
                                 result=read_cache.lookup(cache_key)
                                 if result is None:
@@ -514,6 +538,9 @@ class Engine:
                                                    getattr(annotations,'destructiveHint',None) is True)
                                 if explicit_mutation:read_only=False
                                 elif declared is not None:read_only=declared is True
+                                if (last_chance in ('look', 'search', 'repeat') and
+                                        (read_only or (hasattr(hub,'is_discovery') and hub.is_discovery(args['tool_id'])))):
+                                    raise ValueError(_LOOKS_OFF)
                                 if not read_only:read_cache.invalidate()
                                 epoch_reader=getattr(self.adapter,'read_cache_epoch',None)
                                 epoch=await asyncio.to_thread(epoch_reader) if read_only and epoch_reader else None
@@ -625,6 +652,16 @@ class Engine:
                         self.messages.append(vision.image_message(*latest_image))
                         self.record('image_sent_to_model', {'tool': latest_image[0]}, emit)
                     if step_consumed:tool_steps+=1
+                    stop_kind=('refused' if rejected_loop else
+                               'look' if not edited and look_streak >= LOOK_STOP else
+                               'search' if discovery_streak>=MAX_SEARCH_STREAK and not discovery_stalled else
+                               'repeat' if discovery_stalled else None)
+                    if stop_kind and last_chance is None and tool_steps < self.config.max_steps:
+                        last_chance=stop_kind
+                        self.journal.record('loop_last_chance',{'kind':stop_kind,'reads_and_searches_enabled':stop_kind=='refused'})
+                        emit('status','Going in circles; asking for the edit or an answer now')
+                        self.messages.append({'role':'user','content':_last_chance_note(stop_kind)})
+                        continue
                     if rejected_loop:
                         emit('status','The same call was refused three times; answering without further tools')
                         self.journal.record('rejected_call_loop_stopped',{'identical_refusals':3,'tools_enabled':False})

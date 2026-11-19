@@ -102,7 +102,8 @@ class Hub:
 
     async def execute(self, ident, arguments, emit):
         self.calls.append(arguments)
-        if len(self.calls) <= 3:
+        # 3 refusals, then the one more try after the "last chance" (2026-11-19) is refused too
+        if len(self.calls) <= 4:
             return {'is_error': True, 'error': 'refused: No LUT was changed.'}
         return {'is_error': False, 'content': 'LUT set'}
 
@@ -134,4 +135,4 @@ def test_a_stopped_turn_offers_continue_as_a_choice(tmp_path):
     assert reply.endswith('Should I go on?\n- Continue\n- Stop here'), reply
     assert 'Say "continue"' not in reply
     asyncio.run(engine.turn('Continue', lambda *a: events.append(a)))
-    assert len(calls) == 4 and any(model.notes)
+    assert len(calls) == 5 and any(model.notes)

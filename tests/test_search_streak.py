@@ -299,9 +299,11 @@ def test_looking_again_and_again_without_acting_is_stopped(tmp_path):
     engine = Engine(Config(state_dir=str(tmp_path)), backend=Looker(), hub_factory=lambda *a: Hub())
     events = []
     asyncio.run(engine.turn('put an arrow at the dividing cell in A', lambda *a: events.append(a)))
-    assert len(calls) == LOOK_STOP
-    assert nudged == [False] * LOOK_NUDGE + [True] * (LOOK_STOP - LOOK_NUDGE)
-    assert 'look_loop_stopped' in engine.journal.path.read_text(encoding='utf-8')
+    assert len(calls) == LOOK_STOP                    # the look after the last chance did not run
+    # one more step than the stop: the last chance to act (2026-11-19), spent on a look
+    assert nudged == [False] * LOOK_NUDGE + [True] * (LOOK_STOP - LOOK_NUDGE + 1)
+    log = engine.journal.path.read_text(encoding='utf-8')
+    assert 'loop_last_chance' in log and 'look_loop_stopped' in log
     assert 'ONE concrete question' in asked[0] and 'Nothing was changed' in asked[0]
     assert any(k == 'assistant' and 'dividing cell' in v for k, v in events)
 

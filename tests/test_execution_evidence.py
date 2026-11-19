@@ -58,8 +58,10 @@ def test_unchanged_discovery_is_bounded_without_mutations(tmp_path):
     model=Model();hub=Hub()
     engine=Engine(Config(state_dir=str(tmp_path)),backend=model,hub_factory=lambda *a:hub)
     asyncio.run(engine.turn('Find what can do this',lambda *a:None))
-    assert hub.calls==3 and model.calls==4
-    assert 'discovery_loop_stopped' in engine.journal.path.read_text()
+    # the repeated search after the last chance (2026-11-19) is refused without running: 3 runs
+    assert hub.calls==3 and model.calls==7, (hub.calls, model.calls)
+    log=engine.journal.path.read_text()
+    assert 'loop_last_chance' in log and ('discovery_loop_stopped' in log or 'rejected_call_loop_stopped' in log)
 
 def test_the_same_refused_call_stops_after_three(tmp_path):
     class Hub:
@@ -85,7 +87,8 @@ def test_the_same_refused_call_stops_after_three(tmp_path):
     engine=Engine(Config(state_dir=str(tmp_path)),backend=model,hub_factory=lambda *a:hub)
     events=[]
     asyncio.run(engine.turn('Remove all scale bars',lambda *a:events.append(a)))
-    assert hub.calls==3 and model.calls==4
+    # one more try after the last chance (2026-11-19), then the stop
+    assert hub.calls==4 and model.calls==5, (hub.calls, model.calls)
     assert 'rejected_call_loop_stopped' in engine.journal.path.read_text()
     assert any(k=='assistant' and 'refused' in v for k,v in events)
 
@@ -116,7 +119,7 @@ def test_the_same_refusal_with_shuffled_arguments_stops_after_four(tmp_path):
     model=Model();hub=Hub()
     engine=Engine(Config(state_dir=str(tmp_path)),backend=model,hub_factory=lambda *a:hub)
     asyncio.run(engine.turn('Remove h',lambda *a:None))
-    assert hub.calls==4
+    assert hub.calls==5, hub.calls                # 4, then one more after the last chance (2026-11-19)
     assert 'rejected_call_loop_stopped' in engine.journal.path.read_text()
 
 def test_searches_ask_for_compact_results_only_when_the_context_is_tight(tmp_path):

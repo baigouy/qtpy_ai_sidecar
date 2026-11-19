@@ -125,7 +125,11 @@ def test_repetition_is_bounded_with_one_text_only_recovery(tmp_path):
     subject=engine(tmp_path,hub,model,max_steps=2)
     run(subject)
     assert hub.reads==1 and hub.mutations==0
-    assert model.calls==4 and model.recoveries==1
+    # since 2026-11-19 the first repeat gives one last chance to act (reads refused without
+    # running); with max_steps=2 that step ends the turn at the step limit, still bounded
+    assert model.calls==4 and model.recoveries==0
+    log=subject.journal.path.read_text(encoding='utf-8')
+    assert 'loop_last_chance' in log and 'step_limit' in log
     assert not subject.uncertain
 
 def test_cache_is_not_reused_across_human_turns(tmp_path):
