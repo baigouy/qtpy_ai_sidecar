@@ -3,7 +3,12 @@ from collections import OrderedDict
 import copy
 import json
 
-NOTICE='Already returned above; answer from it. Cached read-only result; no new tool execution.'
+# 2026-11-19: "answer from it" alone sent models that still had an edit to make into a
+# closing answer that wanted a tool (the turn stopped unfinished, 4 times in one replay):
+# say what the next step is instead
+NOTICE=('Already returned above; answer from it. Cached read-only result; no new tool execution. '
+        'Do not read it again: your next step is the operation the request asks for (search for it '
+        'if you do not know it yet) or your final answer.')
 
 class TurnReadCache:
     def __init__(self,limit=64):

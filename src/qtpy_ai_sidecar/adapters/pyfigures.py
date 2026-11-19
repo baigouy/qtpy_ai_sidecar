@@ -137,7 +137,28 @@ class PyFiguresAdapter:
             context['annotation_editor']=self.request('inspect_annotation_objects')
         return context
 
+    current_request = ('', '')
+
+    def request_rules(self):
+        """The application's rules for the topics this request's words call for (scale
+        bars, ROIs, letters...), sent with it: only those, so the first message stays
+        small, and before the model's first step, so it needs no search to learn them
+        (2026-11-19: Mistral previewed a panel seven times for "draw ROIs over every
+        cell" without ever being told detect_objects does it in one call)."""
+        text, earlier = self.current_request
+        if not str(text).strip():
+            return ''
+        try:
+            return str(self.request('request_rules', {'text': text, 'earlier': earlier}).get('rules') or '')
+        except Exception:                # an older PyFigures: no such operation
+            return ''
+
     def context_instructions(self, state):
+        rules = self.request_rules()
+        text = self._context_instructions(state)
+        return text + (' RULES FOR THIS REQUEST (follow them; no search needed to learn them): ' + rules if rules else '')
+
+    def _context_instructions(self, state):
         selection = state.get('selection') or {}
         if (state.get('figure_summary') or {}).get('empty'):
             return ('The figure is empty. For questions about it, reply at once from figure_summary (answer and how_to_add_content), '
@@ -732,6 +753,15 @@ class PyFiguresAdapter:
                 return
             if scope == 'panels' and args.get('panel_ids') == [panels[0]['panel_id']]:
                 return
+            # the selection the request began with may be gone: the model cleared it
+            # (select_live_objects clear=true) and was refused three times on the old one
+            # (replay 2026-11-19, "and don't make it bold neither")
+            try:
+                now = (self.request('inspect').get('selection') or {}).get('selected_panels') or []
+            except Exception:
+                now = panels
+            if len(now) != 1:
+                return
             raise ValueError('Selected-letter request targets only panel ' + panels[0]['panel_id'] + '; no edit submitted. Use scope=selection or that panel_ids list.')
 
     @staticmethod
@@ -788,12 +818,17 @@ class PyFiguresAdapter:
     _MORE_TO_DO = (r'\b(?:and|then|also|after(?:wards)?|before|plus|but|except|unless|if|check|verify|show|preview|'
                    r'et|puis|ensuite|aussi)\b|[;:]|,|\.\s+\S|\?')
 
-    def _batch_completion(self, tool_name, arguments, result, text):
+    def _batch_completion(self, tool_name, arguments, result, text, state=None):
         """One instruction done as one batch, every item applied and read back by the
         figure: the reply is written here (2026-11-13: "rotate all images by 25 degrees"
         was done in 2 s, then an inspect and a re-read made the user wait 45 s)."""
         import re
         if tool_name != 'use_pyfigures_tool' or not arguments.get('batch') or result.get('is_error'):
+            return None
+        if str((state or {}).get('_last_reply') or '').rstrip().endswith('?'):
+            # an answer to the assistant's question ("data plot"): the work is the request
+            # before it, often several batches (chat 2026-11-19: the turn ended after the
+            # first 6 of 20 files, "Done: add image (group_path=[]) on 6 items")
             return None
         if re.search(self._MORE_TO_DO, text.strip().rstrip('.!'), re.I):
             return None                        # more than one thing asked: the model goes on
@@ -804,6 +839,9 @@ class PyFiguresAdapter:
         total = body.get('batch_total')
         if not body.get('verified') or body.get('errors') or not total or body.get('batch_done') != total:
             return None
+        if str(arguments.get('tool_name', '')).startswith('add_') and any(
+                int(n) > total for n in re.findall(r'\b(\d{1,3})\b', text)):
+            return None                        # "the first 20 files": 6 added so far, the rest follows
         name = str(arguments.get('tool_name', 'the operation')).replace('_', ' ')
         shared = arguments.get('arguments') or {}
         refs = [str(i.get('panel_ref')) for i in arguments['batch'] if isinstance(i, dict) and i.get('panel_ref')]
@@ -814,14 +852,17 @@ class PyFiguresAdapter:
             where = f'{total} items in panel{"s" if len(panels) > 1 else ""} **' + '**, **'.join(panels) + '**'
         else:
             where = f'{total} items'
-        how = ', '.join(f'{k}={v}' for k, v in shared.items() if k not in ('panel_ref', 'pyf_path'))
+        # what was set, in the user's terms: not where it went (group_path=[] read as an error)
+        how = ', '.join(f'{k}={v}' for k, v in shared.items()
+                        if k not in ('panel_ref', 'pyf_path', 'group_path', 'session_id', 'expected_revision')
+                        and v not in ([], {}, '', None))
         return (f'Done: {name}' + (f' ({how})' if how else '') + f' on {where}, in one step. '
                 'Each one was read back in the open figure.')
 
     def verified_completion(self, tool_name, arguments, result, state, text):
         import re
         if re.search(r'\b(?:select|highlight|pick)\b',text,re.I):return None
-        batched = self._batch_completion(tool_name, arguments, result, text)
+        batched = self._batch_completion(tool_name, arguments, result, text, state)
         if batched:
             return batched
         name = arguments.get('tool_name') if tool_name == 'use_pyfigures_tool' else tool_name
@@ -887,6 +928,16 @@ class PyFiguresAdapter:
             letter = m.group(1).lower()
             if letter in ('a', 'i') and not re.match(r'(?:panel|image|picture)\b', m.group(0), re.I):
                 continue                    # "in a minute", "of I": only "panel a" names a / i
+            if letter in letters:
+                return letters[letter]
+        # "the b crop", "b's crop": a letter before a thing of a panel (user 2026-11-19:
+        # "let me edit the b crop" opened the selected panel, g, on the crop tab)
+        things = (r"(?:crop\w*|rois?|insets?|images?|panels?|annotations?|arrows?|scale\s*bars?|bars?|texts?|"
+                  r"labels?|rotation|editor|channels?|colou?rs?|luts?)")
+        for m in re.finditer(r"\b([a-z])(['’]s)?\s+" + things + r"\b", text, re.I):
+            letter = m.group(1).lower()
+            if letter in ('a', 'i') and not m.group(2):
+                continue                    # "a crop", "I crop it": an article or a pronoun
             if letter in letters:
                 return letters[letter]
         m = re.search(r"#\s?(\d+)\b", text)

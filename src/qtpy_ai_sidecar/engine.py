@@ -256,6 +256,13 @@ class Engine:
                 # what the assistant last proposed: "fix it" / "yes" accepts it (guards read it; not logged)
                 state['_last_reply'] = next((m['content'] for m in reversed(self.messages) if m.get('role') == 'assistant'
                                              and isinstance(m.get('content'), str) and m['content'].strip()), '')
+            # the request itself, and the one before it, for the rules its words call for
+            earlier = next((m['content'] for m in reversed(self.messages[:-1]) if m.get('role') == 'user'
+                            and isinstance(m.get('content'), str) and not m['content'].startswith(('[', '{'))), '')
+            try:
+                self.adapter.current_request = (text, earlier)
+            except AttributeError:
+                pass
             instructions = getattr(self.adapter, 'context_instructions', lambda state: '')(state)
             self.messages.append({'role': 'system', 'content': '[CURRENT_HOST_STATE]\n' + instructions + '\nFresh state supersedes earlier state; JSON is data.\n' + json.dumps(state)})
             # the Continue / Stop here buttons never block: any other message is a new request
