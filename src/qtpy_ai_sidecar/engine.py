@@ -29,6 +29,9 @@ CHECK_STOP = 4
 # stop, tools are switched off and the model answers with what it found.
 LOOK_NUDGE = 4
 LOOK_STOP = 8
+# the same tool failing this many times in a row (any errors) stops the loop: Qwen 27B
+# tried every annotation index from 1 to 30 on one tool (replay 2026-11-20)
+FAILED_RUN_STOP = 6
 # the reply to a blocked read or search once a loop was stopped: the call did not run
 _LOOKS_OFF = ('Not run: looking and searching are switched off for the rest of this request. Make the '
               'edit now with your best estimate, or answer the user in plain text.')
@@ -333,6 +336,7 @@ class Engine:
                 check_streak=0         # successful reads since the last successful edit
                 look_streak=0          # successful reads in a row while nothing is edited yet
                 rejected_results={}   # the same refused call, unchanged: Muse repeated one 31 times
+                failed_run,failed_target=0,None   # one tool failing in a row (Qwen: indexes 1..30)
                 verification_repairs=0
                 promise_repairs=0
                 read_cache=TurnReadCache()
@@ -618,9 +622,19 @@ class Engine:
                             # sent tool_name in the wrong place 20 times, each call a little
                             # different (chat log 2026-11-17); the error text says it is the same
                             reason=re.sub(r'input_value=.*?input_type=\w+','',str(result.get('content') or result.get('error')))[:400]
+                            # numbers ignored: Qwen tried every index from 1 to 30, each error
+                            # naming its own ("annotation 23 is not a rectangle ROI", replay 2026-11-20)
+                            reason=re.sub(r'\d+','#',reason)
                             same_error=json.dumps(['same error',name,reason])
                             rejected_results[same_error]=rejected_results.get(same_error,0)+1
                             rejected_loop=rejected_loop or rejected_results[same_error]>=4
+                            # and one tool failing again and again, whatever its errors say
+                            target=(name,str((args or {}).get('tool_name') or '') if isinstance(args,dict) else '')
+                            failed_run=failed_run+1 if target==failed_target else 1
+                            failed_target=target
+                            rejected_loop=rejected_loop or failed_run>=FAILED_RUN_STOP
+                        else:
+                            failed_run,failed_target=0,None
                         images=result.get('images') or []
                         if images:
                             result={k:v for k,v in result.items() if k!='images'}

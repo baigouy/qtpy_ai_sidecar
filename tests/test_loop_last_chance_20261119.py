@@ -117,3 +117,35 @@ def test_after_three_identical_refusals_a_corrected_call_runs(tmp_path):
     log = engine.journal.path.read_text(encoding='utf-8')
     assert 'loop_last_chance' in log and 'rejected_call_loop_stopped' not in log
     assert any(k == 'assistant' and 'inside the image' in v for k, v in events)
+
+
+def test_guessing_index_after_index_is_stopped(tmp_path):
+    """Replay 2026-11-20: Qwen 27B got "annotation N is not a rectangle ROI" and tried every
+    N from 1 to 30, one call each, until the 32 steps ran out. Each error named its own N,
+    so no two looked the same. Numbers are now ignored, and one tool failing again and
+    again stops the loop."""
+    from qtpy_ai_sidecar.engine import FAILED_RUN_STOP
+
+    class Guesser:
+        n = 0
+
+        async def complete(self, messages, tools, cancel, emit, final_only=False):
+            self.n += 1
+            if final_only or not tools:
+                return {'role': 'assistant', 'content': 'This panel has no rectangle ROI to join.'}, {}
+            if _last_chance_given(messages):
+                return {'role': 'assistant', 'content': 'This panel has no rectangle ROI to join.'}, {}
+            return _call(self.n, 'add_arrow', '{"x": %d}' % (1000 + self.n))
+
+    class _NumberedHub(_Hub):
+        async def execute(self, ident, arguments, emit):
+            self.calls.append((ident, arguments))
+            return {'is_error': True, 'error': f"annotation {arguments['x']} is not a rectangle ROI"}
+
+    hub = _NumberedHub()
+    engine = Engine(Config(state_dir=str(tmp_path)), backend=Guesser(), hub_factory=lambda *a: hub)
+    events = []
+    asyncio.run(engine.turn('draw leader lines from the ROI to the inset', lambda *a: events.append(a)))
+    assert len(hub.calls) <= FAILED_RUN_STOP, len(hub.calls)
+    assert 'loop_last_chance' in engine.journal.path.read_text(encoding='utf-8')
+    assert any(k == 'assistant' and 'no rectangle ROI' in v for k, v in events)
