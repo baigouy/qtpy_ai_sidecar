@@ -94,6 +94,21 @@ def test_an_impossible_layout_never_turns_into_a_deletion():
     for request in ('Delete the last two rows.','Keep only the first four rows.','Remove the final row','Get rid of the bottom row'):
         adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name='delete_last_rows',arguments={'count':2}),{},request)
 
+def test_the_model_may_take_back_the_rois_it_just_added():
+    """Replay 2026-11-20: detect_objects added 84 specks on panel e, remove_rois was refused
+    ("you did not finish" asks no removal) and the model deleted them one call at a time.
+    ROIs this request added to that panel may be removed again; others stay protected."""
+    adapter=PyFiguresAdapter('unused')
+    call=lambda op,args,text: adapter.validate_tool_call('use_pyfigures_tool',dict(tool_name=op,arguments=args),{},text)
+    with pytest.raises(ValueError,match='REMOVAL_NOT_REQUESTED.*ONE call'):
+        call('remove_rois',{'panel_ref':'e'},'you did not finish')
+    call('detect_objects',{'panel_ref':'e','shape':'ellipse'},'you did not finish')
+    call('remove_rois',{'panel_ref':'e'},'you did not finish')                 # its own ROIs: allowed
+    with pytest.raises(ValueError,match='REMOVAL_NOT_REQUESTED'):
+        call('remove_rois',{'panel_ref':'f'},'you did not finish')             # another panel: not
+    with pytest.raises(ValueError,match='REMOVAL_NOT_REQUESTED'):
+        call('remove_rois',{'panel_ref':'e'},'make them red')                  # a new request: not
+
 def test_a_missing_named_panel_is_never_retargeted():
     adapter=PyFiguresAdapter('unused')
     for call in (('select_live_objects',{'panel_ids':['0/0']}),('edit_panel_letters',{'action':'style','scope':'selection','color':'#0000ff'})):

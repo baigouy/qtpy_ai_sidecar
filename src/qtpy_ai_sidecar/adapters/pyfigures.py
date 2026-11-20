@@ -463,12 +463,22 @@ class PyFiguresAdapter:
                              f'preview_panel(panel_ref="{ref}") first: it shows that panel\'s whole source image with '
                              f'pixel rulers and its current crop. Read the region\'s edges off the rulers, then crop once. '
                              f'Nothing was changed.')
-        if operation == 'remove_rois' and not re.search(
+        # the panels this request has added ROIs to: removing them again is cleaning up its own
+        # work (replay 2026-11-20: detect_objects added 84 specks, remove_rois was refused, and
+        # the model deleted them one call at a time until the steps ran out)
+        if getattr(self, '_rois_added', (None, set()))[0] != text:
+            self._rois_added = (text, set())
+        if operation in ('detect_objects', 'add_roi_rect', 'add_roi_ellipse', 'add_roi_polygon', 'add_roi_line') \
+                and args.get('panel_ref'):
+            self._rois_added[1].add(str(args['panel_ref']).lower())
+        own_rois = str(args.get('panel_ref') or '').lower() in self._rois_added[1]
+        if operation == 'remove_rois' and not own_rois and not re.search(
                 r'\b(?:remov\w*|delet\w*|clear\w*|eras\w*|get\s+rid|replac\w*|instead|rather|prefer\w*|swap\w*|'
                 r'turn\w*\s+(?:them|the\s+\w+)\s+into|change\w*|convert\w*|start\s+(?:over|again)|redo|undo)\b', text, re.I):
             # bulk removal only for words that ask to remove or replace the ROIs
             raise ValueError('REMOVAL_NOT_REQUESTED: remove_rois deletes every ROI of the panel; the request does '
-                             'not ask to remove or replace ROIs. Nothing was removed.')
+                             'not ask to remove or replace ROIs. Nothing was removed. To take back only some ROIs, '
+                             'remove_annotation with batch=[{"annotation_index": ...}, ...] in ONE call.')
         if (operation in ('add_roi_rect', 'add_roi_ellipse', 'add_roi_polygon', 'add_arrow')
                 and re.search(r'\b(?:cells?|nucle(?:us|i)|embryos?|objects?|blobs?|spots?|particles?|beads?)\b', text, re.I)
                 and getattr(self, '_panel_previewed_for', None) != text):
