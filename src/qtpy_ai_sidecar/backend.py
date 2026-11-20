@@ -138,6 +138,119 @@ def apply_reasoning_strength(transport, config, final_only, emit):
         transport.insert(0, {'role': 'system', 'content': line})
 
 
+# notes the host re-sends every turn / step with the same words: kept in the leading system
+# message, which then stays the same from one request to the next
+_SESSION_NOTES = ('Connected application MCP guidance', '[ACTION_MODE]', '[VISION]')
+HOST_NOTE = '[Host note, from the application, not the user]\n'
+
+
+def _with_note(message, note):
+    """*message* with *note* added at the end of its content (text or a list of parts)."""
+    content = message.get('content')
+    if isinstance(content, list):
+        return dict(message, content=list(content) + [{'type': 'text', 'text': '\n\n' + HOST_NOTE + note}])
+    return dict(message, content=(content or '') + '\n\n' + HOST_NOTE + note)
+
+
+def cache_friendly(messages):
+    """One leading system message, as local chat templates require, WITHOUT changing the
+    start of the prompt from one request to the next: llama.cpp reuses the part of the
+    prompt it has already read only up to the first difference. All system messages used
+    to be merged into the leading one, so the per-turn host state changed the very start
+    and every turn re-read the whole conversation (replay 2026-11-20: 234 of 712 calls,
+    78 of 104 min of prompt processing). Now:
+      * the first system message and the notes repeated with the same words every turn
+        (tool guidance, action mode, vision) make the leading system message;
+      * any other system note (the turn's host state, a human action...) is added to the
+        message before it, which never changes afterwards;
+      * notes after the last message (one-request nudges) are added to the last message."""
+    if not messages:
+        return []
+    head = [messages[0]['content']] if messages[0]['role'] == 'system' else []
+    rest = messages[1:] if messages[0]['role'] == 'system' else list(messages)
+    session = {}
+    out = []
+    pending = []           # notes after an assistant reply: they go with the next message
+    for m in rest:
+        if m['role'] != 'system':
+            if pending and m['role'] in ('user', 'tool'):
+                m = _with_note(m, '\n\n'.join(pending))
+                pending = []
+            out.append(m)
+            continue
+        text = m['content'] if isinstance(m['content'], str) else str(m['content'])
+        if text.startswith(_SESSION_NOTES):
+            session[text.split('\n', 1)[0][:40]] = text        # the latest of each kind
+        elif out and out[-1]['role'] in ('user', 'tool'):
+            out[-1] = _with_note(out[-1], text)
+        elif out:
+            pending.append(text)
+        else:
+            head.append(text)
+    if pending:
+        out.append({'role': 'user', 'content': HOST_NOTE + '\n\n'.join(pending)})
+    head += [session[k] for k in sorted(session)]
+    transport = [{'role': 'system', 'content': '\n\n'.join(head)}] if head else []
+    return transport + out
+
+
+def cache_key(messages):
+    """The label of a conversation for the provider's prompt cache (OpenAI, Mistral:
+    `prompt_cache_key`), the same for every request of it: a hash of its first system and
+    first user message, so nothing of the conversation itself is sent in it."""
+    import hashlib
+    first = next((m for m in messages if m['role'] == 'system'), {}).get('content')
+    user = next((m for m in messages if m['role'] == 'user'), {}).get('content')
+    text = json.dumps([first, user], sort_keys=True, default=str)
+    return 'qtpy-sidecar-' + hashlib.sha256(text.encode('utf-8', 'replace')).hexdigest()[:24]
+
+
+EPHEMERAL = {'type': 'ephemeral'}
+
+
+def _marked(message):
+    """*message* with a cache mark on its last content part (a string becomes one text part)."""
+    content = message.get('content')
+    if isinstance(content, str):
+        parts = [{'type': 'text', 'text': content}] if content else []
+    else:
+        parts = [dict(p) for p in content or []]
+    if not parts:
+        return message
+    parts[-1]['cache_control'] = EPHEMERAL
+    return dict(message, content=parts)
+
+
+def mark_cache_points(transport, model):
+    """OpenRouter passes Claude's and Gemini's prompt caching through only with explicit
+    marks (`cache_control` on a content part): the leading system message (the tools come
+    before it, so they are cached with it), and for Claude also the last user / tool
+    message, so each request reads the whole conversation before it from the cache.
+    Other models there cache by themselves."""
+    name = (model or '').lower()
+    claude, gemini = name.startswith('anthropic/'), name.startswith('google/gemini')
+    if not (claude or gemini) or not transport:
+        return transport
+    out = list(transport)
+    if out[0]['role'] == 'system':
+        out[0] = _marked(out[0])
+    if claude and len(out) > 1 and out[-1]['role'] in ('user', 'tool'):
+        out[-1] = _marked(out[-1])
+    return out
+
+
+def with_cached_tokens(usage):
+    """*usage* with `cached_tokens`: the prompt tokens the provider read from its cache
+    (OpenAI / Mistral / OpenRouter: prompt_tokens_details.cached_tokens; llama.cpp:
+    prompt_tokens_details too, when it reports it)."""
+    if not isinstance(usage, dict):
+        return usage
+    cached = (usage.get('prompt_tokens_details') or {}).get('cached_tokens')
+    if isinstance(cached, int):
+        usage = dict(usage, cached_tokens=cached)
+    return usage
+
+
 class ModelClient:
     def __init__(self, config, secret_sink=lambda value: None):
         self.config = config
@@ -164,13 +277,17 @@ class ModelClient:
             self.secret_sink(key)
             if key:
                 headers['Authorization'] = 'Bearer ' + key
-        # Many local templates require one leading system message.
-        systems = [m['content'] for m in messages if m['role'] == 'system']
-        transport = ([{'role': 'system', 'content': '\n\n'.join(systems)}] if systems else [])
-        transport += [m for m in messages if m['role'] != 'system']
+        # One leading system message (many local templates require it), and the start of the
+        # prompt the same from request to request: llama.cpp and the providers' prompt caches
+        # reuse what was already read only up to the first difference (all system messages
+        # used to be merged at the front, so the per-turn host state broke every cache)
+        transport = cache_friendly(messages)
         payload = dict(model=self.config.model, messages=transport, stream=True,
                        max_tokens=max_tokens or self.config.output_tokens, temperature=0.2,
                        stream_options={'include_usage': True})
+        if self.config.provider in ('openai', 'mistral'):
+            # routes the conversation's requests to the same cache (cached input: 10 % of the price)
+            payload['prompt_cache_key'] = cache_key(messages)
         if self.config.provider == 'openai':
             payload['max_completion_tokens'] = payload.pop('max_tokens')
             payload.pop('temperature')
@@ -178,6 +295,7 @@ class ModelClient:
         elif self.config.provider == 'openrouter':
             headers['X-Title'] = 'QtPy AI Sidecar'
             payload.pop('temperature')
+            payload['messages'] = transport = mark_cache_points(transport, self.config.model)
         elif self.config.provider == 'groq':
             # reasoning stays out of the reply text (Qwen would otherwise put <think> in it);
             # gpt-oss models take include_reasoning instead
@@ -243,6 +361,11 @@ class ModelClient:
                         continue
                     if response.status_code >= 400:
                         detail = (await response.aread()).decode(errors='replace')[:1500]
+                        if (response.status_code in (400, 422) and 'prompt_cache_key' in payload
+                                and 'prompt_cache_key' in detail and attempt < SERVER_RETRIES):
+                            # a server that does not take the cache label: the same request without it
+                            payload.pop('prompt_cache_key')
+                            continue
                         raise RuntimeError(per_minute_limit_message(detail) or f'Model HTTP {response.status_code}: {detail}')
                     async for line in response.aiter_lines():
                         if not line.startswith('data:'):
@@ -308,7 +431,7 @@ class ModelClient:
                 message['reasoning_content'] = reasoning
             if calls:
                 message['tool_calls'] = [calls[i] for i in sorted(calls)]
-            return message, usage
+            return message, with_cached_tokens(usage)
         started = time.monotonic()
         timeout = min(self.config.generation_timeout_seconds, getattr(self.config, "response_timeout_s", 30)) if final_only else self.config.generation_timeout_seconds
         task = asyncio.create_task(generate())

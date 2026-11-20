@@ -1349,7 +1349,10 @@ class AssistantDock(QDockWidget):
         sent, written = usage.get('prompt_tokens'), usage.get('completion_tokens')
         if isinstance(sent, int) and isinstance(written, int):
             thought = (usage.get('completion_tokens_details') or {}).get('reasoning_tokens')
-            text += (f' · last reply: {sent:,} tokens sent, {written:,} written'
+            cached = usage.get('cached_tokens')
+            text += (f' · last reply: {sent:,} tokens sent'
+                     + (f' ({cached:,} from the cache)' if isinstance(cached, int) and cached else '')
+                     + f', {written:,} written'
                      + (f' ({thought:,} thinking)' if isinstance(thought, int) and thought else ''))
         self.context.setText(text)
 

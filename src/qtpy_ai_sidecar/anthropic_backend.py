@@ -5,7 +5,33 @@ import time
 import httpx
 from .credentials import get_key
 from .backend import (SERVER_RETRIES, SERVER_ERRORS, RATE_LIMIT_RETRIES, connect_stream,
-                      rate_limit_wait, per_minute_limit_message)
+                      rate_limit_wait, per_minute_limit_message, cache_friendly, EPHEMERAL)
+
+_MARKABLE = ('text', 'image', 'tool_result', 'document')
+
+
+def add_cache_points(payload):
+    """Claude's prompt cache needs explicit marks: one on the system prompt (the tools come
+    before it and are cached with it), one on the last block of the last message, so each
+    request reads the conversation before it from the cache (reads cost ~10 % of input)."""
+    if payload.get('system'):
+        payload['system'] = [{'type': 'text', 'text': payload['system'], 'cache_control': EPHEMERAL}]
+    messages = payload.get('messages') or []
+    if messages and messages[-1]['content'] and messages[-1]['content'][-1].get('type') in _MARKABLE:
+        last = dict(messages[-1], content=list(messages[-1]['content']))
+        last['content'][-1] = dict(last['content'][-1], cache_control=EPHEMERAL)
+        payload['messages'] = messages[:-1] + [last]
+    return payload
+
+
+def normalized_usage(usage):
+    """Claude's usage with the fields the chat reads: prompt_tokens (the whole prompt:
+    uncached + written to + read from the cache), completion_tokens, cached_tokens."""
+    if not isinstance(usage, dict) or 'input_tokens' not in usage:
+        return usage
+    read = usage.get('cache_read_input_tokens') or 0
+    prompt = usage['input_tokens'] + (usage.get('cache_creation_input_tokens') or 0) + read
+    return dict(usage, prompt_tokens=prompt, completion_tokens=usage.get('output_tokens'), cached_tokens=read)
 
 
 def _anthropic_part(part):
@@ -48,7 +74,8 @@ def convert_messages(messages):
 async def complete(config, messages, tools, cancel, emit, max_tokens, secret_sink):
     key = get_key(config)
     secret_sink(key)
-    system, converted = convert_messages(messages)
+    # the per-turn host notes after what was already sent, not merged into the system prompt
+    system, converted = convert_messages(cache_friendly(messages))
     output = max_tokens or config.output_tokens
     payload = dict(model=config.model, max_tokens=output, system=system, messages=converted, stream=True)
     if tools:
@@ -68,6 +95,8 @@ async def complete(config, messages, tools, cancel, emit, max_tokens, secret_sin
             payload['thinking'] = {'type': 'enabled', 'budget_tokens': max(1024, min(requested, output - 512))}
         else:
             raise ValueError('Choose a Claude thinking capability compatible with the selected model')
+    add_cache_points(payload)
+
     async def generate():
         blocks, fragments, usage, finish, stopped, chars = {}, {}, {}, None, False, 0
         headers = {'x-api-key': key, 'anthropic-version': '2023-06-01'}
@@ -138,7 +167,7 @@ async def complete(config, messages, tools, cancel, emit, max_tokens, secret_sin
             answer['tool_calls'] = calls
         if not answer['content'] and not calls:
             raise RuntimeError('Claude returned no text or tool call')
-        return answer, usage
+        return answer, normalized_usage(usage)
     from .backend import GenerationTimeout
     started = time.monotonic()
     task = asyncio.create_task(generate())
