@@ -55,3 +55,6 @@ id_ecdsa*
 *token*.txt
 *.kdbx
 client_secret*.json
+
+# design notes for coding agents, kept local (user 2026-11-20)
+MCP_MANIFEST.md
