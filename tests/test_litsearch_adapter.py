@@ -104,7 +104,7 @@ def test_tools_are_classified_and_unknown_ones_left_to_their_server():
 
 def test_no_undo_is_offered():
     adapter = L.LitsearchAdapter('unused.json')
-    assert adapter.finish() == {'controls': []} and not adapter.supports_preview
+    assert adapter.finish() == {'controls': []}
     with pytest.raises(ValueError, match='no undo'):
         adapter.control('undo')
 

@@ -6,22 +6,15 @@ from qtpy_ai_sidecar.config import Config
 from qtpy_ai_sidecar.widgets import AssistantDock, choices
 
 
-def test_preview_edits_is_parked(tmp_path, monkeypatch):
-    """'Preview edits before applying' stays hidden and unchecked, even for an
-    adapter that supports it, until it is tested (2026-11-03); the code is kept."""
-    from qtpy_ai_sidecar import widgets
-    from qtpy_ai_sidecar.adapters import NullAdapter
+def test_there_is_no_preview_draft_mode(tmp_path):
+    """'Preview edits before applying' was removed (user, 2026-11-21: "useless and
+    problematic"; each answer's Undo takes its edits back): no checkbox, no draft."""
+    from qtpy.QtWidgets import QCheckBox
     app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(NullAdapter, 'supports_preview', True)
     dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
     dock.show()
-    assert widgets.PREVIEW_EDITS_PARKED
-    assert not dock.preview.isVisible() and not dock.preview.isChecked()
-    dock.close()
-    monkeypatch.setattr(widgets, 'PREVIEW_EDITS_PARKED', False)
-    dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
-    dock.show()
-    assert dock.preview.isVisible()
+    assert not hasattr(dock, 'preview')
+    assert not [c for c in dock.findChildren(QCheckBox) if 'Preview edits' in c.text()]
     dock.close()
 
 

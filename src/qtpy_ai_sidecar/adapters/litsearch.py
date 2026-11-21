@@ -29,7 +29,6 @@ TOOLS = READ_ONLY_TOOLS | VIEW_TOOLS | DATA_TOOLS
 
 
 class LitsearchAdapter:
-    supports_preview = False
 
     def __init__(self, descriptor):
         self.descriptor = Path(descriptor).expanduser()
@@ -133,7 +132,7 @@ class LitsearchAdapter:
             'Never ask for or write an API key: the NCBI key stays in litsearch\'s settings and is used '
             f'by search_external automatically. Results shown now: {local} local, {external} external.')
 
-    def begin(self, text, preview=False):
+    def begin(self, text):
         return {}
 
     def finish(self, interrupted=False):

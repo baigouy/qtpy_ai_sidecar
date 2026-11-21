@@ -18,9 +18,6 @@ from .engine import Engine
 from .config import DEFAULT_NOTICE, DEFAULT_REMOTE_NOTICE
 from .adapters import NullAdapter
 
-# "Preview edits before applying" is parked (hidden, never checked) until it
-# has been tested by hand (2026-11-03); set False to offer it again.
-PREVIEW_EDITS_PARKED = True
 # config.vision: menu label, icon, button tooltip
 VISION_CHOICES = {
     'auto': ('Automatic: real images for vision models, else text', 'mdi6.eye-check-outline',
@@ -633,10 +630,6 @@ class AssistantDock(QDockWidget):
         bar.sliderReleased.connect(self._scroll_action)
         bar.actionTriggered.connect(self._scroll_action)
         root.addWidget(self.scroll, 1)
-        self.preview = QCheckBox('Preview edits before applying')
-        # parked until the author has tested it: kept unchecked and hidden
-        self.preview.setVisible(not PREVIEW_EDITS_PARKED and bool(getattr(self.engine.adapter, 'supports_preview', False)))
-        root.addWidget(self.preview)
         self.composer_frame = QFrame()
         self.composer_frame.setObjectName('composerFrame')
         composer_layout = QVBoxLayout(self.composer_frame)
@@ -861,7 +854,7 @@ class AssistantDock(QDockWidget):
             self.clear_choices()
             self.last_assistant = value
             self.last_assistant_layout = self.add_message('assistant', value)
-        elif (kind == 'action' and value and not action_is_silent(value) and not value.get('preview')
+        elif (kind == 'action' and value and not action_is_silent(value)
               and getattr(self, 'last_assistant_layout', None) is not None):
             # a small red Undo under the answer it belongs to, not a bubble of its own
             # ("Document action: applied" took a full bubble and broke the flow, the user)
@@ -869,11 +862,9 @@ class AssistantDock(QDockWidget):
         elif kind == 'action' and value and not action_is_silent(value):
             layout = self.add_message('assistant', 'Document action: ' + value.get('status', 'recorded'))
             for action in value.get('controls', []):
-                button = QPushButton(action.capitalize() + ' this message' if action in ('undo', 'redo') else action.capitalize() + ' draft')
+                button = QPushButton(action.capitalize() + ' this message')
                 button.clicked.connect(lambda checked=False, a=action, ident=value.get('id'): self.host_control(a, ident))
                 layout.addWidget(button)
-            if value.get('preview') and value.get('status') in ('preview', 'interrupted'):
-                self.comparison(layout, value)
         elif kind == 'image':
             raw = base64.b64decode(value['data'])
             image = QImage.fromData(raw)
@@ -902,16 +893,6 @@ class AssistantDock(QDockWidget):
         elif kind == 'error':
             self.last_assistant = ''
             self.add_message('assistant', 'Could not complete: ' + str(value))
-
-    def comparison(self, layout, record):
-        from .comparison import Comparison
-        before = record.get('before')
-        after = record.get('after')
-        if before and after:
-            from pathlib import Path
-            first, second = Path(before).with_suffix('.png'), Path(after).with_suffix('.png')
-            if first.is_file() and second.is_file():
-                layout.addWidget(Comparison(first, second))
 
     ACTION_LABELS = {'undo': ('Undo', 'mdi.undo-variant', 'Undo the changes of this answer'),
                      'redo': ('Redo', 'mdi.redo-variant', 'Redo the changes of this answer')}
@@ -983,7 +964,6 @@ class AssistantDock(QDockWidget):
         self.connection_button.setEnabled(False)
         self.library_button.setEnabled(False)
         self.tools_button.setEnabled(False)
-        self.preview.setEnabled(False)
         self.progress.show()
         self.timer.start()
         def work():
@@ -1021,7 +1001,6 @@ class AssistantDock(QDockWidget):
         self.connection_button.setEnabled(True)
         self.library_button.setEnabled(True)
         self.tools_button.setEnabled(True)
-        self.preview.setEnabled(True)
         self.inspect_ack.setVisible(self.engine.uncertain)
         elapsed = time.monotonic() - self.started if self.started else 0
         self.status.setText(f'Finished · {elapsed:.1f}s')
@@ -1176,8 +1155,7 @@ class AssistantDock(QDockWidget):
             self.engine.journal.record('user', text)
             self.host_control('redo')
             return
-        preview = self.preview.isChecked()
-        self.run(lambda: self.engine.turn(text, self.emit, preview))
+        self.run(lambda: self.engine.turn(text, self.emit))
 
     def settings(self):
         if self.busy:

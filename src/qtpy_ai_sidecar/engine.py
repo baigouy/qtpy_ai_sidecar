@@ -171,11 +171,11 @@ class Engine:
         emit('context', {'estimated_tokens': size_estimate(self.messages if messages is None else messages), 'context_tokens': self.config.context_tokens,
                          'output_tokens': self.config.output_tokens})
 
-    async def _finalize_reply(self,text,answer,state,preview,emit):
+    async def _finalize_reply(self,text,answer,state,emit):
         self._last_verification=None
         finalizer=getattr(self.adapter,'finalize_response',None)
         if finalizer:
-            verified=await asyncio.to_thread(finalizer,text,answer.get('content') or '',state,preview)
+            verified=await asyncio.to_thread(finalizer,text,answer.get('content') or '',state)
             if verified:
                 self._last_verification=verified['evidence']
                 self.journal.record('model_reply_before_verification',answer.get('content') or '')
@@ -246,7 +246,7 @@ class Engine:
                         and isinstance(m.get('content'), str) and not m['content'].startswith(('[', '{'))), None)
         return earlier + '\n' + text if earlier else text
 
-    async def turn(self, text, emit, preview=False):
+    async def turn(self, text, emit):
         guard_text = self._guard_text(text)
         self.record('user', text, emit)
         self.record('request_settings', {key: getattr(self.config, key) for key in (
@@ -312,7 +312,7 @@ class Engine:
                     self.record('assistant', verified['content'], emit)
                     interrupted = False
                     return
-            await asyncio.to_thread(self.adapter.begin, text, preview)
+            await asyncio.to_thread(self.adapter.begin, text)
             begun = True
             self.messages = [m for m in self.messages if not (m['role'] == 'system' and m['content'].startswith('[ACTION_MODE]'))]
             self.messages = [m for m in self.messages if not (m['role'] == 'system' and m['content'].startswith('[VISION]'))]
@@ -324,7 +324,7 @@ class Engine:
             # the application's MCP server (started below, per turn) leaves out its
             # measured descriptions too when 'none'
             os.environ[vision.ENV] = seen
-            self.messages.append({'role': 'system', 'content': '[ACTION_MODE] ' + ('Edits affect an uncommitted draft. Report draft changes only; main document changes only after human Apply.' if preview else 'Edits affect the live application document.')})
+            self.messages.append({'role': 'system', 'content': '[ACTION_MODE] Edits affect the live application document.'})
             emit('status', 'Connecting application tools')
             async with self.hub_factory(self.config.servers) as hub:
                 # Stable tool IDs preserve schemas and verified outcomes across turns.
@@ -455,7 +455,7 @@ class Engine:
                         if not answer.get('content'):
                             raise RuntimeError('Text-only recovery failed; no tool call executed')
                     if not answer.get('tool_calls'):
-                        answer=await self._finalize_reply(text,answer,state,preview,emit)
+                        answer=await self._finalize_reply(text,answer,state,emit)
                     self.messages.append(answer)
                     if usage:
                         self.journal.record('model_usage', usage)
@@ -683,7 +683,7 @@ class Engine:
                         summary=await self._stopped_text_summary(prompt,emit,fallback='I stopped: the application refused '
                             'the same operation three times, so nothing more was changed. Edits already completed remain.')
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Repeated refused call stopped; no valid text summary returned')
-                        summary=await self._finalize_reply(text,summary,state,preview,emit)
+                        summary=await self._finalize_reply(text,summary,state,emit)
                         summary=self._offer_continue(summary,'stopped')
                         self.messages.append(summary);self.record('assistant',summary['content'],emit)
                         interrupted=False
@@ -702,7 +702,7 @@ class Engine:
                         summary=await self._stopped_text_summary(prompt,emit,fallback='I stopped after checking: the changes '
                             'made so far were applied and read back. If part of your request is still missing, ask me to continue.')
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Check loop stopped; no valid text summary returned')
-                        summary=await self._finalize_reply(text,summary,state,preview,emit)
+                        summary=await self._finalize_reply(text,summary,state,emit)
                         self.messages.append(summary);self.record('assistant',summary['content'],emit)
                         return
                     if not edited and look_streak >= LOOK_STOP:
@@ -717,7 +717,7 @@ class Engine:
                             'times without finding a sure way to do it, so nothing was changed. Tell me more precisely '
                             'which panel or object you mean, or say "continue" and I will act on my best estimate.')
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Look loop stopped; no valid text summary returned')
-                        summary=await self._finalize_reply(text,summary,state,preview,emit)
+                        summary=await self._finalize_reply(text,summary,state,emit)
                         summary=self._offer_continue(summary,'stopped')
                         self.messages.append(summary);self.record('assistant',summary['content'],emit)
                         interrupted=False
@@ -728,7 +728,7 @@ class Engine:
                         prompt=self._outgoing()+[{'role':'system','content':f'You searched for tools {discovery_streak} times without a successful edit. Tools are now disabled. Tell the user plainly what you were trying to do, which operation refused or failed and why (quote the error), and what they can do or how they could rephrase. If a search found the operation that does it, name it and offer to run it when the user says "continue". Do not claim anything was changed unless a tool result verified it.'}]
                         summary=await self._stopped_text_summary(prompt,emit)
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Search loop stopped; no valid text summary returned')
-                        summary=await self._finalize_reply(text,summary,state,preview,emit)
+                        summary=await self._finalize_reply(text,summary,state,emit)
                         summary=self._offer_continue(summary,'stopped')
                         self.messages.append(summary);self.record('assistant',summary['content'],emit)
                         interrupted=False
@@ -739,7 +739,7 @@ class Engine:
                         prompt=self._outgoing()+[{'role':'system','content':'A read-only request repeated data already returned in this turn. Tools are now disabled. Give a concise answer from verified facts already available, or explain what remains unresolved. Do not claim an edit was done without verified evidence. No completed operation is being replayed.'}]
                         summary=await self._stopped_text_summary(prompt,emit)
                         if summary.get('tool_calls') or not summary.get('content'):raise RuntimeError('Discovery loop stopped; no valid text summary returned')
-                        summary=await self._finalize_reply(text,summary,state,preview,emit)
+                        summary=await self._finalize_reply(text,summary,state,emit)
                         self.messages.append(summary);self.record('assistant',summary['content'],emit)
                         return
                 # all steps used: as for the output limit, ask instead of ending on an error

@@ -10,7 +10,6 @@ import urllib.request
 
 
 class PyFiguresAdapter:
-    supports_preview = True
 
     def __init__(self, descriptor):
         self.descriptor = Path(descriptor)
@@ -41,9 +40,7 @@ class PyFiguresAdapter:
         if record.get('changed'):
             if status == 'undone':
                 controls = ['redo']
-            elif record.get('preview') and status in ('preview', 'interrupted'):
-                controls = ['apply', 'discard']
-            elif status == 'applied' or (status == 'interrupted' and not record.get('preview')):
+            elif status in ('applied', 'interrupted'):
                 controls = ['undo']
         return {**record, 'controls': controls}
 
@@ -1341,8 +1338,8 @@ class PyFiguresAdapter:
             return '\n'.join(lines)
         return reply.rstrip() + '\n\n' + self.GUI_HELP_OFFER
 
-    def finalize_response(self,request,reply,state,preview=False):
-        verified = self._verify_response(request, reply, state, preview)
+    def finalize_response(self,request,reply,state):
+        verified = self._verify_response(request, reply, state)
         content = verified['content'] if verified else reply
         offered = self.offer_gui_help(content)
         if offered is None:
@@ -1351,7 +1348,7 @@ class PyFiguresAdapter:
         evidence['gui_help_offered'] = True
         return {'content': offered, 'evidence': evidence}
 
-    def _verify_response(self,request,reply,state,preview=False):
+    def _verify_response(self,request,reply,state):
         import re
         manual=self.finalize_manual_response(request)
         if manual:return manual
@@ -1378,7 +1375,7 @@ class PyFiguresAdapter:
                         'evidence':{'status':'needs_target','error':str(exc)}}
             return {'content':'Technical readiness could not be verified: '+str(exc),
                     'evidence':{'status':'incomplete','error':str(exc)}}
-        title='Draft' if preview else 'Current figure'
+        title='Current figure'
         if evidence['status']=='blocked':
             lines=[re.sub(r'^\[FAIL\]\s*','',b) for b in evidence.get('blockers',[])]
             content=title+' is not ready under the technical checks:\n'+''.join('\n- '+line for line in lines)
@@ -1389,16 +1386,16 @@ class PyFiguresAdapter:
             content='Technical readiness is incomplete; no ready verdict can be given. Specify a valid journal/physical target and resolve unavailable checks.'
         return {'content':content,'evidence':evidence}
 
-    def begin(self, text, preview=False):
+    def begin(self, text):
         self._quality_review_requested=False
         self._guided=False
-        return self.request('action_begin', {'text': text, 'preview': preview})
+        return self.request('action_begin', {'text': text})
 
     def finish(self, interrupted=False):
         return self.decorate(self.request('action_finish', {'interrupted': interrupted}))
 
     def control(self, action, ident=None):
-        if action not in ('undo', 'redo', 'apply', 'discard', 'recover'):
+        if action not in ('undo', 'redo', 'recover'):
             raise ValueError('Unsupported host control')
         return self.decorate(self.request('action_' + action, {'ident': ident} if ident else {}))
 
