@@ -556,6 +556,8 @@ class PyFiguresAdapter:
                              'plain words, and ask which fixes to apply and for which journal. Nothing was changed.')
         # Annotation tokens change after an earlier edit in this same turn.
         token_state = self.context() if operation == 'edit_annotation_properties' else state
+        if operation == 'edit_panel_letters':
+            self._quote_the_request(args, text)
         self._efficient_arguments(operation, args, token_state)
         if operation=='add_annotation' and args.get('panel_ref') is None and args.get('group_path') is not None and args.get('image_index') is not None:
             clause=re.split(r'\bthen\b|;',text,flags=re.I)[0]
@@ -773,6 +775,25 @@ class PyFiguresAdapter:
             if len(now) != 1:
                 return
             raise ValueError('Selected-letter request targets only panel ' + panels[0]['panel_id'] + '; no edit submitted. Use scope=selection or that panel_ids list.')
+
+    @staticmethod
+    def _quote_the_request(args, text):
+        """A letter colour / background needs the user's words naming the letter
+        (color_request / background_request). When the model leaves the field out but THIS
+        request's own words name the letter, they are the quote: filled in, so the call is
+        not refused and sent again (replays 2026-11-20: "make b letter red" refused, then
+        accepted with the same words, with Mistral and Qwen alike). Words that do not name
+        the letter are left to the guard, which still asks."""
+        import re
+        if not isinstance(args, dict) or not re.search(r'\b(?:letters?|lettering|labels?|lettre\w*)\b', str(text or ''), re.I):
+            return
+        quote = str(text).strip()
+        if args.get('color') is not None and not args.get('color_request'):
+            args['color_request'] = quote
+        background = args.get('background')
+        if background is not None and str(background).strip().lower() not in ('', 'none', 'transparent', 'no', 'null', 'clear') \
+                and not args.get('background_request'):
+            args['background_request'] = quote
 
     @staticmethod
     def _color_request(text):
