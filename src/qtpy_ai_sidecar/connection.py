@@ -233,6 +233,11 @@ class ConnectionDialog(QDialog):
         value.update(provider=provider, base_url=self.url.text().strip(), model=self.model.text().strip(),
             thinking_backend=self.capability.currentText(), thinking='default', thinking_strength='default',
             api_key_env='', runtime=value['runtime'] if provider == 'local' else {})
+        if provider != 'local' and self.config.provider == 'local':
+            # back from a local model: the online context it had (user 2026-11-23: Mistral kept
+            # the local model's 64k)
+            value['context_tokens'] = self.config.runtime.get('online_context_tokens', max(value['context_tokens'], 131072))
+            value['output_tokens'] = self.config.runtime.get('online_output_tokens', value['output_tokens'])
         if not value['model']:
             if require_model:
                 raise ValueError('Enter an exact model ID')

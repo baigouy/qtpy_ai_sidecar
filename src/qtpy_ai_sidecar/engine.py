@@ -263,8 +263,20 @@ class Engine:
             self.adapter.vision = self._sees_images      # adapters word their guidance by it
         except AttributeError:
             pass
-        if self._tokens(self._outgoing()) + self.config.output_tokens > self.config.context_tokens:
-            raise ValueError('Estimated context is full. Use Compress before sending more; no edit submitted.')
+        # local model (an online provider enforces its own limit, user 2026-11-23): the older
+        # conversation is compressed on its own when the context is filling ("shouldn't it be
+        # done automatically?"), and only a request that still does not fit is refused
+        if self.config.provider == 'local':
+            if self._tokens(self._outgoing()) + self.config.output_tokens > 0.6 * self.config.context_tokens:
+                try:
+                    await self.compact(emit)
+                except Exception as exc:          # Compress stays available by hand
+                    self.record('compression_failed', str(exc), emit)
+            if self._tokens(self._outgoing()) + self.config.output_tokens > self.config.context_tokens:
+                raise ValueError(f'The conversation no longer fits the local model\'s context '
+                                 f'({self.config.context_tokens:,} tokens), even compressed. Start a new '
+                                 'conversation, or raise Context tokens in the gear settings if the graphics '
+                                 'memory allows it. No edit submitted.')
         self.messages.append({'role': 'user', 'content': text})
         begun = False
         interrupted = True
@@ -380,8 +392,15 @@ class Engine:
                     tight = self._tight(guidance)
                     self.context(emit, messages)
                     emit('status', f'Thinking — step {step + 1}/{self.config.max_steps}')
-                    if self._tokens(messages) + self.config.output_tokens > self.config.context_tokens:
-                        raise ValueError('Estimated context budget reached; no further tool submitted. Use Compress.')
+                    # only a model run on this computer: an online provider enforces its own limit
+                    # (user 2026-11-23: Mistral Large 4, 1M tokens, was stopped at ~55k by the 64k
+                    # left from a local model)
+                    if self.config.provider == 'local' and \
+                            self._tokens(messages) + self.config.output_tokens > self.config.context_tokens:
+                        raise ValueError(f'This request no longer fits the local model\'s context '
+                                         f'({self.config.context_tokens:,} tokens). Press Compress, start a new '
+                                         'conversation, or raise Context tokens in the gear settings if the '
+                                         'graphics memory allows it.')
                     if getattr(self, '_continue_after_limit', False):
                         # "Continue" after the last turn ran out of room: the cut-off reasoning is lost
                         why = ('Your previous step ran out of output space while reasoning, before it could act.'

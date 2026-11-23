@@ -90,7 +90,7 @@ def test_context_limit_prevents_submission(tmp_path):
     engine = Engine(Config(state_dir=str(tmp_path), context_tokens=2048, output_tokens=1024))
     engine.messages.append({'role': 'user', 'content': 'a' * 10000})
     import pytest
-    with pytest.raises(ValueError, match='context is full'):
+    with pytest.raises(ValueError, match='no longer fits the local model'):
         asyncio.run(engine.turn('edit', lambda *args: None))
 
 

@@ -271,6 +271,9 @@ def pick_runtime(paths, gpu_gib=None, mac=False):
 def apply(config, model, executable, name=None):
     """Use this model and llama-server for the chat (as the Model library does). `name`: the
     model's name when its file does not say it (an Ollama blob)."""
+    if config.provider != 'local':          # given back when an online model is chosen again
+        config.runtime['online_context_tokens'] = config.context_tokens
+        config.runtime['online_output_tokens'] = config.output_tokens
     config.runtime['model'] = str(model)
     config.runtime['model_name'] = name or Path(model).stem
     config.runtime['executable'] = str(executable)
