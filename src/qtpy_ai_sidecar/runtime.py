@@ -60,7 +60,8 @@ class OwnedLlama:
     @property
     def raw_qwen(self):
         protocol = self.config.runtime.get('protocol', 'auto')
-        return protocol == 'qwen_xml' or (protocol == 'auto' and 'qwen3.5' in str(self.config.runtime.get('model', '')).lower())
+        named = str(self.config.runtime.get('model_name') or '') + ' ' + str(self.config.runtime.get('model', ''))
+        return protocol == 'qwen_xml' or (protocol == 'auto' and 'qwen3.5' in named.lower())
 
     async def ensure(self, cancel, emit):
         if self.process and self.process.poll() is None:
@@ -68,8 +69,10 @@ class OwnedLlama:
         self.stop()
         settings = self.config.runtime
         executable, model = Path(settings['executable']), Path(settings['model'])
-        if not executable.is_file() or not model.is_file() or model.suffix.lower() != '.gguf':
-            raise ValueError('Owned runtime requires an existing llama-server executable and GGUF model')
+        from .discover import is_gguf          # an Ollama model is a GGUF without the extension
+        if not executable.is_file() or not model.is_file() or not (model.suffix.lower() == '.gguf' or is_gguf(model)):
+            raise ValueError('The local model or llama.cpp is missing (moved or deleted?). '
+                             'Set it up again with the Model button.')
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
@@ -98,7 +101,8 @@ class OwnedLlama:
             command += ['--threads', str(settings['threads'])]
         if self.config.thinking_budget >= 0:
             command += ['--reasoning-budget', str(self.config.thinking_budget)]
-        self.process = subprocess.Popen(command, cwd=executable.parent, stdout=self.log,
+        from .discover import runtime_environment     # LM Studio's builds need their vendor libraries
+        self.process = subprocess.Popen(command, cwd=executable.parent, stdout=self.log, env=runtime_environment(executable),
             stderr=subprocess.STDOUT, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         try:
             async with httpx.AsyncClient(timeout=1) as client:
@@ -106,7 +110,7 @@ class OwnedLlama:
                     if cancel.is_set():
                         raise InterruptedError('Model loading stopped')
                     if self.process.poll() is not None:
-                        raise RuntimeError('Owned llama.cpp exited. See ' + str(log_path))
+                        raise RuntimeError(self.exit_reason(log_path))
                     try:
                         response = await client.get(self.url + '/health', headers={'Authorization': 'Bearer ' + self.key})
                         if response.status_code == 200:
@@ -121,6 +125,28 @@ class OwnedLlama:
         except BaseException:
             self.stop()
             raise
+
+    def exit_reason(self, log_path):
+        """Why llama.cpp stopped while loading, in plain words (user 2026-11-23: "Owned llama.cpp
+        exited" with an empty log told nothing)."""
+        try:
+            self.log.flush()
+            lines = [l for l in Path(log_path).read_text(encoding='utf-8', errors='replace').splitlines() if l.strip()]
+        except OSError:
+            lines = []
+        tail = ' '.join(lines[-3:])[-400:]
+        low = tail.lower()
+        if not lines:
+            why = 'llama.cpp could not start (a missing library?).'
+        elif 'out of memory' in low or 'failed to allocate' in low or 'cudamalloc' in low:
+            why = ('The model does not fit in the graphics memory. Close other programs using it (LM Studio, '
+                   'games), or choose a smaller model.')
+        elif 'unknown model architecture' in low or 'failed to load model' in low:
+            why = 'This llama.cpp cannot read this model (too old for it, or not a supported model).'
+        else:
+            why = 'llama.cpp stopped while loading the model.'
+        return (why + (f' Last message: {tail}' if tail else '') + f' Full log: {log_path}. '
+                'Choose another model or set it up again with the Model button, or use an online service.')
 
     def stop(self):
         if self.process and self.process.poll() is None:

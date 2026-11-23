@@ -1173,31 +1173,34 @@ class AssistantDock(QDockWidget):
         from . import discover, hardware
         candidate = Config(**asdict(config))
         try:
-            message = discover.setup(candidate, download=False)
-        except LookupError:
-            recommended, _why = hardware.recommend_for_this_computer()
-            size = hardware.DOWNLOAD_GB.get(recommended)
-            box = QMessageBox(self)
-            box.setWindowTitle('Set up the assistant')
-            box.setText('The assistant runs on this computer (private, free, no API key). It needs a model'
-                        + (f' (about {size} GB)' if size else '') + ' and llama.cpp, downloaded once.')
-            download = box.addButton('Download now', QMessageBox.ButtonRole.AcceptRole)
-            online = box.addButton('Use an online service instead', QMessageBox.ButtonRole.ActionRole)
-            box.addButton(QMessageBox.StandardButton.Cancel)
-            box.exec()
-            if box.clickedButton() is download:
-                self.library(auto=True)
-            elif box.clickedButton() is online:
-                self.connection_settings()
-            config = self.engine.config
-            return config.provider != 'local' or bool(config.runtime.get('model') and config.runtime.get('executable'))
+            plan = discover.plan(candidate)          # this computer only: nothing is downloaded
+            wanted = discover.download_text(plan)
+            if wanted:
+                # nothing is fetched before the user has seen what, how big, and from where
+                box = QMessageBox(self)
+                box.setWindowTitle('Set up the assistant')
+                box.setText('The assistant can run on this computer (private, free, no API key). '
+                            'This will download from the internet, once:\n\n' + wanted)
+                download = box.addButton('Download now', QMessageBox.ButtonRole.AcceptRole)
+                online = box.addButton('Use an online service instead', QMessageBox.ButtonRole.ActionRole)
+                box.addButton(QMessageBox.StandardButton.Cancel)
+                box.exec()
+                if box.clickedButton() is download:
+                    self.library(auto=True, downloads_agreed=True)
+                elif box.clickedButton() is online:
+                    self.connection_settings(online=True)
+                config = self.engine.config
+                return config.provider != 'local' or bool(config.runtime.get('model') and config.runtime.get('executable'))
+            message = discover.run_plan(candidate, plan)
         except Exception as exc:
-            self.add_message('assistant', 'The local model could not be set up: ' + str(exc))
+            self.add_message('assistant', 'The local model could not be set up: ' + str(exc)
+                             + ' Choose another one with the Model button (or an online service).')
             return False
         candidate.save_connection()
         candidate.save_performance()
         self.replace_engine(candidate)
-        self.add_message('assistant', message + ' Change it with the Local model button (download icon).')
+        self.add_message('assistant', message + ' The model now loads into memory (about a minute for a large '
+                         'one); change it with the Model button.')
         return True
 
     def settings(self):
@@ -1454,17 +1457,21 @@ class AssistantDock(QDockWidget):
             except Exception as exc:
                 self.add_message('assistant', 'MCP configuration was not exported: ' + str(exc))
 
-    def library(self, auto=False):
+    def library(self, auto=False, downloads_agreed=False):
         if self.busy:
             return
         from dataclasses import asdict
         from .config import Config
         from .library import LibraryDialog
         candidate = Config(**asdict(self.engine.config))
-        dialog = LibraryDialog(candidate, self, auto=auto is True)
+        dialog = LibraryDialog(candidate, self, auto=auto is True, downloads_agreed=downloads_agreed is True)
         dialog.exec()
         if asdict(candidate) != asdict(self.engine.config):
             self.replace_engine(candidate)
+        done = getattr(dialog, 'done_message', None)
+        if done:
+            self.add_message('assistant', done + ' The model loads into memory when you send your first '
+                             'message (about a minute for a large one); later replies are faster.')
 
     def export(self):
         if self.busy:

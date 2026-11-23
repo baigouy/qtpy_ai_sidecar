@@ -91,9 +91,34 @@ def _ollama_models(root):
             for layer in layers:
                 if layer.get('mediaType') == 'application/vnd.ollama.image.model':
                     blob = root / 'blobs' / str(layer.get('digest', '')).replace(':', '-')
-                    if blob.is_file():
+                    if blob.is_file() and is_gguf(blob):     # (Ollama's newer engine has other formats)
                         found.append((path.parent.name + ':' + tag, blob))
     return found
+
+
+def is_gguf(path):
+    """A GGUF file, by its first bytes (Ollama's blobs have no .gguf extension)."""
+    try:
+        with open(path, 'rb') as f:
+            return f.read(4) == b'GGUF'
+    except OSError:
+        return False
+
+
+def works(executable):
+    """(True, '') when this llama-server starts (--version, with its libraries); else (False, why)."""
+    import subprocess
+    try:
+        r = subprocess.run([str(executable), '--version'], cwd=str(Path(executable).parent),
+                           env=runtime_environment(executable), capture_output=True, text=True,
+                           encoding='utf-8', errors='replace', timeout=60,
+                           creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    if r.returncode == 0:
+        return True, ''
+    text = (r.stdout + r.stderr).strip().splitlines()
+    return False, (text[-1] if text else f'exit code {r.returncode}, no message (a missing library?)')
 
 
 def _walk(folders, match, depth=6):
@@ -113,6 +138,31 @@ def find_models(folders):
     """Single-file GGUF models (not vision projectors, not split sets)."""
     return _walk(folders, lambda f: f.lower().endswith('.gguf') and not f.lower().startswith('mmproj')
                  and not re.search(r'-\d{5}-of-\d{5}\.gguf$', f, re.I))
+
+
+def library_folders(executable):
+    """Folders a llama-server needs on its library path: an LM Studio backend's
+    backend-manifest.json names vendor packages (CUDA, Vulkan libraries) kept in
+    backends/vendor/<name>; without them it exits at once with nothing in its log."""
+    folder = Path(executable).parent
+    try:
+        manifest = json.loads((folder / 'backend-manifest.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return [], []
+    names = manifest.get('vendor_lib_package_names') or []
+    wanted = [folder.parent / 'vendor' / n for n in names]
+    return [w for w in wanted if w.is_dir()], [w for w in wanted if not w.is_dir()]
+
+
+def runtime_environment(executable, base=None):
+    """The environment to start this llama-server with (its vendor libraries on the path)."""
+    env = dict(os.environ if base is None else base)
+    found, _missing = library_folders(executable)
+    if found:
+        system = platform.system()
+        var = 'PATH' if system == 'Windows' else ('DYLD_LIBRARY_PATH' if system == 'Darwin' else 'LD_LIBRARY_PATH')
+        env[var] = os.pathsep.join([str(f) for f in found] + ([env[var]] if env.get(var) else []))
+    return env
 
 
 def find_runtimes(folders):
@@ -200,24 +250,29 @@ def runtime_kind(path):
     return 'unknown'
 
 
-def pick_runtime(paths, gpu_gib=None, mac=False):
-    """The newest llama-server of the best kind for this computer: CUDA on an NVIDIA card,
-    then Vulkan (any card), Metal on a Mac; a CPU build only when nothing else is there."""
+def ranked_runtimes(paths, gpu_gib=None, mac=False):
+    """llama-server builds, best first: CUDA on an NVIDIA card, then Vulkan (any card), Metal
+    on a Mac, a CPU build last; the newest first within each kind."""
     if mac:
         order = ['metal', 'unknown', 'cpu']
     elif gpu_gib:
         order = ['cuda', 'vulkan', 'unknown', 'cpu']
     else:
         order = ['vulkan', 'unknown', 'cpu']
-    usable = [p for p in paths if runtime_kind(p) in order]
-    if not usable:
-        return None
-    return sorted(usable, key=lambda p: (order.index(runtime_kind(p)), tuple(-v for v in _version(p))))[0]
+    usable = [p for p in paths if runtime_kind(p) in order and not library_folders(p)[1]]
+    return sorted(usable, key=lambda p: (order.index(runtime_kind(p)), tuple(-v for v in _version(p))))
 
 
-def apply(config, model, executable):
-    """Use this model and llama-server for the chat (as the Model library does)."""
+def pick_runtime(paths, gpu_gib=None, mac=False):
+    ranked = ranked_runtimes(paths, gpu_gib, mac)
+    return ranked[0] if ranked else None
+
+
+def apply(config, model, executable, name=None):
+    """Use this model and llama-server for the chat (as the Model library does). `name`: the
+    model's name when its file does not say it (an Ollama blob)."""
     config.runtime['model'] = str(model)
+    config.runtime['model_name'] = name or Path(model).stem
     config.runtime['executable'] = str(executable)
     config.runtime['gpu_layers'] = 0 if runtime_kind(executable) == 'cpu' else 99
     config.provider = 'local'
@@ -225,7 +280,7 @@ def apply(config, model, executable):
     config.api_key_env = ''
     config.thinking_backend = 'llama_cpp'
     # the 27B model is run with the 64k context it was tested with
-    if '27b' in Path(model).name.lower() and config.context_tokens < 65536:
+    if '27b' in config.runtime['model_name'].lower() and config.context_tokens < 65536:
         config.context_tokens = 65536
 
 
@@ -238,42 +293,110 @@ def recommendation():
     return repo, why, gpu, mac
 
 
-def setup(config, emit=lambda progress: None, cancel=None, download=True, model=None):
-    """Use `model` (else the best one found on this computer, else download the recommended
-    one when `download`) with a llama-server found here (else the official one, downloaded).
-    Returns a sentence saying what was chosen; LookupError when something is missing and
-    `download` is False."""
+def official_backend(gpu, mac):
+    if mac or platform.system() == 'Darwin':
+        return 'metal'
+    return 'vulkan' if gpu or platform.system() == 'Windows' else 'cpu'
+
+
+def plan(config, model=None, name=None, say=lambda text: None):
+    """What the local set-up will use, without downloading anything: a dict with 'model',
+    'name', 'executable' (None when missing), 'download_model' (the repository to fetch, or
+    None), 'download_runtime' (the official llama.cpp build to fetch, or None), 'notes', 'why'
+    and 'problems' (llama-server builds found here that do not start, and why)."""
+    storage = config.storage()
+    recommended, why, gpu, mac = recommendation()
+    out = {'model': None, 'name': name, 'executable': None, 'download_model': None,
+           'download_runtime': None, 'notes': [], 'why': why, 'problems': []}
+    if model is not None:
+        out['model'] = Path(model)
+        out['notes'].append(f'{name or Path(model).stem} from {where(model)}')
+    else:
+        say('Looking for models on this computer…')
+        models = local_models(storage)
+        best = pick_model(models, recommended)
+        if best is None:
+            out['download_model'] = recommended
+        else:
+            out['model'] = best
+            out['name'] = next((m['name'] for m in models if m['path'] == best), best.stem)
+            out['notes'].append(f"{out['name']} found in {where(best)}")
+    say('Checking llama.cpp on this computer…')
+    for executable in ranked_runtimes(find_runtimes(runtime_folders(storage)), gpu, mac):
+        ok, problem = works(executable)
+        if ok:
+            out['executable'] = executable
+            out['notes'].append(f'llama.cpp ({runtime_kind(executable)}) found in {where(executable)}')
+            break
+        out['problems'].append(f'{executable}: {problem}')
+    if out['executable'] is None:
+        out['download_runtime'] = official_backend(gpu, mac)
+    return out
+
+
+def download_text(p):
+    """What a plan will download, for the user to agree to first; '' when nothing."""
+    lines = []
+    if p['download_model']:
+        repo = p['download_model']
+        size = hardware.DOWNLOAD_GB.get(repo)
+        lines.append(f"• the model {repo.split('/')[-1].replace('-GGUF', '')}"
+                     + (f' (about {size} GB)' if size else '') + ' from Hugging Face (huggingface.co)')
+    if p['download_runtime']:
+        lines.append(f"• llama.cpp, which runs the model (official {p['download_runtime']} build, "
+                     'about 50 to 200 MB) from GitHub (github.com/ggml-org/llama.cpp)')
+    return '\n'.join(lines)
+
+
+def run_plan(config, p, emit=lambda progress: None, cancel=None, say=lambda text: None):
+    """Download what the plan lacks (the user has agreed), check llama.cpp starts, use it all.
+    Returns a sentence saying what was chosen; raises with a plain message on failure."""
     import threading
     from . import downloads
     cancel = cancel or threading.Event()
     storage = config.storage()
-    recommended, why, gpu, mac = recommendation()
-    notes = []
-    if model is None:
-        model = pick_model(local_models(storage), recommended)
-        if model is None:
-            if not download:
-                raise LookupError('No local model found on this computer.')
-            files = downloads.model_files(recommended)
-            main = [f for f in files if not f['name'].lower().startswith('mmproj')]
-            item = sorted(main, key=lambda f: ('q4_k_m' not in f['name'].lower(), f['size']))[0]
-            model = downloads.download_model(item, storage, emit, cancel)
-            projectors = sorted((f for f in files if f['name'].lower().startswith('mmproj')), key=lambda f: f['size'])
-            if projectors:           # lets the model see the figure previews
-                downloads.download_model(projectors[0], storage, emit, cancel)
-            notes.append(f'downloaded {Path(model).name}')
-        else:
-            notes.append(f'{Path(model).name} found in {where(model)}')
-    else:
-        notes.append(f'{Path(model).name} from {where(model)}')
-    executable = pick_runtime(find_runtimes(runtime_folders(storage)), gpu, mac)
-    if executable is None:
-        if not download:
-            raise LookupError('No llama-server found on this computer.')
-        backend = 'metal' if platform.system() == 'Darwin' else ('vulkan' if gpu or platform.system() == 'Windows' else 'cpu')
-        executable = downloads.install_runtime(downloads.check_runtime(backend), storage, emit, cancel)
-        notes.append(f'installed llama.cpp ({backend})')
-    else:
-        notes.append(f'llama.cpp ({runtime_kind(executable)}) found in {where(executable)}')
-    apply(config, model, executable)
+    model, name, executable, notes = p['model'], p['name'], p['executable'], list(p['notes'])
+    if p['download_model']:
+        say('Asking Hugging Face for the model files…')
+        try:
+            files = downloads.model_files(p['download_model'])
+        except Exception as exc:
+            raise RuntimeError(f'Could not reach Hugging Face to download the model ({exc}). '
+                               'Check the internet connection, or use a model already on this computer.') from exc
+        main = [f for f in files if not f['name'].lower().startswith('mmproj')]
+        item = sorted(main, key=lambda f: ('q4_k_m' not in f['name'].lower(), f['size']))[0]
+        projectors = sorted((f for f in files if f['name'].lower().startswith('mmproj')), key=lambda f: f['size'])
+        say(f"Downloading the model {item['name']} ({item['size'] / 1024**3:.1f} GB)…")
+        model = downloads.download_model(item, storage, emit, cancel)
+        if projectors:           # lets the model see the figure previews
+            say(f"Downloading its image reader {projectors[0]['name']} ({projectors[0]['size'] / 1024**3:.1f} GB)…")
+            downloads.download_model(projectors[0], storage, emit, cancel)
+        name = Path(model).stem
+        notes.insert(0, f'downloaded {Path(model).name}')
+    if p['download_runtime']:
+        say('Asking GitHub for the official llama.cpp build…')
+        try:
+            release = downloads.check_runtime(p['download_runtime'])
+        except Exception as exc:
+            raise RuntimeError(f'Could not reach GitHub to download llama.cpp ({exc}). '
+                               'Check the internet connection.') from exc
+        say(f"Downloading llama.cpp {release.get('tag', '')} ({p['download_runtime']})…")
+        executable = downloads.install_runtime(release, storage, emit, cancel)
+        ok, problem = works(executable)
+        if not ok:
+            raise RuntimeError(f'The downloaded llama.cpp does not start on this computer: {problem}')
+        notes.append(f"installed llama.cpp ({p['download_runtime']})")
+    if model is None or executable is None:
+        raise RuntimeError('Nothing to run: no model or no llama.cpp.')
+    apply(config, model, executable, name)
+    why = p.get('why')
     return 'Local model set up: ' + '; '.join(notes) + '.' + (f' Recommended for this computer: {why}.' if why else '')
+
+
+def setup(config, emit=lambda progress: None, cancel=None, download=True, model=None, name=None):
+    """plan + run_plan in one call. With download False, LookupError when something would
+    have to be downloaded (nothing is fetched without the user's yes)."""
+    p = plan(config, model, name)
+    if not download and (p['download_model'] or p['download_runtime']):
+        raise LookupError('Not found on this computer:\n' + download_text(p))
+    return run_plan(config, p, emit, cancel)

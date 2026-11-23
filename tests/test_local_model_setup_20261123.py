@@ -62,6 +62,7 @@ def _computer(monkeypatch, tmp_path, model=True, runtime=True, gpu=24):
     monkeypatch.setattr(discover.platform, 'system', lambda: 'Windows')
     monkeypatch.setattr(hardware, 'apple_silicon', lambda: False)
     monkeypatch.setattr(hardware, 'gpu_memory_gib', lambda: gpu)
+    monkeypatch.setattr(discover, 'works', lambda exe: (True, ''))       # the fake llama-server "starts"
 
 
 def test_found_on_this_computer_is_used_with_no_download(tmp_path, monkeypatch):
@@ -72,7 +73,56 @@ def test_found_on_this_computer_is_used_with_no_download(tmp_path, monkeypatch):
     assert config.provider == 'local' and config.runtime['model'].endswith('Qwen3.8-27B-Q4_K_M.gguf')
     assert 'cuda12' in config.runtime['executable'] and config.runtime['gpu_layers'] == 99
     assert config.context_tokens == 65536                      # the 27B model's tested context
-    assert 'found in the sidecar folder' not in message and 'Qwen3.8-27B-Q4_K_M.gguf found' in message
+    assert 'Qwen3.8-27B-Q4_K_M found in LM Studio' in message and 'llama.cpp (cuda) found in LM Studio' in message
+
+
+def test_a_llama_server_that_does_not_start_is_skipped_then_the_official_one_offered(tmp_path, monkeypatch):
+    _computer(monkeypatch, tmp_path)
+    monkeypatch.setattr(discover, 'works', lambda exe: (False, 'exit code 3221225781, no message (a missing library?)'))
+    p = discover.plan(Config(application='Demo', state_dir=str(tmp_path / 'state')))
+    assert p['executable'] is None and p['download_runtime'] == 'vulkan' and not p['download_model']
+    assert 'missing library' in p['problems'][0]
+    text = discover.download_text(p)
+    assert 'llama.cpp' in text and 'github.com' in text and 'Hugging Face' not in text
+
+
+def test_ollama_only_computer(tmp_path, monkeypatch):
+    """User 2026-11-23: 'if LM Studio is not there but Ollama is make sure it also works'."""
+    _computer(monkeypatch, tmp_path, model=False, runtime=False)
+    root = tmp_path / 'ollama'
+    _touch(root / 'blobs' / 'sha256-abc').write_bytes(b'GGUF' + b'\0' * 60)
+    _touch(root / 'manifests' / 'registry.ollama.ai' / 'library' / 'qwen3.8' / '27b').write_text(
+        '{"layers": [{"mediaType": "application/vnd.ollama.image.model", "digest": "sha256:abc"}]}')
+    monkeypatch.setenv('OLLAMA_MODELS', str(root))
+    p = discover.plan(Config(application='Demo', state_dir=str(tmp_path / 'state')))
+    assert p['model'] == root / 'blobs' / 'sha256-abc' and p['name'] == 'qwen3.8:27b'
+    assert p['download_runtime'] == 'vulkan' and not p['download_model']    # Ollama ships no llama-server
+    monkeypatch.setattr(downloads, 'check_runtime', lambda backend: {'tag': 'b1', 'backend': backend})
+    monkeypatch.setattr(downloads, 'install_runtime', lambda item, root_, emit, cancel: tmp_path / 'rt' / 'llama-server.exe')
+    config = Config(application='Demo', state_dir=str(tmp_path / 'state'))
+    steps = []
+    message = discover.run_plan(config, p, say=steps.append)
+    assert config.runtime['model'].endswith('sha256-abc') and config.runtime['model_name'] == 'qwen3.8:27b'
+    assert config.context_tokens == 65536 and 'qwen3.8:27b found in Ollama' in message
+    assert any('Downloading llama.cpp' in s for s in steps)
+    from qtpy_ai_sidecar.model_choice import running
+    assert running(config) == 'On this computer · qwen3.8:27b'
+
+
+def test_the_runtime_accepts_an_ollama_blob_and_explains_a_crash(tmp_path):
+    from qtpy_ai_sidecar.runtime import OwnedLlama
+    log = tmp_path / 'llama-server.log'
+    log.write_text('')
+    llama = OwnedLlama(Config(application='Demo', state_dir=str(tmp_path)))
+    llama.log = log.open('a', encoding='utf-8')
+    assert 'could not start (a missing library?)' in llama.exit_reason(log)
+    log.write_text('load_tensors: loading\nggml_backend_cuda_buffer_type_alloc_buffer: allocating 17000 MiB: cudaMalloc failed: out of memory\n')
+    reason = llama.exit_reason(log)
+    assert 'does not fit in the graphics memory' in reason and 'out of memory' in reason and 'Model button' in reason
+    llama.log.close()
+    blob = tmp_path / 'sha256-abc'
+    blob.write_bytes(b'GGUF1234')
+    assert discover.is_gguf(blob) and not discover.is_gguf(log)
 
 
 def test_nothing_found_without_download_says_so(tmp_path, monkeypatch):
@@ -97,6 +147,23 @@ def test_nothing_found_downloads_the_recommended_model_and_llama_cpp(tmp_path, m
     assert got == [Q27, 'Qwen3.8-27B-Q4_K_M.gguf', 'mmproj-Qwen3.8-27B-BF16.gguf', 'vulkan']
     assert config.runtime['model'].endswith('Qwen3.8-27B-Q4_K_M.gguf') and 'downloaded' in message
     assert 'installed llama.cpp' in message
+
+
+def test_lm_studio_llama_server_gets_its_vendor_libraries(tmp_path, monkeypatch):
+    """User 2026-11-23: 'Owned llama.cpp exited', empty log: LM Studio's CUDA llama-server needs
+    backends/vendor/win-llama-cuda12-vendor-v2 on its library path."""
+    backends = tmp_path / 'backends'
+    exe = _touch(backends / 'llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.69.0' / 'llama-server.exe')
+    (exe.parent / 'backend-manifest.json').write_text('{"vendor_lib_package_names": ["win-llama-cuda12-vendor-v2"]}')
+    broken = _touch(backends / 'llama.cpp-win-x86_64-nvidia-cuda12-avx2-2.70.0' / 'llama-server.exe')
+    (broken.parent / 'backend-manifest.json').write_text('{"vendor_lib_package_names": ["missing-vendor"]}')
+    vendor = backends / 'vendor' / 'win-llama-cuda12-vendor-v2'
+    vendor.mkdir(parents=True)
+    monkeypatch.setattr(discover.platform, 'system', lambda: 'Windows')
+    env = discover.runtime_environment(exe, {'PATH': 'C:/Windows'})
+    assert env['PATH'].split(discover.os.pathsep) == [str(vendor), 'C:/Windows']
+    assert discover.pick_runtime([exe, broken], gpu_gib=24) == exe          # newer, but its libraries are missing
+    assert discover.runtime_environment(tmp_path / 'llama-server.exe', {'PATH': 'x'}) == {'PATH': 'x'}
 
 
 def test_ollama_models_are_found_through_their_manifests(tmp_path, monkeypatch):
@@ -130,13 +197,72 @@ def test_the_dialog_lists_the_models_on_this_computer_and_uses_the_chosen_one(mo
         {'name': 'Other-7B', 'path': b, 'source': 'Ollama', 'gb': 9.0},
         {'name': 'Qwen3.5-9B-Q4_K_M', 'path': a, 'source': 'LM Studio', 'gb': 5.4}])
     used = []
-    monkeypatch.setattr(discover, 'setup', lambda config, emit=None, cancel=None, download=True, model=None:
-                        used.append(model) or 'Local model set up.')
+    monkeypatch.setattr(discover, 'plan', lambda config, model=None, name=None, say=None:
+                        used.append((model, name)) or {'download_model': None, 'download_runtime': None, 'problems': []})
+    monkeypatch.setattr(discover, 'run_plan', lambda config, p, emit=None, cancel=None, say=None:
+                        used.append('run') or 'Local model set up.')
+    asked = []
+    from qtpy.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox,
+                        'question', lambda *a, **k: asked.append(a) or 0)
     dialog = library.LibraryDialog(Config(application='Demo', state_dir=str(tmp_path)))
     assert dialog.found.count() == 2 and 'LM Studio' in dialog.found.currentText()     # the recommended one
-    monkeypatch.setattr(dialog, 'run', lambda kind, action: dialog.receive('error', action()))
+    _synchronous(dialog, monkeypatch)
     dialog.use_found_model()
-    assert used == [a]
+    assert used == [(a, 'Qwen3.5-9B-Q4_K_M'), 'run'] and not asked                   # nothing to download: no question
+    dialog.deleteLater()
+
+
+def _synchronous(dialog, monkeypatch):
+    """The dialog's worker thread, run in place (as the signals would deliver it)."""
+    def run(kind, action):
+        dialog.busy = True
+        try:
+            dialog.receive(kind, action())
+        except Exception as exc:
+            dialog.receive('error', str(exc))
+        dialog.receive('finished', None)
+    monkeypatch.setattr(dialog, 'run', run)
+
+
+def test_downloads_are_listed_and_need_a_yes(monkeypatch, tmp_path):
+    """User 2026-11-23: 'inform the user you gonna download things from internet of course before
+    hand' / 'offer download of llama and model with progress bars'."""
+    from qtpy.QtWidgets import QMessageBox
+    from qtpy_ai_sidecar import library
+    plan = {'model': None, 'name': None, 'executable': None, 'download_model': Q27, 'download_runtime': 'vulkan',
+            'notes': [], 'why': '', 'problems': []}
+    monkeypatch.setattr(discover, 'plan', lambda config, model=None, name=None, say=None: plan)
+    ran = []
+    monkeypatch.setattr(discover, 'run_plan', lambda config, p, emit=None, cancel=None, say=None: ran.append(p) or 'ok')
+    asked, answer = [], [QMessageBox.StandardButton.No]
+    monkeypatch.setattr(QMessageBox, 'question', lambda parent, title, text, *a: asked.append(text) or answer[0])
+    dialog = library.LibraryDialog(Config(application='Demo', state_dir=str(tmp_path)))
+    _synchronous(dialog, monkeypatch)
+    dialog.set_up_automatically()
+    assert 'download from the internet' in asked[0] and 'about 18 GB' in asked[0] and 'huggingface.co' in asked[0]
+    assert 'github.com/ggml-org/llama.cpp' in asked[0]
+    assert not ran and 'Nothing downloaded' in dialog.status.text()
+    answer[0] = QMessageBox.StandardButton.Yes
+    dialog.set_up_automatically()
+    assert ran == [plan]
+    dialog.deleteLater()
+
+
+def test_a_download_shows_its_step_and_progress_and_a_failure_is_said(monkeypatch, tmp_path):
+    from qtpy.QtWidgets import QMessageBox
+    from qtpy_ai_sidecar import library
+    dialog = library.LibraryDialog(Config(application='Demo', state_dir=str(tmp_path)))
+    dialog.receive('say', 'Downloading the model Qwen3.8-27B-Q4_K_M.gguf (15.7 GB)…')
+    dialog.receive('progress', {'total': 1000 * 2**20, 'downloaded': 250 * 2**20})
+    assert dialog.progress.value() == 25 and 'Qwen3.8-27B-Q4_K_M.gguf' in dialog.status.text()
+    assert '25 %' in dialog.status.text()
+    warned = []
+    monkeypatch.setattr(QMessageBox, 'warning', lambda parent, title, text, *a: warned.append(text))
+    dialog.receive('error', 'Could not reach Hugging Face to download the model (timeout).')
+    dialog.receive('finished', None)
+    assert warned and 'Could not reach Hugging Face' in warned[0] and 'online service' in warned[0]
+    assert dialog.status.text().startswith('Failed:') and dialog.progress.maximum() == 100
     dialog.deleteLater()
 
 
@@ -159,7 +285,8 @@ def test_the_dialog_is_one_button_with_the_rest_under_advanced(monkeypatch, tmp_
     dialog.toggle_advanced()
     assert not dialog.advanced.isHidden()
     dialog.receive('auto_ready', 'Local model set up: x.')
-    assert saved == ['c', 'p'] and 'send your message' in dialog.status.text()
+    assert saved == ['c', 'p'] and dialog.progress.value() == 100
+    assert dialog.result() == library.QDialog.DialogCode.Accepted        # closes itself when done
     dialog.deleteLater()
 
 
@@ -167,10 +294,11 @@ def test_the_dialog_is_one_button_with_the_rest_under_advanced(monkeypatch, tmp_
 def test_sending_with_no_model_sets_it_up_then_sends(tmp_path, monkeypatch):
     from qtpy_ai_sidecar.widgets import AssistantDock
 
-    def found(config, download=True):
+    def found(config, p, emit=None, cancel=None, say=None):
         discover.apply(config, tmp_path / 'Qwen3.8-27B-Q4_K_M.gguf', tmp_path / 'llama-server.exe')
-        return 'Local model set up: Qwen3.8-27B-Q4_K_M.gguf found in LM Studio.'
-    monkeypatch.setattr(discover, 'setup', found)
+        return 'Local model set up: Qwen3.8-27B-Q4_K_M found in LM Studio.'
+    monkeypatch.setattr(discover, 'plan', lambda config: {'download_model': None, 'download_runtime': None})
+    monkeypatch.setattr(discover, 'run_plan', found)
     monkeypatch.setattr(Config, 'save_connection', lambda self: None)
     monkeypatch.setattr(Config, 'save_performance', lambda self: None)
     dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
@@ -184,16 +312,15 @@ def test_sending_with_no_model_sets_it_up_then_sends(tmp_path, monkeypatch):
 def test_nothing_found_and_the_offer_closed_keeps_the_text(tmp_path, monkeypatch):
     from qtpy_ai_sidecar import widgets
 
-    def missing(config, download=True):
-        raise LookupError('No local model found on this computer.')
-    monkeypatch.setattr(discover, 'setup', missing)
-    monkeypatch.setattr(hardware, 'recommend_for_this_computer', lambda: (Q27, ''))
+    monkeypatch.setattr(discover, 'plan', lambda config: {'download_model': Q27, 'download_runtime': 'vulkan'})
+    monkeypatch.setattr(discover, 'run_plan', lambda *a, **k: pytest.fail('nothing runs before the yes'))
     offered = []
     monkeypatch.setattr(widgets.QMessageBox, 'exec', lambda box: offered.append(box.text()) or 0)
     dock = widgets.AssistantDock(Config(application='Demo', state_dir=str(tmp_path)))
     dock.input.setPlainText('Make the letters bold')
     dock.send()
-    assert offered and 'about 18 GB' in offered[0] and 'downloaded once' in offered[0]
+    assert offered and 'download from the internet, once' in offered[0] and 'about 18 GB' in offered[0]
+    assert 'huggingface.co' in offered[0] and 'github.com' in offered[0]
     assert dock.input.toPlainText() == 'Make the letters bold' and 'no model' in dock.status.text()
     dock.close()
     dock.deleteLater()

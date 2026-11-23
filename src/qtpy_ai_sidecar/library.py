@@ -10,10 +10,12 @@ from . import downloads
 class LibraryDialog(QDialog):
     update_signal = Signal(str, object)
 
-    def __init__(self, config, parent=None, auto=False):
+    def __init__(self, config, parent=None, auto=False, downloads_agreed=False):
         super().__init__(parent)
         self.config, self.items, self.runtime_item = config, [], None
         self.busy, self.pending_close = False, False
+        self.pending_plan, self.step = None, ''
+        self.downloads_agreed = downloads_agreed     # the user already said yes (the chat's offer)
         self.cancel = threading.Event()
         self.setWindowTitle('Local model')
         self.resize(720, 260)
@@ -136,6 +138,7 @@ class LibraryDialog(QDialog):
         self.found.clear()
         for m in models:
             self.found.addItem(f"{m['name']}  ·  {m['gb']:.1f} GB  ·  {m['source']}", str(m['path']))
+            self.found.setItemData(self.found.count() - 1, m['name'], 32)        # Qt.UserRole: its name
         if not models:
             self.found.addItem('No model found on this computer', None)
         self.found.setEnabled(bool(models))
@@ -144,24 +147,52 @@ class LibraryDialog(QDialog):
         if best is not None:
             self.found.setCurrentIndex(max(0, self.found.findData(str(best))))
 
+    def say(self, text):
+        self.update_signal.emit('say', text)
+
     def use_found_model(self):
+        """Use the chosen model: look for a working llama.cpp first (no network), then ask
+        before downloading one."""
         from pathlib import Path
         from . import discover
         path = self.found.currentData()
         if path:
-            self.run('auto_ready', lambda: discover.setup(self.config, lambda p: self.update_signal.emit('progress', p),
-                                                          self.cancel, model=Path(path)))
+            name = self.found.itemData(self.found.currentIndex(), 32)
+            self.run('plan', lambda: discover.plan(self.config, Path(path), name, self.say))
 
     def set_up_automatically(self):
+        """Look on this computer first (no network); anything missing is downloaded only after
+        the user has agreed to the list of what comes from where (user 2026-11-23)."""
         from . import discover
-        self.run('auto_ready', lambda: discover.setup(self.config, lambda p: self.update_signal.emit('progress', p),
-                                                      self.cancel))
+        self.run('plan', lambda: discover.plan(self.config, say=self.say))
+
+    def carry_out(self, plan):
+        """After the look-up: ask before any download, then download (progress bar) and use."""
+        from qtpy.QtWidgets import QMessageBox
+        from . import discover
+        wanted = discover.download_text(plan)
+        if wanted and not self.downloads_agreed:
+            text = 'To run the assistant on this computer, this will download from the internet:\n\n' + wanted
+            if plan['problems']:
+                text += ('\n\nllama.cpp found on this computer does not start here:\n'
+                         + '\n'.join('• ' + p for p in plan['problems'][:3]))
+            text += '\n\nDownloads are checked (SHA256) and kept in the chat’s own folder. Download now?'
+            answer = QMessageBox.question(self, 'Download for the local model', text,
+                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                self.status.setText('Nothing downloaded. Choose a model already on this computer, '
+                                    'or an online service (Model button).')
+                return
+        self.run('auto_ready', lambda: discover.run_plan(self.config, plan,
+                                                         lambda p: self.update_signal.emit('progress', p),
+                                                         self.cancel, self.say))
 
     def run(self, kind, action):
         if self.busy:
             return
         self.busy = True
         self.cancel.clear()
+        self.step = ''
         self.status.setText('Working…')
         self.progress.setRange(0, 0)
         def work():
@@ -179,7 +210,14 @@ class LibraryDialog(QDialog):
             self.progress.setRange(0, 100 if total else 0)
             if total:
                 self.progress.setValue(int(done * 100 / total))
-            self.status.setText(f'{done / 1024**2:,.1f} MiB downloaded' + (f' / {total / 1024**2:,.1f} MiB' if total else ''))
+            self.status.setText((self.step + '\n' if self.step else '') + f'{done / 1024**2:,.1f} MiB downloaded'
+                                + (f' / {total / 1024**2:,.1f} MiB ({done * 100 / total:.0f} %)' if total else ''))
+        elif kind == 'say':                 # the step under way, in plain words
+            self.step = value
+            self.status.setText(value)
+            self.progress.setRange(0, 0)    # busy until a download reports its size
+        elif kind == 'plan':
+            self.pending_plan = value       # carried out once this worker has finished
         elif kind == 'repositories':
             self.repositories.clear()
             self.repositories.addItems(value)
@@ -202,10 +240,19 @@ class LibraryDialog(QDialog):
             self.config.save_connection()
             self.config.save_performance()
             self.done_message = value
-            self.status.setText(value + ' Close this window and send your message.')
+            self.status.setText(value)
+            self.progress.setRange(0, 100)
+            self.progress.setValue(100)
+            # done: the window closes and the chat says what was chosen (user 2026-11-23: after
+            # "Use" nothing seemed to happen, 0% and "close this window")
+            self.busy = False
+            self.accept()
         elif kind in ('model_ready', 'runtime_ready'):
             key = 'model' if kind == 'model_ready' else 'executable'
             self.config.runtime[key] = str(value)
+            if kind == 'model_ready':
+                from pathlib import Path
+                self.config.runtime['model_name'] = Path(str(value)).stem
             self.config.runtime.setdefault('gpu_layers', 0 if self.backend.currentText() == 'cpu' else 99)
             self.config.provider = 'local'
             self.config.base_url = 'http://127.0.0.1:1234/v1'
@@ -217,7 +264,13 @@ class LibraryDialog(QDialog):
             self.config.save_performance()
             self.status.setText('Ready for next model start: ' + str(value))
         elif kind == 'error':
-            self.status.setText(str(value))
+            # never a stalled bar with no word (user 2026-11-23): say what failed, in a window
+            self.pending_plan = None
+            self.status.setText('Failed: ' + str(value))
+            if not self.pending_close:
+                from qtpy.QtWidgets import QMessageBox
+                QMessageBox.warning(self, 'Local model', str(value) + '\n\nYou can try again, choose another '
+                                    'model, or use an online service instead (Model button).')
         elif kind == 'finished':
             self.busy = False
             if self.progress.maximum() == 0:
@@ -225,6 +278,9 @@ class LibraryDialog(QDialog):
                 self.progress.setValue(0)
             if self.pending_close:
                 self.reject()
+            elif self.pending_plan is not None:
+                plan, self.pending_plan = self.pending_plan, None
+                self.carry_out(plan)
 
     def get_model(self):
         index = self.files.currentRow()

@@ -13,7 +13,8 @@ def running(config):
     'Online · Mistral AI API · mistral-large-4'."""
     if config.provider == 'local':
         model = str(config.runtime.get('model') or '')
-        return 'On this computer · ' + (Path(model.replace('\\', '/')).stem if model else 'no model set up yet')
+        name = config.runtime.get('model_name') or (Path(model.replace('\\', '/')).stem if model else '')
+        return 'On this computer · ' + (name or 'no model set up yet')
     from . import providers
     from .connection import ConnectionDialog
     name = ((providers.find(config.provider) or {}).get('label')
