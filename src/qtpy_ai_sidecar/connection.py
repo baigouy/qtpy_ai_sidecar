@@ -91,7 +91,7 @@ def list_models(config, key=''):
 
 
 class ConnectionDialog(QDialog):
-    def __init__(self, config, parent=None, online=False):
+    def __init__(self, config, parent=None, online=False, server=None):
         super().__init__(parent)
         self.config, self.result_config = config, None
         self.online = online       # reached from Model > Online service: no local entry (it has its own window)
@@ -146,7 +146,13 @@ class ConnectionDialog(QDialog):
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
         self.provider.currentIndexChanged.connect(self.changed)
-        if online and config.provider == 'local':
+        if server:              # a server on this computer (LM Studio, Ollama): filled in, no key
+            self.setWindowTitle(f"{server['name']}'s server on this computer")
+            self.provider.setCurrentIndex(max(0, self.provider.findData('compatible')))
+            self.changed()
+            self.url.setText(server['base_url'])
+            self.model.setText((server.get('loaded') or server['models'])[0])
+        elif online and config.provider == 'local':
             self.provider.setCurrentIndex(max(0, self.provider.findData('mistral')))
             self.changed()
         self.update_note()

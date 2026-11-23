@@ -37,16 +37,26 @@ def no_local_model_setup(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def private_model_folders(tmp_path, monkeypatch):
+def private_model_folders(request, tmp_path, monkeypatch):
     """The model search (LM Studio, Ollama, Hugging Face cache) looks in an empty home."""
     from qtpy_ai_sidecar import discover
     monkeypatch.setattr(discover, 'HOME', tmp_path / 'home')
     monkeypatch.delenv('OLLAMA_MODELS', raising=False)
+    # never ask the user's own LM Studio / Ollama server (tests of it fake the answers)
+    monkeypatch.setattr(discover, 'LOCAL_SERVERS', (('LM Studio', 'http://127.0.0.1:9/v1', 'http://127.0.0.1:9/api'),))
+    if request_has_real_servers(request):
+        return
+    monkeypatch.setattr(discover, 'local_servers', lambda timeout=0.6: [])
+
+
+def request_has_real_servers(request):
+    return request.node.get_closest_marker('real_servers') is not None
 
 
 def pytest_configure(config):
     config.addinivalue_line('markers', 'real_terms: run the real terms acceptance')
     config.addinivalue_line('markers', 'real_setup: run the real local-model setup on send')
+    config.addinivalue_line('markers', 'real_servers: run discover.local_servers (with faked HTTP answers)')
 
 
 def pytest_sessionstart(session):

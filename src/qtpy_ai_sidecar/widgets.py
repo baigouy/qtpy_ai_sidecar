@@ -1419,21 +1419,28 @@ class AssistantDock(QDockWidget):
         if self.busy:
             return
         from .model_choice import ModelChoice
+        from .discover import local_servers
         open_mcp_setup = getattr(self.engine.adapter, 'open_mcp_setup', None)
-        dialog = ModelChoice(self.engine.config, self, other_app=open_mcp_setup is not None)
+        try:
+            servers = local_servers()          # LM Studio's / Ollama's server, when running
+        except Exception:
+            servers = []
+        dialog = ModelChoice(self.engine.config, self, other_app=open_mcp_setup is not None, servers=servers)
         dialog.exec()
-        if dialog.choice == 'local':
+        if isinstance(dialog.choice, dict):
+            self.connection_settings(server=dialog.choice)
+        elif dialog.choice == 'local':
             self.library()
         elif dialog.choice == 'online':
             self.connection_settings(online=True)
         elif dialog.choice == 'other_app':
             open_mcp_setup(self)
 
-    def connection_settings(self, online=False):
+    def connection_settings(self, online=False, server=None):
         if self.busy:
             return
         from .connection import ConnectionDialog
-        dialog = ConnectionDialog(self.engine.config, self, online=online is True)
+        dialog = ConnectionDialog(self.engine.config, self, online=online is True or bool(server), server=server)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.replace_engine(dialog.result_config)
 

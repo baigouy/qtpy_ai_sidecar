@@ -403,3 +403,46 @@ def setup(config, emit=lambda progress: None, cancel=None, download=True, model=
     if not download and (p['download_model'] or p['download_runtime']):
         raise LookupError('Not found on this computer:\n' + download_text(p))
     return run_plan(config, p, emit, cancel)
+
+
+# Model servers another program runs on this computer (user 2026-11-23: "for the API in fact
+# it can also be local through LM Studio local server"): OpenAI-compatible, no key, nothing
+# sent online; for Ollama users the simplest way (no llama.cpp to download).
+LOCAL_SERVERS = (('LM Studio', 'http://127.0.0.1:1234/v1', 'http://127.0.0.1:1234/api/v0/models'),
+                 ('Ollama', 'http://127.0.0.1:11434/v1', 'http://127.0.0.1:11434/api/ps'))
+
+
+def server_name(base_url):
+    """'LM Studio' / 'Ollama' for their usual local address, else None."""
+    for name, url, _loaded in LOCAL_SERVERS:
+        if str(base_url or '').rstrip('/') == url:
+            return name
+    return None
+
+
+def local_servers(timeout=0.6):
+    """[{'name', 'base_url', 'models', 'loaded'}] of the model servers answering on this
+    computer; the models loaded now come first (embedding models are left out)."""
+    import httpx
+    found = []
+    for name, url, loaded_url in LOCAL_SERVERS:
+        try:
+            ids = [m.get('id') for m in httpx.get(url + '/models', timeout=timeout).json().get('data', [])]
+        except Exception:
+            continue
+        ids = [i for i in ids if i and 'embed' not in i.lower()]
+        loaded = []
+        try:
+            reply = httpx.get(loaded_url, timeout=timeout).json()
+            if name == 'LM Studio':
+                loaded = [m['id'] for m in reply.get('data', []) if m.get('state') == 'loaded'
+                          and m.get('type') in ('llm', 'vlm')]
+            else:
+                loaded = [m.get('name') or m.get('model') for m in reply.get('models', [])]
+        except Exception:
+            pass
+        loaded = [m for m in loaded if m]
+        ids = loaded + [i for i in ids if i not in loaded]
+        if ids:
+            found.append({'name': name, 'base_url': url, 'models': ids, 'loaded': loaded})
+    return found
