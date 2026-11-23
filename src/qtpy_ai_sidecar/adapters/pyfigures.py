@@ -491,6 +491,11 @@ class PyFiguresAdapter:
             self._last_editor = (str(args['panel_ref']), args.get('tab') if args.get('tab') in
                                  ('annotations', 'crop', 'rotate', 'scale', 'text') else 'annotations')
             self._turns_since_editor = 0
+        if operation and not read_only and args.get('panel_ref') and operation != 'open_annotation_editor':
+            # "have me edit it manually" next means THIS panel and this kind of edit (user chat
+            # 2026-11-23: after the chat cropped a, it opened the editor of the selected panel b)
+            self._last_edit = (str(args['panel_ref']), self._editor_tab_for(operation, args))
+            self._turns_since_edit = 0
         from qtpy_ai_sidecar.quoting import quotes_reply     # absolute: the adapter is also loaded on its own
         if operation and not read_only and operation not in self._SELF_EDIT_OK and self._wants_to_edit_himself(text) \
                 and not quotes_reply(text, (state or {}).get('_last_reply', '')):     # a pasted option: its "manually" is ours
@@ -946,6 +951,29 @@ class PyFiguresAdapter:
     _EDITOR_TABS = ((r'\bcrop\w*', 'crop'), (r'\brotat\w*', 'rotate'), (r'\b(?:colou?rs?|luts?|channels?|pixel\s+size)\b', 'scale'),
                     (r'\btexts?\b', 'text'))
 
+    @staticmethod
+    def _editor_tab_for(operation, args):
+        """The panel editor tab where the user redoes what *operation* did."""
+        if any(str(k).startswith('crop') for k in args) or operation in ('crop_image', 'uncrop_image'):
+            return 'crop'
+        if any(k in args for k in ('rotation', 'theta', 'angle', 'flip_h', 'flip_v')):
+            return 'rotate'
+        if operation in ('set_scale_bar', 'remove_scale_bar', 'set_lut', 'set_pixel_size') or 'channels' in args:
+            return 'scale'
+        if operation in ('add_annotation', 'change_text_size', 'restyle_texts'):
+            return 'text'
+        return 'annotations'
+
+    def _panel_name(self, ref, state):
+        """The letter the user sees for a panel id ("0/1" -> "b")."""
+        import re
+        if not re.fullmatch(r'[\d/]+', str(ref)):
+            return str(ref)
+        for p in (state or {}).get('panel_references') or []:
+            if str(p.get('panel_id')) == str(ref) and p.get('letters'):
+                return str(p['letters'][0])
+        return 'the selected panel'
+
     def _named_panel(self, text, state):
         """The panel *text* names ("in b", "panel b", "of B", "#3"), checked against the figure."""
         import re
@@ -954,8 +982,10 @@ class PyFiguresAdapter:
                    if l and len(str(l)) == 1}
         for m in re.finditer(r"\b(?:panel|image|picture|in|of|on|for)\s+([a-z])\b(?![\w'’])", text, re.I):
             letter = m.group(1).lower()
-            if letter in ('a', 'i') and not re.match(r'(?:panel|image|picture)\b', m.group(0), re.I):
-                continue                    # "in a minute", "of I": only "panel a" names a / i
+            at_end = re.fullmatch(r"\W*(?:(?:my\s*self|manually|by\s+hand|please|for\s+me|now|again)\W*)*",
+                                  text[m.end():], re.I) is not None
+            if letter in ('a', 'i') and not re.match(r'(?:panel|image|picture)\b', m.group(0), re.I) and not at_end:
+                continue                    # "in a minute", "of I": only "panel a" (or "...crop in a") names a / i
             if letter in letters:
                 return letters[letter]
         # "the b crop", "b's crop": a letter before a thing of a panel (user 2026-11-19:
@@ -1034,11 +1064,22 @@ class PyFiguresAdapter:
             return None                     # another dialog than the panel editor
         if re.search(r'\b(?:letters?|layout|rows?|columns?|figure|spacing|order)\b', request, re.I):
             return None                     # not things of one panel's editor
+        if not explicit and re.search(r"\b(?:show|shwo|sow)\s+me\b|\bhow\s+(?:do|to|can|could|would|should)\b|\bteach\b|"
+                                      r"\bwhere\b", request, re.I):
+            # "show me how to do that manually" (a projection) is a guide, not this editor
+            # (user chat 2026-11-23: it opened d's Annotations tab): the model answers
+            return None
         try:
             state = self.request('inspect')
         except Exception:
             return None
         ref = self._named_panel(request, state)
+        tab = next((t for pattern, t in self._EDITOR_TABS if re.search(pattern, request, re.I)), None)
+        last_edit = getattr(self, '_last_edit', None)
+        if ref is None and last_edit and getattr(self, '_turns_since_edit', 99) <= 2:
+            # "have me edit it manually" right after the chat cropped a: a's crop, not the
+            # selected panel (user chat 2026-11-23)
+            ref, tab = last_edit[0], tab or last_edit[1]
         if ref is None:
             selected = (state.get('selection') or {}).get('selected_panels') or []
             if len(selected) == 1:
@@ -1054,8 +1095,8 @@ class PyFiguresAdapter:
                        '\n- Or tell me the change (e.g. "move the ROI in b up") and I make it')
             return {'content': content, 'evidence': {'operation_executed': False, 'self_edit': True,
                                                      'clarification': 'which panel'}}
-        tab = next((t for pattern, t in self._EDITOR_TABS if re.search(pattern, request, re.I)), 'annotations')
-        name = ref if not re.fullmatch(r'[\d/]+', str(ref)) else 'the selected panel'
+        tab = tab or 'annotations'
+        name = self._panel_name(ref, state)
         try:
             self.request('open_annotation_editor', {'panel_ref': ref, 'tab': tab})
         except Exception as exc:
@@ -1119,6 +1160,7 @@ class PyFiguresAdapter:
         """Resolve a pure control-location question from reviewed help before model discovery."""
         import re
         self._turns_since_editor = getattr(self, '_turns_since_editor', 99) + 1
+        self._turns_since_edit = getattr(self, '_turns_since_edit', 99) + 1
         try:
             state = None
             named = None
