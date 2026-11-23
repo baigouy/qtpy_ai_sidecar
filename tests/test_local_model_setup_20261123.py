@@ -163,8 +163,9 @@ def test_lm_studio_llama_server_gets_its_vendor_libraries(tmp_path, monkeypatch)
     vendor = backends / 'vendor' / 'win-llama-cuda12-vendor-v2'
     vendor.mkdir(parents=True)
     monkeypatch.setattr(discover.platform, 'system', lambda: 'Windows')
-    env = discover.runtime_environment(exe, {'PATH': 'C:/Windows'})
-    assert env['PATH'].split(discover.os.pathsep) == [str(vendor), 'C:/Windows']
+    system = str(tmp_path / 'system')            # no drive letter: ':' separates PATH on Linux CI
+    env = discover.runtime_environment(exe, {'PATH': system})
+    assert env['PATH'].split(discover.os.pathsep) == [str(vendor), system]
     assert discover.pick_runtime([exe, broken], gpu_gib=24) == exe          # newer, but its libraries are missing
     assert discover.runtime_environment(tmp_path / 'llama-server.exe', {'PATH': 'x'}) == {'PATH': 'x'}
 
