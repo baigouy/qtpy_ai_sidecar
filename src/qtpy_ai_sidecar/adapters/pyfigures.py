@@ -131,6 +131,14 @@ class PyFiguresAdapter:
         return f'another AI app is using this figure through MCP ({when})'
 
     @staticmethod
+    def outside_app_prompt():
+        """What to paste into another AI app so it works on the figure open in PyFigures."""
+        return ('Use the MCP server "pyfigures-live": it edits the figure open in my PyFigures window '
+                '(each change appears there, one undo step each). Start with inspect_figure. If it '
+                'says the window is not shared, ask me to share it instead of building a .pyf file. '
+                'Then: ')
+
+    @staticmethod
     def open_mcp_setup(dock):
         """Model > Another AI app: PyFigures' MCP server window (register it with Claude, LM
         Studio, Codex... in one click, or start its HTTP server)."""

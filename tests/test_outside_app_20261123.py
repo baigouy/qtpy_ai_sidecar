@@ -22,6 +22,29 @@ def test_the_pyfigures_adapter_reports_a_recent_outside_request():
     assert PyFiguresAdapter.outside_activity(_dock_with(SimpleNamespace(last_external=(time.time() - 3600, 'x')))) is None
 
 
+def test_choosing_another_ai_app_says_what_to_paste(tmp_path, monkeypatch):
+    """User 2026-11-23: after Model > Another AI app the chat stayed on "Mistral API", with no word
+    of MCP nor a prompt to give the other app."""
+    from qtpy.QtWidgets import QApplication, QPushButton
+    from qtpy_ai_sidecar.model_choice import ModelChoice
+    from qtpy_ai_sidecar.widgets import AssistantDock
+    dock = AssistantDock(Config(application='PyFigures', state_dir=str(tmp_path), provider='mistral',
+                                base_url='https://api.mistral.ai/v1', model='mistral-large-4'))
+    opened = []
+    dock.engine.adapter.open_mcp_setup = lambda d: opened.append('mcp window')
+    dock.engine.adapter.outside_app_prompt = PyFiguresAdapter.outside_app_prompt
+    dock.engine.adapter.outside_activity = lambda d: None
+    monkeypatch.setattr(ModelChoice, 'exec', lambda self: setattr(self, 'choice', 'other_app') or 0)
+    dock.choose_model()
+    assert opened == ['mcp window']
+    assert 'pyfigures-live' in QApplication.clipboard().text()
+    assert '🔌 Ready for another AI app' in dock.connection_label.text()
+    buttons = [b.text() for b in dock.findChildren(QPushButton)]
+    assert 'Copy the prompt' in buttons
+    dock.close()
+    dock.deleteLater()
+
+
 def test_the_model_line_says_it(tmp_path):
     from qtpy_ai_sidecar.widgets import AssistantDock
     dock = AssistantDock(Config(application='Demo', state_dir=str(tmp_path), provider='mistral',

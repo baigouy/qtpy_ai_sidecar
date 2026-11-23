@@ -1344,6 +1344,8 @@ class AssistantDock(QDockWidget):
             other = outside(self) if outside else None
         except Exception:
             other = None
+        if not other and getattr(self, '_outside_ready', False):
+            other = 'ready for another AI app: paste the prompt into it (Copy the prompt, in the chat)'
         if other:
             text = 'Model: ' + running(self.engine.config) + '\n🔌 ' + other[0].upper() + other[1:]
         if text != self.connection_label.text():
@@ -1452,6 +1454,31 @@ class AssistantDock(QDockWidget):
             self.connection_settings(online=True)
         elif dialog.choice == 'other_app':
             open_mcp_setup(self)
+            self.outside_app_ready()
+
+    def outside_app_ready(self):
+        """After Model > Another AI app: say what was set up and give the prompt to paste into
+        that app (user 2026-11-23: "the chat stays the same with Mistral API ... and no mention
+        of the MCP nor prompt I could send to a local agent")."""
+        from qtpy.QtWidgets import QApplication, QPushButton
+        prompt_of = getattr(self.engine.adapter, 'outside_app_prompt', None)
+        prompt = prompt_of() if prompt_of else (
+            f'Use the {self.engine.config.application} MCP server to work on my document.')
+        self._outside_ready = True
+        try:
+            QApplication.clipboard().setText(prompt)
+            copied = ' It is on the clipboard already.'
+        except Exception:
+            copied = ''
+        layout = self.add_message('assistant', (
+            f'{self.engine.config.application} is ready for another AI app (Hermes, Claude, LM Studio…). '
+            'Restart that app (or reload its MCP servers), then paste this into it:' + copied
+            + '\n\n> ' + prompt.replace('\n', '\n> ')
+            + '\n\nIts changes appear in this window; this chat stays available with its own model.'))
+        button = QPushButton('Copy the prompt')
+        button.clicked.connect(lambda: QApplication.clipboard().setText(prompt))
+        layout.addWidget(button)
+        self.update_connection_label()
 
     def connection_settings(self, online=False, server=None):
         if self.busy:
