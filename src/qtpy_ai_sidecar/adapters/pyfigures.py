@@ -115,6 +115,22 @@ class PyFiguresAdapter:
         return open_dialog(dock.window(), chat)
 
     @staticmethod
+    def outside_activity(dock):
+        """'another AI app is using this figure (MCP, 2 min ago)' while one drives the open
+        figure through the live MCP server; None otherwise (user 2026-11-23: the panel kept
+        saying "Mistral" while Hermes edited the figure)."""
+        import time
+        session = getattr(dock.window(), '_live_session', None)
+        seen = getattr(session, 'last_external', None)
+        if not seen:
+            return None
+        ago = time.time() - seen[0]
+        if ago > 15 * 60:
+            return None
+        when = 'just now' if ago < 60 else f'{int(ago // 60)} min ago'
+        return f'another AI app is using this figure through MCP ({when})'
+
+    @staticmethod
     def open_mcp_setup(dock):
         """Model > Another AI app: PyFigures' MCP server window (register it with Claude, LM
         Studio, Codex... in one click, or start its HTTP server)."""

@@ -620,6 +620,12 @@ class AssistantDock(QDockWidget):
         from .runtime import stop_all
         if QApplication.instance() is not None:
             QApplication.instance().aboutToQuit.connect(stop_all)
+        if getattr(self.engine.adapter, 'outside_activity', None) is not None:
+            # another AI app may start using the figure at any time: the model line follows
+            self.outside_timer = QTimer(self)
+            self.outside_timer.setInterval(5000)
+            self.outside_timer.timeout.connect(self.update_connection_label)
+            self.outside_timer.start()
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         content = QWidget()
@@ -1330,7 +1336,18 @@ class AssistantDock(QDockWidget):
     def update_connection_label(self):
         # one line saying what runs now (user 2026-11-23: "not obvious which one was running")
         from .model_choice import running
-        self.connection_label.setText('Model: ' + running(self.engine.config) + '   — change…')
+        text = 'Model: ' + running(self.engine.config) + '   — change…'
+        # another AI app driving the figure through MCP is said too (user 2026-11-23: the panel
+        # kept saying "Mistral API" while Hermes edited the figure)
+        outside = getattr(self.engine.adapter, 'outside_activity', None)
+        try:
+            other = outside(self) if outside else None
+        except Exception:
+            other = None
+        if other:
+            text = 'Model: ' + running(self.engine.config) + '\n🔌 ' + other[0].upper() + other[1:]
+        if text != self.connection_label.text():
+            self.connection_label.setText(text)
         self.update_notice()
 
     def provider_name(self):
