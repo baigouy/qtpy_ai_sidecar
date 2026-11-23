@@ -11,6 +11,9 @@ LOCAL_MODELS = [
     ('lmstudio-community/Qwen3.5-9B-GGUF', 'Qwen3.5 9B: single requests, about 8 GB of graphics memory', 8),
     ('lmstudio-community/Qwen3.5-4B-GGUF', 'Qwen3.5 4B: small graphics cards or no graphics card (slow)', 0),
 ]
+# approximate download (Q4_K_M model + its vision projector), GB
+DOWNLOAD_GB = {'lmstudio-community/Qwen3.8-27B-GGUF': 18, 'lmstudio-community/Qwen3.5-9B-GGUF': 7,
+               'lmstudio-community/Qwen3.5-4B-GGUF': 3}
 
 
 def gpu_memory_gib():

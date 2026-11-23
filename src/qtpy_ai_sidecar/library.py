@@ -3,22 +3,21 @@ import threading
 import platform
 from qtpy.QtCore import Signal
 from qtpy.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
-    QComboBox, QLabel, QListWidget, QProgressBar, QFileDialog)
+    QComboBox, QLabel, QListWidget, QProgressBar, QFileDialog, QFrame)
 from . import downloads
 
 
 class LibraryDialog(QDialog):
     update_signal = Signal(str, object)
 
-    def __init__(self, config, parent=None):
+    def __init__(self, config, parent=None, auto=False):
         super().__init__(parent)
         self.config, self.items, self.runtime_item = config, [], None
         self.busy, self.pending_close = False, False
         self.cancel = threading.Event()
-        self.setWindowTitle('Local models and llama.cpp updates')
-        self.resize(720, 600)
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel('Hugging Face GGUF models'))
+        self.setWindowTitle('Local model')
+        self.resize(720, 260)
+        outer = QVBoxLayout(self)
         # the largest model this computer's graphics memory runs is offered first (user
         # 2026-11-23: Qwen 27B in the list, the default chosen from the GPU memory)
         from .hardware import LOCAL_MODELS, recommend_for_this_computer
@@ -26,6 +25,41 @@ class LibraryDialog(QDialog):
             recommended, why = recommend_for_this_computer()
         except Exception:
             recommended, why = LOCAL_MODELS[1][0], ''
+        # one button does it all (user 2026-11-23: "too complex"): it finds the model and
+        # llama.cpp on this computer (LM Studio's too), else downloads them
+        intro = QLabel('The assistant can run on this computer: private, free, no API key. '
+                       'One click finds a model and llama.cpp already on this computer (for example '
+                       "LM Studio's), or downloads them once.")
+        intro.setWordWrap(True)
+        outer.addWidget(intro)
+        self.auto_button = QPushButton('Set up automatically')
+        self.auto_button.setMinimumHeight(40)
+        self.auto_button.clicked.connect(self.set_up_automatically)
+        outer.addWidget(self.auto_button)
+        self.recommendation = QLabel('Recommended for this computer: ' + why if why else '')
+        self.recommendation.setWordWrap(True)
+        outer.addWidget(self.recommendation)
+        # models already on this computer (LM Studio, Ollama, Hugging Face cache, ours): reuse one
+        outer.addWidget(QLabel('Or use a model already on this computer:'))
+        row = QHBoxLayout()
+        self.found = QComboBox()
+        self.found.setToolTip('Models found in LM Studio, Ollama, the Hugging Face cache and this chat’s downloads')
+        row.addWidget(self.found, 1)
+        self.use_found = QPushButton('Use')
+        self.use_found.clicked.connect(self.use_found_model)
+        row.addWidget(self.use_found)
+        outer.addLayout(row)
+        self.fill_found(recommended)
+        self.advanced_button = QPushButton('Advanced options ▸')
+        self.advanced_button.setFlat(True)
+        self.advanced_button.clicked.connect(self.toggle_advanced)
+        outer.addWidget(self.advanced_button)
+        self.advanced = QFrame()
+        layout = QVBoxLayout(self.advanced)
+        layout.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self.advanced, 1)
+        self.advanced.setVisible(False)
+        layout.addWidget(QLabel('Hugging Face GGUF models'))
         row = QHBoxLayout()
         self.query = QLineEdit(recommended.split('/')[-1])
         row.addWidget(self.query)
@@ -40,9 +74,6 @@ class LibraryDialog(QDialog):
             self.repositories.setItemData(self.repositories.count() - 1, label, 3)    # Qt.ToolTipRole
         self.repositories.setCurrentText(recommended)
         layout.addWidget(self.repositories)
-        self.recommendation = QLabel('Recommended for this computer: ' + why if why else '')
-        self.recommendation.setWordWrap(True)
-        layout.addWidget(self.recommendation)
         files = QPushButton('List GGUF files and sizes')
         files.clicked.connect(lambda: self.run('files', lambda: downloads.model_files(self.repositories.currentText().strip())))
         layout.addWidget(files)
@@ -74,14 +105,57 @@ class LibraryDialog(QDialog):
         layout.addWidget(note)
         self.status = QLabel('Ready')
         self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+        outer.addWidget(self.status)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
-        layout.addWidget(self.progress)
-        stop = QPushButton('Cancel current operation')
+        outer.addWidget(self.progress)
+        stop = QPushButton('Cancel')
         stop.clicked.connect(self.cancel.set)
-        layout.addWidget(stop)
+        outer.addWidget(stop)
         self.update_signal.connect(self.receive)
+        if auto:
+            self.set_up_automatically()
+
+    def toggle_advanced(self):
+        show = not self.advanced.isVisible()
+        self.advanced.setVisible(show)
+        self.advanced_button.setText('Advanced options ' + ('▾' if show else '▸'))
+        if show:
+            self.resize(self.width(), max(self.height(), 640))
+
+    def fill_found(self, recommended):
+        from . import discover
+        try:
+            storage = self.config.storage()
+        except Exception:
+            storage = None
+        try:
+            models = discover.local_models(storage)
+        except Exception:
+            models = []
+        self.found.clear()
+        for m in models:
+            self.found.addItem(f"{m['name']}  ·  {m['gb']:.1f} GB  ·  {m['source']}", str(m['path']))
+        if not models:
+            self.found.addItem('No model found on this computer', None)
+        self.found.setEnabled(bool(models))
+        self.use_found.setEnabled(bool(models))
+        best = discover.pick_model(models, recommended) if models else None
+        if best is not None:
+            self.found.setCurrentIndex(max(0, self.found.findData(str(best))))
+
+    def use_found_model(self):
+        from pathlib import Path
+        from . import discover
+        path = self.found.currentData()
+        if path:
+            self.run('auto_ready', lambda: discover.setup(self.config, lambda p: self.update_signal.emit('progress', p),
+                                                          self.cancel, model=Path(path)))
+
+    def set_up_automatically(self):
+        from . import discover
+        self.run('auto_ready', lambda: discover.setup(self.config, lambda p: self.update_signal.emit('progress', p),
+                                                      self.cancel))
 
     def run(self, kind, action):
         if self.busy:
@@ -124,6 +198,11 @@ class LibraryDialog(QDialog):
             self.runtime_item = value
             self.install.setEnabled(True)
             self.status.setText('Available compatible build: ' + value['tag'] + ' / ' + value['backend'])
+        elif kind == 'auto_ready':          # discover.setup has filled the config
+            self.config.save_connection()
+            self.config.save_performance()
+            self.done_message = value
+            self.status.setText(value + ' Close this window and send your message.')
         elif kind in ('model_ready', 'runtime_ready'):
             key = 'model' if kind == 'model_ready' else 'executable'
             self.config.runtime[key] = str(value)

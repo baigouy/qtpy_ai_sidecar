@@ -387,7 +387,7 @@ def test_provider_button_and_mcp_export(tmp_path, monkeypatch):
                     base_url='https://api.mistral.ai/v1', model='mistral-large-4',
                     servers={'demo': {'command': 'python', 'args': ['demo.py'], 'env': {'TOKEN': '${DEMO_TOKEN}'}}})
     dock = AssistantDock(config)
-    assert dock.connection_label.text().startswith('Provider: Mistral') and 'mistral-large-4' in dock.connection_label.text()
+    assert dock.connection_label.text().startswith('Model: Online · Mistral') and 'mistral-large-4' in dock.connection_label.text()
     opened = []
     monkeypatch.setattr(AssistantDock, 'connection_settings', lambda self: opened.append(True))
     dock.connection_label.clicked.disconnect()

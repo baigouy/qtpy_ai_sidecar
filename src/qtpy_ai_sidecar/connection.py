@@ -91,11 +91,12 @@ def list_models(config, key=''):
 
 
 class ConnectionDialog(QDialog):
-    def __init__(self, config, parent=None):
+    def __init__(self, config, parent=None, online=False):
         super().__init__(parent)
         self.config, self.result_config = config, None
+        self.online = online       # reached from Model > Online service: no local entry (it has its own window)
         self.vision_models = set()
-        self.setWindowTitle('Model connection and secure credentials')
+        self.setWindowTitle('Online model and API key' if online else 'Model connection and secure credentials')
         form = QFormLayout(self)
         self.provider = QComboBox()
         self.fill_providers(config.provider)
@@ -145,6 +146,9 @@ class ConnectionDialog(QDialog):
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
         self.provider.currentIndexChanged.connect(self.changed)
+        if online and config.provider == 'local':
+            self.provider.setCurrentIndex(max(0, self.provider.findData('mistral')))
+            self.changed()
         self.update_note()
 
     BUILTIN_LABELS = [('local', 'Local model (preferred)'), ('openai', 'OpenAI API'), ('anthropic', 'Claude / Anthropic API'),
@@ -157,6 +161,8 @@ class ConnectionDialog(QDialog):
         self.provider.blockSignals(True)
         self.provider.clear()
         for key, label in self.BUILTIN_LABELS:
+            if key == 'local' and getattr(self, 'online', False):
+                continue
             self.provider.addItem(label, key)
         for entry in providers.load():
             self.provider.addItem(entry['label'] + '  (yours)', entry['key'])

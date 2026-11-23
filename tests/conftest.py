@@ -27,8 +27,26 @@ def terms_accepted(request, monkeypatch):
         monkeypatch.setattr(terms, 'accepted', lambda config, parent=None: True)
 
 
+@pytest.fixture(autouse=True)
+def no_local_model_setup(request, monkeypatch):
+    """Sending in local mode with no model sets one up (searches this computer, may offer a
+    download): skipped in tests, which use fake engines. Tests of it are marked real_setup."""
+    if request.node.get_closest_marker('real_setup') is None:
+        from qtpy_ai_sidecar import widgets
+        monkeypatch.setattr(widgets.AssistantDock, 'local_model_ready', lambda self: True)
+
+
+@pytest.fixture(autouse=True)
+def private_model_folders(tmp_path, monkeypatch):
+    """The model search (LM Studio, Ollama, Hugging Face cache) looks in an empty home."""
+    from qtpy_ai_sidecar import discover
+    monkeypatch.setattr(discover, 'HOME', tmp_path / 'home')
+    monkeypatch.delenv('OLLAMA_MODELS', raising=False)
+
+
 def pytest_configure(config):
     config.addinivalue_line('markers', 'real_terms: run the real terms acceptance')
+    config.addinivalue_line('markers', 'real_setup: run the real local-model setup on send')
 
 
 def pytest_sessionstart(session):

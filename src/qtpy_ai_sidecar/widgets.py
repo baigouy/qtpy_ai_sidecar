@@ -583,14 +583,15 @@ class AssistantDock(QDockWidget):
         self.settings_button.setToolTip('Model performance, thinking and preview settings')
         self.settings_button.clicked.connect(self.settings)
         top.addWidget(self.settings_button)
-        self.connection_button = QPushButton(qta.icon('fa5s.plug'), '')
-        self.connection_button.setToolTip('Local or API connection; secure credentials')
-        self.connection_button.clicked.connect(self.connection_settings)
+        # one button for the model: it asks "on this computer or online?" first (user 2026-11-23)
+        self.connection_button = QPushButton(qta.icon('fa5s.microchip'), 'Model')
+        self.connection_button.setToolTip('Choose the model: on this computer or an online service')
+        self.connection_button.clicked.connect(lambda: self.choose_model())
         top.addWidget(self.connection_button)
-        self.library_button = QPushButton(qta.icon('fa5s.download'), '')
-        self.library_button.setToolTip('Model library and llama.cpp updates')
-        self.library_button.clicked.connect(self.library)
-        top.addWidget(self.library_button)
+        self.library_button = QPushButton(qta.icon('fa5s.download'), '')     # reached through Model
+        self.library_button.setToolTip('Local model: set up automatically, download or change it')
+        self.library_button.clicked.connect(lambda: self.library())
+        self.library_button.setVisible(False)
         self.tools_button = QPushButton(qta.icon('fa5s.tools'), '')
         self.tools_button.setToolTip('MCP server configuration: import or export')
         tools_menu = QMenu(self.tools_button)
@@ -608,9 +609,9 @@ class AssistantDock(QDockWidget):
         self.connection_label.setIcon(qta.icon('fa5s.plug'))
         self.connection_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.connection_label.setStyleSheet('QPushButton { text-align: left; padding: 2px 4px; }')
-        self.connection_label.setToolTip('Change the provider, address, model or API key')
+        self.connection_label.setToolTip('The model the chat uses now; click to change it')
         self.connection_label.setAccessibleName('Provider')
-        self.connection_label.clicked.connect(self.connection_settings)
+        self.connection_label.clicked.connect(lambda: self.choose_model())
         root.addWidget(self.connection_label)
         self.update_connection_label()
         self.scroll = QScrollArea()
@@ -1144,6 +1145,9 @@ class AssistantDock(QDockWidget):
         if not terms.accepted(self.engine.config, self):
             self.status.setText('Not sent: the terms were not accepted.')    # the text stays in the box
             return
+        if not self.local_model_ready():
+            self.status.setText('Not sent: no model is set up yet.')      # the text stays in the box
+            return
         self.clear_choices()
         self.last_assistant = ''
         self.input.clear()
@@ -1156,6 +1160,45 @@ class AssistantDock(QDockWidget):
             self.host_control('redo')
             return
         self.run(lambda: self.engine.turn(text, self.emit))
+
+    def local_model_ready(self):
+        """Local mode with no model yet (user 2026-11-23: "too complex, can't it be automated"):
+        use the model and llama.cpp found on this computer (LM Studio's too); when there are
+        none, offer to download them once, or to use an online service instead."""
+        config = self.engine.config
+        if config.provider != 'local' or (config.runtime.get('model') and config.runtime.get('executable')):
+            return True
+        from dataclasses import asdict
+        from .config import Config
+        from . import discover, hardware
+        candidate = Config(**asdict(config))
+        try:
+            message = discover.setup(candidate, download=False)
+        except LookupError:
+            recommended, _why = hardware.recommend_for_this_computer()
+            size = hardware.DOWNLOAD_GB.get(recommended)
+            box = QMessageBox(self)
+            box.setWindowTitle('Set up the assistant')
+            box.setText('The assistant runs on this computer (private, free, no API key). It needs a model'
+                        + (f' (about {size} GB)' if size else '') + ' and llama.cpp, downloaded once.')
+            download = box.addButton('Download now', QMessageBox.ButtonRole.AcceptRole)
+            online = box.addButton('Use an online service instead', QMessageBox.ButtonRole.ActionRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.exec()
+            if box.clickedButton() is download:
+                self.library(auto=True)
+            elif box.clickedButton() is online:
+                self.connection_settings()
+            config = self.engine.config
+            return config.provider != 'local' or bool(config.runtime.get('model') and config.runtime.get('executable'))
+        except Exception as exc:
+            self.add_message('assistant', 'The local model could not be set up: ' + str(exc))
+            return False
+        candidate.save_connection()
+        candidate.save_performance()
+        self.replace_engine(candidate)
+        self.add_message('assistant', message + ' Change it with the Local model button (download icon).')
+        return True
 
     def settings(self):
         if self.busy:
@@ -1276,14 +1319,9 @@ class AssistantDock(QDockWidget):
         dialog.exec()
 
     def update_connection_label(self):
-        from . import providers
-        config = self.engine.config
-        from .connection import ConnectionDialog
-        # a user's provider by its name, a built-in one as the plug dialog lists it
-        name = ((providers.find(config.provider) or {}).get('label')
-                or dict(ConnectionDialog.BUILTIN_LABELS).get(config.provider) or config.provider)
-        self.connection_label.setText(('Local model' if config.provider == 'local' else 'Provider: ' + name)
-                                      + ' · ' + config.model + '   — change…')
+        # one line saying what runs now (user 2026-11-23: "not obvious which one was running")
+        from .model_choice import running
+        self.connection_label.setText('Model: ' + running(self.engine.config) + '   — change…')
         self.update_notice()
 
     def provider_name(self):
@@ -1367,11 +1405,26 @@ class AssistantDock(QDockWidget):
         self.update_connection_label()
         self.add_message('assistant', 'Connection updated. Working context starts fresh; earlier conversation remains in its local log.')
 
-    def connection_settings(self):
+    def choose_model(self):
+        """On this computer -> the local model window; online -> the provider and API key window."""
+        if self.busy:
+            return
+        from .model_choice import ModelChoice
+        open_mcp_setup = getattr(self.engine.adapter, 'open_mcp_setup', None)
+        dialog = ModelChoice(self.engine.config, self, other_app=open_mcp_setup is not None)
+        dialog.exec()
+        if dialog.choice == 'local':
+            self.library()
+        elif dialog.choice == 'online':
+            self.connection_settings(online=True)
+        elif dialog.choice == 'other_app':
+            open_mcp_setup(self)
+
+    def connection_settings(self, online=False):
         if self.busy:
             return
         from .connection import ConnectionDialog
-        dialog = ConnectionDialog(self.engine.config, self)
+        dialog = ConnectionDialog(self.engine.config, self, online=online is True)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.replace_engine(dialog.result_config)
 
@@ -1401,14 +1454,14 @@ class AssistantDock(QDockWidget):
             except Exception as exc:
                 self.add_message('assistant', 'MCP configuration was not exported: ' + str(exc))
 
-    def library(self):
+    def library(self, auto=False):
         if self.busy:
             return
         from dataclasses import asdict
         from .config import Config
         from .library import LibraryDialog
         candidate = Config(**asdict(self.engine.config))
-        dialog = LibraryDialog(candidate, self)
+        dialog = LibraryDialog(candidate, self, auto=auto is True)
         dialog.exec()
         if asdict(candidate) != asdict(self.engine.config):
             self.replace_engine(candidate)

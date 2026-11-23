@@ -115,6 +115,16 @@ class PyFiguresAdapter:
         return open_dialog(dock.window(), chat)
 
     @staticmethod
+    def open_mcp_setup(dock):
+        """Model > Another AI app: PyFigures' MCP server window (register it with Claude, LM
+        Studio, Codex... in one click, or start its HTTP server)."""
+        window = dock.window()
+        if hasattr(window, 'open_mcp_server_dialog'):
+            return window.open_mcp_server_dialog()
+        from pyfigures.gui.mcp_server_dialog import McpServerDialog
+        return McpServerDialog(window).exec_()
+
+    @staticmethod
     def describe_call(tool_name, arguments):
         if tool_name != 'use_pyfigures_tool':
             return tool_name + ' ' + json.dumps(arguments, ensure_ascii=False)
