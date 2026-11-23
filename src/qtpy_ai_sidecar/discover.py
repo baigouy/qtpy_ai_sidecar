@@ -279,9 +279,12 @@ def apply(config, model, executable, name=None):
     config.base_url = 'http://127.0.0.1:1234/v1'
     config.api_key_env = ''
     config.thinking_backend = 'llama_cpp'
-    # the 27B model is run with the 64k context it was tested with
-    if '27b' in config.runtime['model_name'].lower() and config.context_tokens < 65536:
-        config.context_tokens = 65536
+    # its own context, not an online model's (chat 2026-11-23: Mistral's 200,000 tokens were
+    # kept, so llama.cpp reserved memory for 200k): 64k for the 27B model, as it was tested,
+    # 32k for the smaller ones
+    config.context_tokens = 65536 if '27b' in config.runtime['model_name'].lower() else 32768
+    config.output_tokens = min(config.output_tokens, config.context_tokens // 4)
+    config.model = config.runtime['model_name']          # not the online model's name
 
 
 def recommendation():

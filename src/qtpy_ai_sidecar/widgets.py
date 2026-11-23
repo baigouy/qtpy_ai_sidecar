@@ -614,6 +614,12 @@ class AssistantDock(QDockWidget):
         self.connection_label.clicked.connect(lambda: self.choose_model())
         root.addWidget(self.connection_label)
         self.update_connection_label()
+        # the local model server stops when the application quits (it held ~16 GB of graphics
+        # memory after PyFigures closed; its forced exit skips atexit)
+        from qtpy.QtWidgets import QApplication
+        from .runtime import stop_all
+        if QApplication.instance() is not None:
+            QApplication.instance().aboutToQuit.connect(stop_all)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         content = QWidget()

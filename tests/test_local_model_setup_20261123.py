@@ -68,11 +68,14 @@ def _computer(monkeypatch, tmp_path, model=True, runtime=True, gpu=24):
 def test_found_on_this_computer_is_used_with_no_download(tmp_path, monkeypatch):
     _computer(monkeypatch, tmp_path)
     monkeypatch.setattr(downloads, 'model_files', lambda repo: pytest.fail('no download expected'))
-    config = Config(application='Demo', state_dir=str(tmp_path / 'state'))
+    # coming from Mistral (chat 2026-11-23: its 200,000-token context and name were kept)
+    config = Config(application='Demo', state_dir=str(tmp_path / 'state'), context_tokens=200000,
+                    model='mistral-large-4')
     message = discover.setup(config, download=False)
     assert config.provider == 'local' and config.runtime['model'].endswith('Qwen3.8-27B-Q4_K_M.gguf')
     assert 'cuda12' in config.runtime['executable'] and config.runtime['gpu_layers'] == 99
     assert config.context_tokens == 65536                      # the 27B model's tested context
+    assert config.model == 'Qwen3.8-27B-Q4_K_M' and config.output_tokens < config.context_tokens
     assert 'Qwen3.8-27B-Q4_K_M found in LM Studio' in message and 'llama.cpp (cuda) found in LM Studio' in message
 
 

@@ -1,11 +1,76 @@
 """Optional owned llama.cpp process. Never installs globally or stops other servers."""
 import asyncio
+import atexit
 import re
 import secrets
 import socket
 import subprocess
+import sys
 from pathlib import Path
 import httpx
+
+# The model server must never outlive the application (found 2026-11-23: PyFigures force-exits,
+# and on Windows a child process survives its parent, keeping ~16 GB of graphics memory).
+_RUNNING = set()
+
+
+def stop_all():
+    """Stop every model server this process started (application exit)."""
+    for process in list(_RUNNING):
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        _RUNNING.discard(process)
+
+
+atexit.register(stop_all)
+
+
+def tie_to_this_process(process):
+    """Windows: put the server in a job object closed with this process, so Windows ends it
+    even after a crash or a forced exit (os._exit skips atexit). Returns the job handle (kept
+    open for the application's lifetime) or None."""
+    if sys.platform != 'win32':
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+        kernel32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+
+        class Basic(ctypes.Structure):
+            _fields_ = [('PerProcessUserTimeLimit', ctypes.c_int64), ('PerJobUserTimeLimit', ctypes.c_int64),
+                        ('LimitFlags', wintypes.DWORD), ('MinimumWorkingSetSize', ctypes.c_size_t),
+                        ('MaximumWorkingSetSize', ctypes.c_size_t), ('ActiveProcessLimit', wintypes.DWORD),
+                        ('Affinity', ctypes.c_size_t), ('PriorityClass', wintypes.DWORD),
+                        ('SchedulingClass', wintypes.DWORD)]
+
+        class Extended(ctypes.Structure):
+            _fields_ = [('BasicLimitInformation', Basic), ('IoInfo', ctypes.c_uint64 * 6),
+                        ('ProcessMemoryLimit', ctypes.c_size_t), ('JobMemoryLimit', ctypes.c_size_t),
+                        ('PeakProcessMemoryUsed', ctypes.c_size_t), ('PeakJobMemoryUsed', ctypes.c_size_t)]
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = Extended()
+        info.BasicLimitInformation.LimitFlags = 0x2000          # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))   # extended limits
+        handle = kernel32.OpenProcess(0x0001 | 0x0100, False, process.pid)   # TERMINATE | SET_QUOTA
+        if handle:
+            kernel32.AssignProcessToJobObject(job, handle)
+            kernel32.CloseHandle(handle)
+        return job
+    except (OSError, AttributeError, ValueError):
+        return None
 
 
 def reasoning_control(template):
@@ -104,6 +169,8 @@ class OwnedLlama:
         from .discover import runtime_environment     # LM Studio's builds need their vendor libraries
         self.process = subprocess.Popen(command, cwd=executable.parent, stdout=self.log, env=runtime_environment(executable),
             stderr=subprocess.STDOUT, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        _RUNNING.add(self.process)
+        self.job = tie_to_this_process(self.process)     # ends with the application, whatever happens
         try:
             async with httpx.AsyncClient(timeout=1) as client:
                 for _ in range(600):
@@ -156,6 +223,7 @@ class OwnedLlama:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait(timeout=3)
+        _RUNNING.discard(self.process)
         self.process = None
         if self.log:
             self.log.close()
