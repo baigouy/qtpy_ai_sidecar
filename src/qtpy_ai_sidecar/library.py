@@ -19,8 +19,15 @@ class LibraryDialog(QDialog):
         self.resize(720, 600)
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel('Hugging Face GGUF models'))
+        # the largest model this computer's graphics memory runs is offered first (user
+        # 2026-11-23: Qwen 27B in the list, the default chosen from the GPU memory)
+        from .hardware import LOCAL_MODELS, recommend_for_this_computer
+        try:
+            recommended, why = recommend_for_this_computer()
+        except Exception:
+            recommended, why = LOCAL_MODELS[1][0], ''
         row = QHBoxLayout()
-        self.query = QLineEdit('Qwen3.5-9B-GGUF')
+        self.query = QLineEdit(recommended.split('/')[-1])
         row.addWidget(self.query)
         search = QPushButton('Search')
         search.clicked.connect(lambda: self.run('repositories', lambda: downloads.search_models(self.query.text().strip())))
@@ -28,8 +35,14 @@ class LibraryDialog(QDialog):
         layout.addLayout(row)
         self.repositories = QComboBox()
         self.repositories.setEditable(True)
-        self.repositories.addItem('lmstudio-community/Qwen3.5-9B-GGUF')
+        for repo, label, _need in LOCAL_MODELS:
+            self.repositories.addItem(repo)
+            self.repositories.setItemData(self.repositories.count() - 1, label, 3)    # Qt.ToolTipRole
+        self.repositories.setCurrentText(recommended)
         layout.addWidget(self.repositories)
+        self.recommendation = QLabel('Recommended for this computer: ' + why if why else '')
+        self.recommendation.setWordWrap(True)
+        layout.addWidget(self.recommendation)
         files = QPushButton('List GGUF files and sizes')
         files.clicked.connect(lambda: self.run('files', lambda: downloads.model_files(self.repositories.currentText().strip())))
         layout.addWidget(files)
@@ -101,7 +114,12 @@ class LibraryDialog(QDialog):
             self.items = value
             self.files.clear()
             self.files.addItems([f"{i['name']} · {i['size'] / 1024**3:.2f} GiB" for i in value])
-            self.status.setText(f'{len(value)} GGUF files found. Select one quantization.')
+            # Q4_K_M: the quantization the recommendations are sized for
+            pick = next((k for k, i in enumerate(value) if 'q4_k_m' in i['name'].lower()), -1)
+            if pick >= 0:
+                self.files.setCurrentRow(pick)
+            self.status.setText(f'{len(value)} GGUF files found. Select one quantization'
+                                + (' (Q4_K_M selected: a good balance of size and quality).' if pick >= 0 else '.'))
         elif kind == 'runtime_release':
             self.runtime_item = value
             self.install.setEnabled(True)
