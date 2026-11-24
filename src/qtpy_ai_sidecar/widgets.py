@@ -34,6 +34,59 @@ THINKING_LEVELS = ('default', 'low', 'medium', 'high')
 VISION_COLOUR, THINKING_COLOUR, OFF_COLOUR = '#3d7ab8', '#9a5fb8', '#8a7d72'
 
 
+FLASH_STYLE = 'background:#ffe9a8;border-radius:6px;'
+
+
+def copy_with_feedback(text, button=None, flash=None):
+    """Put *text* on the clipboard and show it happened (user 2026-11-24: "nothing changes
+    when I press the button"): *flash* (the copied text's widget) blinks twice and *button*
+    says "Copied" (a check mark for an icon button) for a moment. Returns False when the
+    clipboard refused. *text* None: only the feedback (the text is on the clipboard already)."""
+    from qtpy.QtWidgets import QApplication
+    try:
+        if text is not None:
+            QApplication.clipboard().setText(text)
+    except Exception:
+        return False
+    try:                                    # a slot error would abort the application
+        old = flash.styleSheet() if flash is not None else None
+    except RuntimeError:                    # the message was deleted meanwhile
+        flash = None
+    if flash is not None:
+        for i, delay in enumerate((0, 160, 320, 480)):
+            QTimer.singleShot(delay, lambda on=(i % 2 == 0), w=flash: _set_flash(w, old, on))
+    if button is not None:
+        try:
+            button.text()
+        except RuntimeError:
+            return True
+        if not getattr(button, '_copy_feedback', None):
+            button._copy_feedback = (button.text(), button.icon(), button.toolTip())
+        label, icon, tip = button._copy_feedback
+        if label:
+            button.setText('✓ Copied')
+        else:
+            button.setIcon(qta.icon('mdi6.check', color='#2e7d32'))
+        button.setToolTip('Copied to the clipboard')
+        def restore(b=button):
+            try:
+                b.setText(label)
+                b.setIcon(icon)
+                b.setToolTip(tip)
+                b._copy_feedback = None
+            except RuntimeError:            # the widget was deleted meanwhile
+                pass
+        QTimer.singleShot(1500, restore)
+    return True
+
+
+def _set_flash(widget, old, on):
+    try:
+        widget.setStyleSheet(old + FLASH_STYLE if on else old)
+    except RuntimeError:
+        pass
+
+
 def action_is_silent(value):
     """Nothing changed and nothing to undo or cancel: no 'Document action:
     no_change' line under the answer (it broke the flow of a question the
@@ -805,8 +858,28 @@ class AssistantDock(QDockWidget):
         label = QLabel(('You' if role == 'user' else self.engine.config.application + ' Assistant') + ' · ' + time.strftime('%H:%M'))
         label.setStyleSheet('color:#a17351;font-weight:600')
         label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        layout.addWidget(label)
+        # one widget, so the message stays the layout's second item (callers use itemAt(1))
+        header = QFrame()
+        header.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        head = QHBoxLayout(header)
+        head.setContentsMargins(0, 0, 0, 0)
+        head.addWidget(label)
+        head.addStretch(1)
+        # a tiny copy icon on every bubble (user 2026-11-24)
+        copy = QToolButton()
+        copy.setIcon(qta.icon('mdi6.content-copy', color='#a17351'))
+        copy.setIconSize(QSize(14, 14))
+        copy.setAutoRaise(True)
+        copy.setCursor(Qt.CursorShape.PointingHandCursor)
+        copy.setToolTip('Copy this message')
+        copy.setAccessibleName('Copy this message')
+        copy.setStyleSheet('QToolButton { border: none; padding: 0; }')
+        head.addWidget(copy)
+        layout.addWidget(header)
         browser = MessageBrowser()
+        copy.clicked.connect(lambda _c=False, b=browser, k=copy:
+                             copy_with_feedback(b.toPlainText(), button=k, flash=b))
+        frame.copy_button = copy
         browser.document().setDefaultFont(self.widget().font())
         browser.setOpenExternalLinks(False)
         browser.setOpenLinks(False)          # never navigate the message away
@@ -1471,13 +1544,25 @@ class AssistantDock(QDockWidget):
         except Exception:
             copied = ''
         layout = self.add_message('assistant', (
-            f'{self.engine.config.application} is ready for another AI app (Hermes, Claude, LM Studio…). '
+            f'{self.engine.config.application} is ready for another AI app (Mistral Vibe, Hermes, Claude, LM Studio…). '
             'Restart that app (or reload its MCP servers), then paste this into it:' + copied
             + '\n\n> ' + prompt.replace('\n', '\n> ')
-            + '\n\nIts changes appear in this window; this chat stays available with its own model.'))
+            + '\n\nIts changes appear in this window. You can close this chat panel now: the other '
+            'app does not need it, and the window stays shared with it. Reopen the chat any time '
+            'to use it with its own model.'))
+        # user 2026-11-24: once another app is connected the chat panel is of no use
+        close = QPushButton('Close the chat')
+        close.setToolTip('Hide this panel; the other AI app keeps working on the window')
+        close.clicked.connect(lambda _c=False: self.close())
         button = QPushButton('Copy the prompt')
-        button.clicked.connect(lambda: QApplication.clipboard().setText(prompt))
+        browser = next((layout.itemAt(i).widget() for i in range(layout.count())
+                        if isinstance(layout.itemAt(i).widget(), MessageBrowser)), None)
+        button.clicked.connect(lambda _c=False: copy_with_feedback(prompt, button=button, flash=browser))
         layout.addWidget(button)
+        layout.addWidget(close)
+        self.outside_close_button = close
+        if browser is not None:                 # copied already: show it
+            QTimer.singleShot(300, lambda: copy_with_feedback(None, flash=browser))
         self.update_connection_label()
 
     def connection_settings(self, online=False, server=None):
